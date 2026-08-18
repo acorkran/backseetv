@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="service.kidstv.autoplay" name="KidsTV Autoplay" version="1.0.0" provider-name="kidstv">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+  </requires>
+  <extension point="xbmc.service" library="service.py"/>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Auto-play Arthur Season 1 on startup, looping.</summary>
+    <description lang="en_GB">Kid appliance: on Kodi startup, plays the Arthur S1 playlist and repeats the whole season. Silence is handled by fvolumelevel=0.</description>
+    <platform>all</platform>
+    <license>MIT</license>
+  </extension>
+</addon>

@@ -1,0 +1,6 @@
+# build artifacts (regenerable via each app's ./build.sh)
+build/
+*.idsig
+
+# kept intentionally: source, kodi-config, Pi scripts, prebuilt *.apk (handy for sideloading),
+# and the debug.keystore files (stable signature avoids reinstall-signature errors)

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kid-proof: disable ALL touch gestures during fullscreen playback.
+     No tap/swipe/pan seeking or pausing on-screen; control is via Yatse only. -->
+<keymap>
+  <FullscreenVideo>
+    <touch>
+      <tap>noop</tap>
+      <longpress>noop</longpress>
+      <doubletap>noop</doubletap>
+      <swipeleft>noop</swipeleft>
+      <swiperight>noop</swiperight>
+      <swipeup>noop</swipeup>
+      <swipedown>noop</swipedown>
+      <pan>noop</pan>
+      <panhorizontal>noop</panhorizontal>
+      <panvertical>noop</panvertical>
+      <zoomin>noop</zoomin>
+      <zoomout>noop</zoomout>
+      <rotate>noop</rotate>
+    </touch>
+  </FullscreenVideo>
+</keymap>
