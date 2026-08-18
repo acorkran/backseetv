@@ -19,14 +19,15 @@ Pi + Jellyfin approach that was too weak; the project pivoted to media-local-on-
   **Zero-config:** since the phone is the hotspot, the app sweeps its own subnet for Kodi and finds
   the tablet automatically — no IP to type. Playlist tiles + transport / seek / volume / D-pad, and
   a power button for nap/wake.
-- **Pi scripts, `pi-baked/`, `RUNBOOK.md`** — **legacy.** The original Pi + Jellyfin appliance.
-  Kept for reference; not used by the current Kodi-on-tablet design.
+
+That's the whole project — two Android apps. (The Pi tooling from the old approach was removed; it's
+in git history if ever needed.)
 
 ## Status
 
 Working and road-tested. **Not yet generalized** for other setups — the remote's playlist list is
-hardcoded to one library and appliance credentials still live in `RUNBOOK.md`, so this isn't
-scrubbed for public release yet (see the project notes for the planned generic-playlist work).
+still hardcoded to one library (see the planned generic-playlist work), so it isn't scrubbed for
+public release yet.
 
 ## Building the apps
 
