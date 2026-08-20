@@ -72,6 +72,13 @@ public class BridgeService extends Service {
     static final int ESC_TAPS = 4;
     static final long ESC_WINDOW_MS = 3000;
     static final long ESC_TAP_MAX_MS = 800;   // a "tap" is a quick land+lift, not a hold/drag
+    // ---- Kodi-GUI watchdog (escalation ABOVE the in-Kodi self-heal) ----
+    // service.py (inside Kodi) restarts PLAYBACK when it drops, but can't fix a wedged Kodi GUI
+    // (stuck on Splash / black) because its own Player.Open silently no-ops inside the broken Kodi.
+    // This runs in the separate kiosk process and escalates only when service.py has clearly failed.
+    static final long WATCH_POLL_MS = 8000;        // how often to verify Kodi is actually playing
+    static final int  WATCH_WEDGE_DEFAULT = 45;    // seconds of no-player -> restart Kodi. Override:
+                                                   // settings put global kiosk_watchdog_sec <N>  (0 = off)
 
     volatile ServerSocket server;
     volatile boolean running = false;
@@ -91,6 +98,9 @@ public class BridgeService extends Service {
     BroadcastReceiver mScreen;        // screen-on clears a nap
     volatile BluetoothProfile mPanProxy;   // BluetoothPan proxy for auto-joining a phone's BT tether
     volatile boolean mPanGaveUp = false;   // BluetoothPan.connect needs BLUETOOTH_PRIVILEGED (system-only)
+
+    volatile long mLastPlaying = 0;   // watchdog: last time Kodi had an active player
+    int mWatchFails = 0;              // watchdog: consecutive failed recoveries (drives escalation)
 
     // Zeroconf/mDNS so Yatse can auto-discover the tablet as "KidsTV" on any
     // network (Wi-Fi or Bluetooth) instead of needing a typed IP. We advertise
@@ -142,6 +152,9 @@ public class BridgeService extends Service {
             registerScreen();
             requestPanProxy();
             mMain.postDelayed(mPanTick, 8000);   // start auto-joining a BT tether when no network
+            Thread w = new Thread(new Runnable() { public void run() { watchdog(); } });
+            w.setDaemon(true);
+            w.start();
         }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
         // an explicit REMOVE_OVERLAY (admin escape / unlock) takes it down.
@@ -339,6 +352,67 @@ public class BridgeService extends Service {
 
     void releaseNapLock() {
         try { if (mNapLock != null && mNapLock.isHeld()) mNapLock.release(); } catch (Exception e) {}
+    }
+
+    // ---- Kodi-GUI watchdog: the tier ABOVE service.py's in-Kodi self-heal ----
+    // Two-tier recovery: (1) service.py, running INSIDE Kodi, restarts playback fast (~6-12s) when
+    // it drops but Kodi's GUI is healthy - handles the common case. (2) THIS, running in the separate
+    // kiosk process, catches what tier 1 can't: a wedged Kodi GUI (stuck on Splash / black), where
+    // service.py's own Player.Open silently no-ops inside the broken Kodi. We only escalate when a
+    // show SHOULD be playing (kid-mode overlay up), we're not napping, the screen's on, and there's
+    // been NO active player for well past the time tier 1 needs - so the two never fight. Recovery is
+    // Kodi's own Application.Quit; because this app is the device-owner HOME, Kodi quitting drops to
+    // KioskActivity, which relaunches Kodi fresh (on .Main, not the wedged .Splash) and the addon
+    // resumes playback. Verified: Quit -> new Kodi pid on .Main -> playing, fully hands-free.
+    void watchdog() {
+        mLastPlaying = SystemClock.elapsedRealtime();   // grace: let Kodi boot before judging it
+        while (running) {
+            try { Thread.sleep(WATCH_POLL_MS); } catch (Exception e) {}
+            if (!running) break;
+            try {
+                long now = SystemClock.elapsedRealtime();
+                // Guard ONLY the kid experience; stay out of the way otherwise.
+                if (mOverlay == null) { mLastPlaying = now; mWatchFails = 0; continue; }   // escaped / unlocked / maintenance
+                if (mNapLock != null && mNapLock.isHeld()) { mLastPlaying = now; mWatchFails = 0; continue; }  // napping
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null && !pm.isInteractive()) { mLastPlaying = now; continue; }   // screen off (can't start video anyway)
+                int off = 0;
+                try { off = android.provider.Settings.Global.getInt(getContentResolver(), "kiosk_off", 0); } catch (Exception e) {}
+                if (off != 0) { mLastPlaying = now; mWatchFails = 0; continue; }            // admin / maintenance hatch active
+
+                // A paused player is still "active" (returns a playerid), so a long remote-paused
+                // spell never trips this - only a genuinely STOPPED player (no active player) does.
+                String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.GetActivePlayers\"}");
+                if (r != null && r.contains("\"playerid\"")) { mLastPlaying = now; mWatchFails = 0; continue; }
+
+                int wedgeSec = WATCH_WEDGE_DEFAULT;
+                try { wedgeSec = android.provider.Settings.Global.getInt(getContentResolver(), "kiosk_watchdog_sec", WATCH_WEDGE_DEFAULT); } catch (Exception e) {}
+                if (wedgeSec <= 0) { mLastPlaying = now; continue; }   // 0 = watchdog disabled
+                if (now - mLastPlaying >= wedgeSec * 1000L) {
+                    mWatchFails++;
+                    Log.w(TAG, "watchdog: no player for " + ((now - mLastPlaying) / 1000) + "s (fail #" + mWatchFails + ") - restarting Kodi");
+                    recoverKodi();
+                    mLastPlaying = now;   // fresh window: Kodi needs ~15s to relaunch + resume
+                }
+            } catch (Throwable t) { Log.w(TAG, "watchdog: " + t); }
+        }
+    }
+
+    /** Restart a wedged Kodi with no shell/root/kill privilege: ask Kodi to quit (its core answers
+        JSON-RPC even while the GUI is stuck on Splash), and the device-owner HOME relaunches it. If
+        the core won't even accept the quit (9090 dead/hung), or this is a repeat failure, force
+        KioskActivity forward so the HOME path relaunches Kodi regardless. */
+    void recoverKodi() {
+        String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.Quit\"}");
+        boolean accepted = r != null && r.contains("\"result\":\"OK\"");
+        if (!accepted || mWatchFails >= 2) {
+            try {
+                Intent i = new Intent(this, KioskActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                         | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                startActivity(i);
+            } catch (Exception e) { Log.w(TAG, "recoverKodi relaunch: " + e); }
+        }
     }
 
     // ---- Auto-join the phone's Bluetooth tether (so nobody has to flip "Internet access") ----
