@@ -201,16 +201,41 @@ class KodiClient {
             s.getOutputStream().write(req.getBytes("UTF-8"));
             s.getOutputStream().flush();
             InputStream in = s.getInputStream();
-            StringBuilder sb = new StringBuilder();
+            // Read until a COMPLETE top-level JSON object arrives (track container depth on raw bytes;
+            // brace/bracket/quote are single UTF-8 bytes so a multibyte char split across reads is safe).
+            // The old "stop as soon as I see \"id\":1 + result" heuristic TRUNCATED big replies (e.g. a
+            // 150-item queue) mid-array -> parsed to empty. A leading unsolicited notification is skipped.
+            java.io.ByteArrayOutputStream obj = new java.io.ByteArrayOutputStream();
+            int depth = 0;
+            boolean started = false, inStr = false, esc = false;
             byte[] buf = new byte[8192];
-            while (sb.length() < 1_000_000) {
+            long total = 0;
+            while (total < 8_000_000) {
                 int n = in.read(buf);
                 if (n < 0) break;
-                sb.append(new String(buf, 0, n, "UTF-8"));
-                String cur = sb.toString();
-                if (cur.contains("\"id\":1") && (cur.contains("\"result\"") || cur.contains("\"error\""))) break;
+                total += n;
+                for (int i = 0; i < n; i++) {
+                    byte b = buf[i];
+                    obj.write(b);
+                    if (inStr) {
+                        if (esc) esc = false;
+                        else if (b == '\\') esc = true;
+                        else if (b == '"') inStr = false;
+                    } else if (b == '"') {
+                        inStr = true;
+                    } else if (b == '{' || b == '[') {
+                        depth++; started = true;
+                    } else if (b == '}' || b == ']') {
+                        depth--;
+                        if (started && depth == 0) {
+                            String os = new String(obj.toByteArray(), "UTF-8").trim();
+                            if (os.contains("\"id\":1")) return os;
+                            obj.reset(); started = false;   // skip a leading notification, keep reading
+                        }
+                    }
+                }
             }
-            return extractIdObject(sb.toString());
+            return null;
         } catch (Exception e) {
             return null;
         } finally {

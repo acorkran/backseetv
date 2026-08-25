@@ -42,12 +42,16 @@ public class RemoteActivity extends Activity {
     final Handler ui = new Handler(Looper.getMainLooper());
     SharedPreferences prefs;
 
-    View playlistsView, controlsView;
+    View queueView;                         // kept so showTab() can refresh the queue when it's shown
     TextView statusDot, nowTitle, timeLabel, upNext, volLabel;
     SeekBar seek;
-    Button powerBtn, tabPlaylists, tabControls;
+    Button powerBtn;
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
+    LinearLayout queueList;                 // dynamic queue rows live here
     volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
+    final java.util.ArrayList<View> mTabViews = new java.util.ArrayList<>();   // generic N-tab plumbing
+    final java.util.ArrayList<String> mTabLabels = new java.util.ArrayList<>();
+    final java.util.ArrayList<Button> mTabBtns = new java.util.ArrayList<>();
 
     volatile boolean polling = false, seeking = false, napping = false;
     volatile int curVol = 0;
@@ -59,7 +63,7 @@ public class RemoteActivity extends Activity {
         kodi.setPinned(prefs.getString("wifi", ""), prefs.getString("bt", ""));  // optional overrides
         kodi.setLast(prefs.getString("lastip", ""));                             // fast-path cache
         setContentView(buildUi());
-        showTab(true);
+        showTab(0);
     }
 
     @Override protected void onResume() { super.onResume(); startPoll(); }
@@ -77,14 +81,20 @@ public class RemoteActivity extends Activity {
         root.addView(topBar());
 
         FrameLayout content = new FrameLayout(this);
-        playlistsView = playlistsTab();
-        controlsView = controlsTab();
-        content.addView(playlistsView);
-        content.addView(controlsView);
+        addTab(content, "Playlists", playlistsTab());
+        addTab(content, "Queue", queueView = queueTab());
+        addTab(content, "Controls", controlsTab());
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(bottomBar());
         return root;
+    }
+
+    void addTab(FrameLayout content, String label, View v) {
+        v.setVisibility(View.GONE);   // showTab() reveals the current one
+        content.addView(v);
+        mTabViews.add(v);
+        mTabLabels.add(label);
     }
 
     LinearLayout topBar() {
@@ -181,6 +191,90 @@ public class RemoteActivity extends Activity {
         } catch (Exception e) {}
     }
 
+    // ---------------- queue tab ----------------
+
+    View queueTab() {
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        queueList = new LinearLayout(this);
+        queueList.setOrientation(LinearLayout.VERTICAL);
+        queueList.setPadding(dp(8), dp(8), dp(8), dp(8));
+        sv.addView(queueList);
+        return sv;
+    }
+
+    /** Pull the current play queue (a window from the playing item onward - a shuffle can be ~1000
+        items) and render rows: now-playing highlighted, tap a row to jump, ✕ to remove. */
+    void fetchQueue() {
+        bg(() -> {
+            int pos = -1;
+            try { pos = new JSONObject(kodi.rpc("Player.GetProperties", "{\"playerid\":1,\"properties\":[\"position\"]}")).getJSONObject("result").optInt("position", -1); } catch (Exception e) {}
+            final int start = Math.max(0, pos);
+            String r = kodi.rpc("Playlist.GetItems", "{\"playlistid\":1,\"properties\":[\"title\",\"showtitle\",\"season\",\"episode\"],\"limits\":{\"start\":" + start + ",\"end\":" + (start + 150) + "}}");
+            final java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+            int total = 0;
+            try {
+                JSONObject res = new JSONObject(r).getJSONObject("result");
+                total = res.getJSONObject("limits").optInt("total", 0);
+                JSONArray items = res.optJSONArray("items");
+                if (items != null) for (int i = 0; i < items.length(); i++) labels.add(label(items.getJSONObject(i)));
+            } catch (Exception e) {}
+            final int fpos = pos, ftotal = total;
+            ui.post(() -> renderQueue(labels, start, fpos, ftotal));
+        });
+    }
+
+    void renderQueue(java.util.List<String> labels, int start, int pos, int total) {
+        if (queueList == null) return;
+        queueList.removeAllViews();
+        if (labels.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText("Queue is empty");
+            t.setTextColor(SUB); t.setTextSize(16); t.setGravity(Gravity.CENTER); t.setPadding(0, dp(40), 0, 0);
+            queueList.addView(t);
+            return;
+        }
+        TextView hdr = new TextView(this);
+        hdr.setText("Playing " + (pos >= 0 ? (pos + 1) : "?") + " of " + total + (start + labels.size() < total ? "  ·  showing next " + labels.size() : ""));
+        hdr.setTextColor(SUB); hdr.setTextSize(12); hdr.setPadding(dp(4), 0, 0, dp(6));
+        queueList.addView(hdr);
+        for (int i = 0; i < labels.size(); i++) {
+            final int absPos = start + i;
+            boolean now = absPos == pos;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setBackgroundColor(now ? ACCENT : CARD);
+            TextView t = new TextView(this);
+            t.setText((now ? "▶  " : "") + labels.get(i));
+            t.setTextColor(TXT); t.setTextSize(14); t.setPadding(dp(10), dp(12), dp(8), dp(12));
+            t.setMaxLines(1);
+            t.setOnClickListener(v -> jumpTo(absPos));
+            row.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (!now) {   // Kodi won't remove the currently-playing item, so don't offer a dead ✕ on it
+                Button x = new Button(this);
+                x.setText("✕"); x.setAllCaps(false); x.setTextColor(SUB); x.setTextSize(15);
+                x.setBackgroundColor(CARD);
+                x.setOnClickListener(v -> removeAt(absPos));
+                row.addView(x, new LinearLayout.LayoutParams(dp(46), dp(46)));
+            } else {
+                row.addView(new View(this), new LinearLayout.LayoutParams(dp(46), dp(46)));   // keep alignment
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, dp(2), 0, 0);
+            queueList.addView(row, lp);
+        }
+    }
+
+    void jumpTo(final int pos) {
+        bg(() -> kodi.rpc("Player.GoTo", "{\"playerid\":1,\"to\":" + pos + "}"));
+        ui.postDelayed(this::fetchQueue, 900);
+    }
+
+    void removeAt(final int pos) {
+        bg(() -> kodi.rpc("Playlist.Remove", "{\"playlistid\":1,\"position\":" + pos + "}"));
+        ui.postDelayed(this::fetchQueue, 500);
+    }
+
     View controlsTab() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -267,19 +361,22 @@ public class RemoteActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setBackgroundColor(CARD);
-        tabPlaylists = plainBtn("Playlists", v -> showTab(true));
-        tabControls = plainBtn("Controls", v -> showTab(false));
-        tabPlaylists.setTextColor(TXT); tabControls.setTextColor(TXT);
-        bar.addView(tabPlaylists, new LinearLayout.LayoutParams(0, dp(52), 1f));
-        bar.addView(tabControls, new LinearLayout.LayoutParams(0, dp(52), 1f));
+        for (int i = 0; i < mTabLabels.size(); i++) {
+            final int idx = i;
+            Button b = plainBtn(mTabLabels.get(i), v -> showTab(idx));
+            b.setTextColor(TXT);
+            mTabBtns.add(b);
+            bar.addView(b, new LinearLayout.LayoutParams(0, dp(52), 1f));
+        }
         return bar;
     }
 
-    void showTab(boolean playlists) {
-        playlistsView.setVisibility(playlists ? View.VISIBLE : View.GONE);
-        controlsView.setVisibility(playlists ? View.GONE : View.VISIBLE);
-        tabPlaylists.setBackgroundColor(playlists ? ACCENT : CARD);
-        tabControls.setBackgroundColor(playlists ? CARD : ACCENT);
+    void showTab(int idx) {
+        for (int i = 0; i < mTabViews.size(); i++) {
+            mTabViews.get(i).setVisibility(i == idx ? View.VISIBLE : View.GONE);
+            if (i < mTabBtns.size()) mTabBtns.get(i).setBackgroundColor(i == idx ? ACCENT : CARD);
+        }
+        if (queueView != null && mTabViews.get(idx) == queueView) fetchQueue();
     }
 
     // small view helpers
