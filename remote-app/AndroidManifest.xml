@@ -6,7 +6,8 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application android:label="KidsTV Remote" android:icon="@android:drawable/ic_media_play"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
         <activity android:name=".RemoteActivity"
             android:exported="true"
             android:screenOrientation="portrait"
