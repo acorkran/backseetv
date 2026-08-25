@@ -63,6 +63,11 @@ public class KioskActivity extends Activity {
     static final long HOME_LAUNCH_MS = 8000;    // Home-press: give the admin time to escape
     static boolean sFirstShow = true;           // false after the first (boot) launcher
 
+    // admin-menu UI palette (matches the remote app)
+    static final int BG = 0xFF10151C, CARD = 0xFF1B2735, BTN = 0xFF35516E, ACCENT = 0xFF2F6FEB;
+    static final int TXT = 0xFFFFFFFF, SUB = 0xFF9DB0C6, GOOD = 0xFF33C05B, WARN = 0xFFE0653D;
+    volatile boolean mAdminMode = false;        // true while the post-PIN admin menu is showing
+
     final android.os.Handler mHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     Runnable mAuto;
     volatile int mNavGen = 0;
@@ -96,6 +101,7 @@ public class KioskActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (mAdminMode) return;   // the post-PIN admin menu is up; don't foreground Kodi over it
         boolean owner = dpm.isDeviceOwnerApp(getPackageName());
 
         // Waking from a Yatse "nap" (screen was blanked): turn the display back on, then
@@ -217,30 +223,60 @@ public class KioskActivity extends Activity {
         }}).start();
     }
 
-    /** Re-lock after a cancelled/failed admin escape: overlay back up, back to the show. */
-    void reLock() { bridge(null); launchKodi(); }
+    /** Re-lock after a cancelled/failed admin escape (or "Back to kids mode"): overlay back up, back
+        to the show. */
+    void reLock() { mAdminMode = false; bridge(null); launchKodi(); }
 
-    /** Send a JSON-RPC request over Kodi's TCP 9090 and return the id:1 response object. */
+    /** In the admin menu, Back returns to kids mode rather than closing the (HOME) activity. */
+    @Override public void onBackPressed() {
+        if (mAdminMode) { reLock(); return; }
+        super.onBackPressed();
+    }
+
+    /** Send a JSON-RPC request over Kodi's TCP 9090 and return the id:1 response object. Reads until a
+        COMPLETE top-level JSON object arrives (container depth tracked on raw bytes) - the old
+        "stop as soon as I see id:1+result" heuristic TRUNCATED big replies (e.g. Files.GetDirectory)
+        mid-array, parsing to empty. A leading unsolicited notification is skipped. */
     String rpc(String req) throws Exception {
         Socket s = new Socket();
-        s.connect(new InetSocketAddress("127.0.0.1", 9090), 1500);
-        s.setSoTimeout(3000);
-        s.getOutputStream().write(req.getBytes("UTF-8"));
-        s.getOutputStream().flush();
-        InputStream in = s.getInputStream();
-        StringBuilder sb = new StringBuilder();
-        byte[] buf = new byte[8192];
         try {
-            while (sb.length() < 1000000) {
+            s.connect(new InetSocketAddress("127.0.0.1", 9090), 1500);
+            s.setSoTimeout(3000);
+            s.getOutputStream().write(req.getBytes("UTF-8"));
+            s.getOutputStream().flush();
+            InputStream in = s.getInputStream();
+            java.io.ByteArrayOutputStream obj = new java.io.ByteArrayOutputStream();
+            int depth = 0; boolean started = false, inStr = false, esc = false;
+            byte[] buf = new byte[8192]; long total = 0;
+            while (total < 8_000_000) {
                 int n = in.read(buf);
                 if (n < 0) break;
-                sb.append(new String(buf, 0, n, "UTF-8"));
-                String cur = sb.toString();
-                if (cur.contains("\"id\":1") && (cur.contains("\"result\"") || cur.contains("\"error\""))) break;
+                total += n;
+                for (int i = 0; i < n; i++) {
+                    byte b = buf[i];
+                    obj.write(b);
+                    if (inStr) {
+                        if (esc) esc = false;
+                        else if (b == '\\') esc = true;
+                        else if (b == '"') inStr = false;
+                    } else if (b == '"') inStr = true;
+                    else if (b == '{' || b == '[') { depth++; started = true; }
+                    else if (b == '}' || b == ']') {
+                        depth--;
+                        if (started && depth == 0) {
+                            String os = new String(obj.toByteArray(), "UTF-8").trim();
+                            if (os.contains("\"id\":1")) return os;
+                            obj.reset(); started = false;   // skip a leading notification, keep reading
+                        }
+                    }
+                }
             }
-        } catch (Exception te) { /* timeout: use what we have */ }
-        s.close();
-        return extractIdObject(sb.toString());
+            return "{}";
+        } catch (Exception te) {
+            return "{}";
+        } finally {
+            try { s.close(); } catch (Exception e) {}
+        }
     }
 
     String extractIdObject(String data) {
@@ -360,7 +396,7 @@ public class KioskActivity extends Activity {
                     for (int i = 0; i < entered.length(); i++) mask.append("● ");
                     disp.setText(mask.length() > 0 ? mask.toString().trim() : "Enter admin PIN");
                     if (entered.length() >= pin.length()) {
-                        if (entered.toString().equals(pin)) { mPinShowing = false; dlg.dismiss(); unlockToFullTablet(); }
+                        if (entered.toString().equals(pin)) { mPinShowing = false; dlg.dismiss(); showAdminMenu(); }
                         else { entered.setLength(0); disp.setText("Wrong — try again"); }
                     }
                 });
@@ -382,6 +418,7 @@ public class KioskActivity extends Activity {
     /** Drop kiosk enforcement and hand over to the real launcher. Device owner is KEPT
         so re-opening the KidsTV app re-locks. */
     void unlockToFullTablet() {
+        mAdminMode = false;
         bridge(BridgeService.ACTION_REMOVE_OVERLAY);
         try { stopLockTask(); } catch (Exception e) {}
         if (dpm.isDeviceOwnerApp(getPackageName())) {
@@ -401,6 +438,192 @@ public class KioskActivity extends Activity {
             startActivity(home);
         } catch (Exception e) {}
         finish();
+    }
+
+    // ---------------- in-app admin menu (post-PIN; drive the tablet without a phone) ----------------
+
+    int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+    void bg(Runnable r) { new Thread(r).start(); }
+
+    Button plainBtn(String label, View.OnClickListener onClick) {
+        Button b = new Button(this);
+        b.setText(label); b.setAllCaps(false); b.setBackgroundColor(CARD); b.setOnClickListener(onClick);
+        return b;
+    }
+    Button cardBtn(String label, View.OnClickListener onClick) {
+        Button b = new Button(this);
+        b.setText(label); b.setAllCaps(false); b.setTextColor(TXT); b.setTextSize(16);
+        b.setBackgroundColor(BTN); b.setOnClickListener(onClick);
+        return b;
+    }
+    LinearLayout row() { LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); return r; }
+    LinearLayout.LayoutParams eqp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(56), 1f); lp.setMargins(dp(4), dp(4), dp(4), dp(4)); return lp;
+    }
+    LinearLayout.LayoutParams wide() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)); lp.setMargins(0, dp(8), 0, 0); return lp;
+    }
+    void section(LinearLayout col, String title) {
+        TextView h = new TextView(this);
+        h.setText(title); h.setTextColor(ACCENT); h.setTextSize(14); h.setPadding(dp(2), dp(16), 0, dp(4));
+        col.addView(h);
+    }
+
+    /** Build + send a JSON-RPC call over 9090. Callers run it off the main thread. */
+    String rpc(String method, String params) {
+        try { return rpc("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\"" + (params != null ? ",\"params\":" + params : "") + "}"); }
+        catch (Exception e) { return "{}"; }
+    }
+    /** Fire-and-forget a Kodi command from the admin menu. */
+    void input(final String method, final String params) { bg(() -> rpc(method, params)); }
+
+    void volDelta(final int d) {
+        bg(() -> {
+            int cur = 0;
+            try { cur = new JSONObject(rpc("Application.GetProperties", "{\"properties\":[\"volume\"]}")).getJSONObject("result").getInt("volume"); } catch (Exception e) {}
+            int next = Math.max(0, Math.min(100, cur + d));
+            rpc("Application.SetVolume", "{\"volume\":" + next + "}");
+        });
+    }
+
+    int watchdogSec() {
+        try { return Settings.Global.getInt(getContentResolver(), "kiosk_watchdog_sec", 45); } catch (Exception e) { return 45; }
+    }
+    void setWatchdogSec(int s) {
+        try { Settings.Global.putInt(getContentResolver(), "kiosk_watchdog_sec", s); }
+        catch (Exception e) {
+            android.widget.Toast.makeText(this, "Can't save — grant WRITE_SECURE_SETTINGS via adb", android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** The post-PIN admin surface: playback controls + the tablet's real playlists + a couple of
+        settings + exit options - so the tablet is usable without the phone remote. */
+    void showAdminMenu() {
+        mAdminMode = true;
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.setBackgroundColor(BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(16), dp(16), dp(16), dp(28));
+        sv.addView(col);
+
+        TextView title = new TextView(this);
+        title.setText("KidsTV — Admin");
+        title.setTextColor(TXT); title.setTextSize(24); title.setPadding(0, 0, 0, dp(4));
+        col.addView(title);
+
+        section(col, "Playback");
+        LinearLayout ctl = row();
+        ctl.addView(cardBtn("⏮", v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"previous\"}")), eqp());
+        ctl.addView(cardBtn("⏯", v -> input("Player.PlayPause", "{\"playerid\":1}")), eqp());
+        ctl.addView(cardBtn("⏭", v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"next\"}")), eqp());
+        col.addView(ctl);
+        LinearLayout vol = row();
+        vol.addView(cardBtn("🔉  −", v -> volDelta(-6)), eqp());
+        vol.addView(cardBtn("+  🔊", v -> volDelta(6)), eqp());
+        col.addView(vol);
+
+        section(col, "Playlists");
+        final LinearLayout plHolder = new LinearLayout(this);
+        plHolder.setOrientation(LinearLayout.VERTICAL);
+        TextView loading = new TextView(this);
+        loading.setText("Loading…"); loading.setTextColor(SUB); loading.setPadding(dp(4), dp(6), 0, dp(6));
+        plHolder.addView(loading);
+        col.addView(plHolder);
+        fetchPlaylistsInto(plHolder);
+
+        section(col, "Settings");
+        final int wsec = watchdogSec();
+        final TextView wl = new TextView(this);
+        wl.setTextColor(TXT); wl.setPadding(dp(4), dp(2), 0, dp(4));
+        wl.setText("Auto-restart if stuck: " + (wsec == 0 ? "off" : wsec + "s"));
+        col.addView(wl);
+        LinearLayout wrow = row();
+        final int[] secs = {0, 30, 45, 60, 90};
+        final Button[] wbtns = new Button[secs.length];
+        for (int i = 0; i < secs.length; i++) {
+            final int val = secs[i];
+            Button b = cardBtn(val == 0 ? "off" : (val + "s"), null);
+            b.setTextSize(14);
+            b.setBackgroundColor(val == wsec ? ACCENT : BTN);
+            b.setOnClickListener(v -> {
+                setWatchdogSec(val);
+                wl.setText("Auto-restart if stuck: " + (val == 0 ? "off" : val + "s"));
+                for (int j = 0; j < secs.length; j++) wbtns[j].setBackgroundColor(secs[j] == val ? ACCENT : BTN);
+            });
+            wbtns[i] = b;
+            wrow.addView(b, eqp());
+        }
+        col.addView(wrow);
+        Button restart = cardBtn("↻  Restart Kodi", v -> {
+            android.widget.Toast.makeText(this, "Restarting Kodi…", android.widget.Toast.LENGTH_SHORT).show();
+            input("Application.Quit", null);   // HOME relaunches Kodi fresh; the addon resumes
+        });
+        col.addView(restart, wide());
+
+        section(col, "");
+        Button back = cardBtn("◀  Back to kids mode", v -> reLock());
+        back.setBackgroundColor(0xFF2C7A3F);
+        col.addView(back, wide());
+        Button exit = cardBtn("⏏  Exit to full tablet", v -> unlockToFullTablet());
+        exit.setBackgroundColor(WARN);
+        col.addView(exit, wide());
+
+        setContentView(sv);
+    }
+
+    /** Pull the tablet's real .xsp smart playlists (local Kodi 9090) and render tiles into `holder`. */
+    void fetchPlaylistsInto(final LinearLayout holder) {
+        bg(() -> {
+            final java.util.ArrayList<String[]> pls = new java.util.ArrayList<>();   // {label, file}
+            try {
+                JSONArray files = new JSONObject(rpc("Files.GetDirectory",
+                        "{\"directory\":\"special://profile/playlists/video/\",\"media\":\"video\"}"))
+                        .getJSONObject("result").getJSONArray("files");
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject f = files.getJSONObject(i);
+                    String file = f.optString("file", ""), label = f.optString("label", "");
+                    if (file.toLowerCase().endsWith(".xsp") && label.length() > 0) pls.add(new String[]{label, file});
+                }
+            } catch (Exception e) {}
+            mHandler.post(() -> {
+                holder.removeAllViews();
+                if (pls.isEmpty()) {
+                    TextView t = new TextView(this);
+                    t.setText("(no playlists found)"); t.setTextColor(SUB); t.setPadding(dp(4), dp(6), 0, dp(6));
+                    holder.addView(t);
+                    return;
+                }
+                for (int r = 0; r < pls.size(); r += 2) {
+                    LinearLayout rr = row();
+                    for (int c = 0; c < 2; c++) {
+                        int idx = r + c;
+                        if (idx < pls.size()) {
+                            final String label = pls.get(idx)[0], file = pls.get(idx)[1];
+                            rr.addView(cardBtn(label, v -> playAdminPlaylist(label, file)), eqp());
+                        } else {
+                            rr.addView(new View(this), eqp());
+                        }
+                    }
+                    holder.addView(rr);
+                }
+            });
+        });
+    }
+
+    /** Clear the queue + load a smart playlist (shuffle only the all-shows mix). Mirrors the remote. */
+    void playAdminPlaylist(final String label, final String file) {
+        final String l = label.toLowerCase();
+        final boolean shuffle = l.contains("shuffle") || l.contains("all") || file.toLowerCase().contains("shuffleall");
+        android.widget.Toast.makeText(this, label, android.widget.Toast.LENGTH_SHORT).show();
+        bg(() -> {
+            rpc("Playlist.Clear", "{\"playlistid\":1}");
+            rpc("Playlist.Add", "{\"playlistid\":1,\"item\":{\"directory\":\"" + file + "\"}}");
+            rpc("Player.Open", "{\"item\":{\"playlistid\":1}}");
+            try { Thread.sleep(700); } catch (Exception e) {}
+            rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":" + shuffle + "}");
+            rpc("Player.SetRepeat", "{\"playerid\":1,\"repeat\":\"all\"}");
+        });
     }
 
     void showMessage(String msg) {
