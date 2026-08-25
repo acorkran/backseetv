@@ -340,18 +340,22 @@ public class RemoteActivity extends Activity {
             requestPermissions(new String[]{perm}, 7);   // onRequestPermissionsResult re-fetches on grant
             return;
         }
+        final java.util.Set<String> avoid = avoidedBuckets();   // folders the user unticked in settings
         bg(() -> {
             final java.util.ArrayList<String[]> rows = new java.util.ArrayList<>();
             try {
                 android.net.Uri coll = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-                String[] proj = { android.provider.MediaStore.Video.Media._ID, android.provider.MediaStore.Video.Media.DISPLAY_NAME, android.provider.MediaStore.Video.Media.SIZE };
+                String[] proj = { android.provider.MediaStore.Video.Media._ID, android.provider.MediaStore.Video.Media.DISPLAY_NAME, android.provider.MediaStore.Video.Media.SIZE, android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME };
                 android.database.Cursor c = getContentResolver().query(coll, proj, null, null, android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC");
                 if (c != null) {
                     int iId = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media._ID);
                     int iNm = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME);
                     int iSz = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.SIZE);
+                    int iBk = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
                     int count = 0;
                     while (c.moveToNext() && count < 300) {
+                        String bk = c.getString(iBk);
+                        if (bk != null && avoid.contains(bk)) continue;   // folder unticked in settings
                         long id = c.getLong(iId), sz = c.getLong(iSz);
                         String nm = c.getString(iNm); if (nm == null) nm = "video_" + id;
                         rows.add(new String[]{ nm, android.content.ContentUris.withAppendedId(coll, id).toString(), String.valueOf(sz) });
@@ -495,14 +499,14 @@ public class RemoteActivity extends Activity {
 
         // volume row
         LinearLayout vr = row(); marginTop(vr, 10);
-        vr.addView(cardBtn("−", v -> volDelta(-8)), eq());
+        vr.addView(cardBtn("−", v -> volDelta(-volStep())), eq());
         volLabel = new TextView(this);
         volLabel.setText("🔊 --");
         volLabel.setTextColor(TXT);
         volLabel.setTextSize(16);
         volLabel.setGravity(Gravity.CENTER);
         vr.addView(volLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f));
-        vr.addView(cardBtn("+", v -> volDelta(8)), eq());
+        vr.addView(cardBtn("+", v -> volDelta(volStep())), eq());
         vr.addView(cardBtn("Mute", v -> toggleMute()), eq());
         col.addView(vr);
 
@@ -762,40 +766,115 @@ public class RemoteActivity extends Activity {
     void settings() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(10), dp(20), dp(0));
+        box.setPadding(dp(20), dp(6), dp(20), dp(0));
 
+        // --- Connection ---
+        sectionHeader(box, "Connection");
         TextView info = new TextView(this);
-        info.setText("The remote finds the tablet automatically on your hotspot. The IPs below are optional overrides — leave blank for auto.");
+        info.setText("Finds the tablet automatically on your hotspot. IPs are optional overrides — blank = auto.");
         info.setTextColor(SUB); info.setTextSize(12);
         box.addView(info);
-
         final EditText wifi = new EditText(this);
-        wifi.setHint("auto");
-        wifi.setInputType(InputType.TYPE_CLASS_TEXT);
-        wifi.setText(prefs.getString("wifi", ""));
+        wifi.setHint("auto"); wifi.setInputType(InputType.TYPE_CLASS_TEXT); wifi.setText(prefs.getString("wifi", ""));
         final EditText bt = new EditText(this);
-        bt.setHint("auto");
-        bt.setInputType(InputType.TYPE_CLASS_TEXT);
-        bt.setText(prefs.getString("bt", ""));
+        bt.setHint("auto"); bt.setInputType(InputType.TYPE_CLASS_TEXT); bt.setText(prefs.getString("bt", ""));
         TextView l1 = new TextView(this); l1.setText("WiFi IP (optional)"); l1.setTextColor(TXT); box.addView(l1); box.addView(wifi);
         TextView l2 = new TextView(this); l2.setText("Bluetooth IP (optional)"); l2.setTextColor(TXT); box.addView(l2); box.addView(bt);
+        LinearLayout.LayoutParams lpf = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lpf.setMargins(0, dp(10), 0, 0);
+        LinearLayout.LayoutParams lph = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lph.setMargins(0, dp(6), 0, 0);
+        box.addView(cardBtn("🔍  Find tablet now", v -> rescan()), lpf);
+        box.addView(cardBtn("📶  Hotspot settings", v -> openHotspotSettings()), lph);
 
-        Button find = cardBtn("🔍  Find tablet now", v -> rescan());
-        Button hot = cardBtn("📶  Hotspot settings", v -> openHotspotSettings());
-        LinearLayout.LayoutParams lpf = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)); lpf.setMargins(0, dp(12), 0, 0);
-        LinearLayout.LayoutParams lph = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)); lph.setMargins(0, dp(8), 0, 0);
-        box.addView(find, lpf);
-        box.addView(hot, lph);
+        // --- Phone media folders (Files -> Phone source) ---
+        sectionHeader(box, "Phone media folders");
+        TextView finfo = new TextView(this);
+        finfo.setText("Folders scanned for the Files → Phone list. Untick one to hide it.");
+        finfo.setTextColor(SUB); finfo.setTextSize(12); box.addView(finfo);
+        final java.util.List<String> buckets = queryVideoBuckets();
+        final java.util.Set<String> avoided = avoidedBuckets();
+        final java.util.ArrayList<android.widget.CheckBox> boxes = new java.util.ArrayList<>();
+        if (buckets.isEmpty()) {
+            TextView none = new TextView(this);
+            none.setText("(open Files → Phone once to grant media access, then folders appear here)");
+            none.setTextColor(SUB); none.setTextSize(12); box.addView(none);
+        } else {
+            for (String b : buckets) {
+                android.widget.CheckBox cb = new android.widget.CheckBox(this);
+                cb.setText(b); cb.setTextColor(TXT); cb.setChecked(!avoided.contains(b));
+                cb.setTag(b);
+                box.addView(cb); boxes.add(cb);
+            }
+        }
 
+        // --- Playback ---
+        sectionHeader(box, "Playback");
+        TextView vlab = new TextView(this); vlab.setText("Volume step (the ± buttons)"); vlab.setTextColor(TXT); box.addView(vlab);
+        LinearLayout vrow = new LinearLayout(this); vrow.setOrientation(LinearLayout.HORIZONTAL);
+        final int[] steps = {2, 5, 8, 10};
+        final int cur = volStep();
+        final Button[] stepBtns = new Button[steps.length];
+        for (int i = 0; i < steps.length; i++) {
+            final int st = steps[i];
+            Button sb = cardBtn(String.valueOf(st), null);
+            sb.setBackgroundColor(st == cur ? ACCENT : BTN);
+            sb.setOnClickListener(v -> { prefs.edit().putInt("vol_step", st).apply(); for (int j = 0; j < steps.length; j++) stepBtns[j].setBackgroundColor(steps[j] == st ? ACCENT : BTN); });
+            stepBtns[i] = sb;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f); lp.setMargins(dp(4), dp(6), dp(4), dp(6));
+            vrow.addView(sb, lp);
+        }
+        box.addView(vrow);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
         new AlertDialog.Builder(this)
-            .setTitle("Connection")
-            .setView(box)
+            .setTitle("Settings")
+            .setView(sv)
             .setPositiveButton("Save", (d, w) -> {
                 String w1 = wifi.getText().toString().trim(), bb = bt.getText().toString().trim();
-                prefs.edit().putString("wifi", w1).putString("bt", bb).apply();
+                java.util.HashSet<String> avoid = new java.util.HashSet<>();
+                for (android.widget.CheckBox cb : boxes) if (!cb.isChecked()) avoid.add((String) cb.getTag());
+                prefs.edit().putString("wifi", w1).putString("bt", bb)
+                     .putString("avoid_buckets", android.text.TextUtils.join("\n", avoid)).apply();
                 kodi.setPinned(w1, bb);
+                if (filesView != null && filesView.getVisibility() == View.VISIBLE && mFileSrc == 1) fetchPhoneFiles();
             })
             .setNegativeButton("Close", null)
             .show();
+    }
+
+    void sectionHeader(LinearLayout box, String title) {
+        TextView h = new TextView(this);
+        h.setText(title); h.setTextColor(ACCENT); h.setTextSize(15);
+        h.setPadding(0, dp(18), 0, dp(4));
+        box.addView(h);
+    }
+
+    int volStep() { return prefs.getInt("vol_step", 8); }
+
+    java.util.Set<String> avoidedBuckets() {
+        java.util.HashSet<String> s = new java.util.HashSet<>();
+        String v = prefs.getString("avoid_buckets", "");
+        if (v.length() > 0) for (String p : v.split("\n")) if (p.length() > 0) s.add(p);
+        return s;
+    }
+
+    /** Distinct folder names that contain videos on the phone (for the scan/avoid list). */
+    java.util.List<String> queryVideoBuckets() {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        String perm = (android.os.Build.VERSION.SDK_INT >= 33) ? android.Manifest.permission.READ_MEDIA_VIDEO : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+        if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) return out;
+        try {
+            android.database.Cursor c = getContentResolver().query(
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                new String[]{ android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME },
+                null, null, android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME + " ASC");
+            if (c != null) {
+                int i = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
+                while (c.moveToNext()) { String b = c.getString(i); if (b != null && seen.add(b)) out.add(b); }
+                c.close();
+            }
+        } catch (Exception e) {}
+        return out;
     }
 }
