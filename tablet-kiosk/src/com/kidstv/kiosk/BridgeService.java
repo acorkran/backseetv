@@ -156,6 +156,7 @@ public class BridgeService extends Service {
             Thread w = new Thread(new Runnable() { public void run() { watchdog(); } });
             w.setDaemon(true);
             w.start();
+            startCameraMonitor();
         }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
         // an explicit REMOVE_OVERLAY (admin escape / unlock) takes it down.
@@ -353,6 +354,22 @@ public class BridgeService extends Service {
 
     void releaseNapLock() {
         try { if (mNapLock != null && mNapLock.isHeld()) mNapLock.release(); } catch (Exception e) {}
+    }
+
+    /** Best-effort kick of the child-monitor camera capture service (separate Gradle app
+        com.kidstv.cameramon). KNOWN LIMIT (verified on a real Android-13 reboot): this does NOT
+        actually start it - the device-owner exemption lets US call startForegroundService, but the
+        camera app's own startForeground(CAMERA type) is still blocked because a camera/while-in-use FGS
+        can't be started while that app is in the background. The camera reliably starts only from its
+        OWN foreground (open the app once, or via the admin menu). Left as scaffolding; the proper
+        auto-start needs a brief foreground launch of the camera app at boot (a lock-task-whitelisted
+        MainActivity that starts the service then hands back to Kodi). Harmless if it no-ops. */
+    void startCameraMonitor() {
+        try {
+            Intent ci = new Intent();
+            ci.setComponent(new ComponentName("com.kidstv.cameramon", "com.kidstv.cameramon.CaptureService"));
+            startForegroundService(ci);
+        } catch (Throwable t) { Log.w(TAG, "cameramon start: " + t); }
     }
 
     // ---- Kodi-GUI watchdog: the tier ABOVE service.py's in-Kodi self-heal ----
