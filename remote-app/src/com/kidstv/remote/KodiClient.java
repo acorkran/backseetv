@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 class KodiClient {
     static final int PORT = 9090;
+    static final int BRIDGE_PORT = 8080;   // the kiosk's HTTP bridge - nap/wake interception lives here
     static final String PING = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.Ping\"}";
 
     private volatile String activeHost;   // IP currently reaching Kodi (null = disconnected)
@@ -164,6 +165,32 @@ class KodiClient {
         String req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\""
             + (paramsJson != null ? ",\"params\":" + paramsJson : "") + "}";
         return rpc(req);
+    }
+
+    /** POST a JSON-RPC to the kiosk's HTTP bridge (8080), NOT Kodi's raw 9090. The kiosk
+        INTERCEPTS System.Shutdown/Reboot there to nap/wake the tablet - stop playback + blank &
+        LOCK the screen (dpm.lockNow), and the reverse - a real device lock Kodi on 9090 can't do.
+        Reuses the already-discovered host (works over WiFi or BT alike). Returns true on HTTP 200. */
+    boolean bridge(String json) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return false; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            java.net.URL url = new java.net.URL("http://" + host + ":" + BRIDGE_PORT + "/jsonrpc");
+            con = (java.net.HttpURLConnection) url.openConnection();
+            con.setConnectTimeout(2500); con.setReadTimeout(4000);
+            con.setRequestMethod("POST");
+            con.setRequestProperty("Content-Type", "application/json");
+            con.setDoOutput(true);
+            con.getOutputStream().write(json.getBytes("UTF-8"));
+            int code = con.getResponseCode();
+            try { con.getInputStream().close(); } catch (Exception e) {}
+            return code == 200;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
     }
 
     private String call(String host, String req, int timeoutMs) {

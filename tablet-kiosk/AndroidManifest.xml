@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <!-- full-screen transparent overlay that swallows all touches to Kodi (kid-proofing) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <!-- receive phone->tablet file uploads (over the 8080 bridge) into shared storage so Kodi can
+         play them; granted via: adb shell appops set com.kidstv.kiosk MANAGE_EXTERNAL_STORAGE allow -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <!-- run the bridge/overlay process foreground so LMK can't reap it during Kodi's boot storm -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>

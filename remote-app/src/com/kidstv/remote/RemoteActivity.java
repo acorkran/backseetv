@@ -33,9 +33,7 @@ import org.json.JSONObject;
  */
 public class RemoteActivity extends Activity {
 
-    static final String PL = "special://profile/playlists/video/";
-    static final String[] PL_NAMES = {"Shuffle All", "Ms Rachel", "Bluey", "Naptime", "Big Lizard", "Mini Kids"};
-    static final String[] PL_FILES = {"ShuffleAll.xsp", "MsRachel.xsp", "Bluey.xsp", "Naptime.xsp", "BigLizard.xsp", "MiniKids.xsp"};
+    static final String PLAYLIST_DIR = "special://profile/playlists/video/";  // enumerated live, no hardcoded list
 
     static final int BG = 0xFF10151C, CARD = 0xFF1B2735, BTN = 0xFF35516E, ACCENT = 0xFF2F6FEB;
     static final int TXT = 0xFFFFFFFF, SUB = 0xFF9DB0C6, GOOD = 0xFF33C05B, WARN = 0xFFE0653D;
@@ -48,6 +46,8 @@ public class RemoteActivity extends Activity {
     TextView statusDot, nowTitle, timeLabel, upNext, volLabel;
     SeekBar seek;
     Button powerBtn, tabPlaylists, tabControls;
+    LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
+    volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
 
     volatile boolean polling = false, seeking = false, napping = false;
     volatile int curVol = 0;
@@ -121,22 +121,64 @@ public class RemoteActivity extends Activity {
     }
 
     View playlistsTab() {
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(10), dp(10), dp(10), dp(10));
-        for (int r = 0; r < 3; r++) {
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        playlistGrid = new LinearLayout(this);
+        playlistGrid.setOrientation(LinearLayout.VERTICAL);
+        playlistGrid.setPadding(dp(10), dp(10), dp(10), dp(10));
+        sv.addView(playlistGrid);
+        renderPlaylists();   // placeholder until fetchPlaylists() populates mPlaylists
+        return sv;
+    }
+
+    /** (Re)build the playlist tiles from mPlaylists on the UI thread — two per row, scrollable, since
+        the list is now the device's ACTUAL playlists and can be any length. */
+    void renderPlaylists() {
+        if (playlistGrid == null) return;
+        playlistGrid.removeAllViews();
+        String[][] pls = mPlaylists;
+        if (pls == null || pls.length == 0) {
+            TextView t = new TextView(this);
+            t.setText(pls == null ? "Loading playlists…" : "No playlists on the tablet");
+            t.setTextColor(SUB); t.setTextSize(16); t.setGravity(Gravity.CENTER);
+            t.setPadding(0, dp(40), 0, 0);
+            playlistGrid.addView(t);
+            return;
+        }
+        for (int r = 0; r < pls.length; r += 2) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             for (int c = 0; c < 2; c++) {
-                final int idx = r * 2 + c;
-                Button t = cardBtn(PL_NAMES[idx], v -> playPlaylist(idx));
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(110), 1f);
                 lp.setMargins(dp(6), dp(6), dp(6), dp(6));
-                row.addView(t, lp);
+                int idx = r + c;
+                if (idx < pls.length) {
+                    final String label = pls[idx][0], file = pls[idx][1];
+                    row.addView(cardBtn(label, v -> playPlaylist(label, file)), lp);
+                } else {
+                    row.addView(new View(this), lp);   // keep the final row aligned
+                }
             }
-            col.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+            playlistGrid.addView(row);
         }
-        return col;
+    }
+
+    /** Pull the tablet's real smart playlists (the .xsp files) live so the tab mirrors whatever's on
+        the device — no hardcoded set. Runs on a bg thread; posts a UI rebuild. */
+    void fetchPlaylists() {
+        String r = kodi.rpc("Files.GetDirectory", "{\"directory\":\"" + PLAYLIST_DIR + "\",\"media\":\"video\"}");
+        if (r == null) return;
+        try {
+            JSONArray files = new JSONObject(r).getJSONObject("result").getJSONArray("files");
+            java.util.ArrayList<String[]> out = new java.util.ArrayList<>();
+            for (int i = 0; i < files.length(); i++) {
+                JSONObject f = files.getJSONObject(i);
+                String file = f.optString("file", "");
+                String label = f.optString("label", "");
+                if (file.toLowerCase().endsWith(".xsp") && label.length() > 0) out.add(new String[]{label, file});
+            }
+            mPlaylists = out.toArray(new String[0][]);
+            ui.post(() -> renderPlaylists());
+        } catch (Exception e) {}
     }
 
     View controlsTab() {
@@ -275,12 +317,14 @@ public class RemoteActivity extends Activity {
         bg(() -> kodi.rpc(method, params));
     }
 
-    void playPlaylist(final int idx) {
-        final boolean shuffle = idx == 0;
-        Toast.makeText(this, PL_NAMES[idx], Toast.LENGTH_SHORT).show();
+    void playPlaylist(final String label, final String file) {
+        final String l = label.toLowerCase();
+        // shuffle the all-shows mixes; play a specific show/playlist in order (mirrors the kiosk's rule)
+        final boolean shuffle = l.contains("shuffle") || l.contains("all") || file.toLowerCase().contains("shuffleall");
+        Toast.makeText(this, label, Toast.LENGTH_SHORT).show();
         bg(() -> {
             kodi.rpc("Playlist.Clear", "{\"playlistid\":1}");
-            kodi.rpc("Playlist.Add", "{\"playlistid\":1,\"item\":{\"directory\":\"" + PL + PL_FILES[idx] + "\"}}");
+            kodi.rpc("Playlist.Add", "{\"playlistid\":1,\"item\":{\"directory\":\"" + file + "\"}}");
             kodi.rpc("Player.Open", "{\"item\":{\"playlistid\":1}}");
             try { Thread.sleep(700); } catch (Exception e) {}
             kodi.rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":" + shuffle + "}");
@@ -292,7 +336,15 @@ public class RemoteActivity extends Activity {
         final boolean toNap = !napping;
         napping = toNap;
         updatePowerBtn();
-        bg(() -> kodi.rpc(toNap ? "System.Shutdown" : "System.Reboot", null));
+        // Route to the kiosk's 8080 bridge (NOT Kodi's 9090): the bridge intercepts these to truly
+        // nap/wake the tablet - stop playback + blank & LOCK the screen (dpm.lockNow), and back.
+        // The old 9090 path never reached that (Kodi can't power off Android), so the button did
+        // nothing useful and could even wedge Kodi.
+        final String m = toNap ? "System.Shutdown" : "System.Reboot";
+        bg(() -> {
+            boolean ok = kodi.bridge("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + m + "\"}");
+            if (!ok) { napping = !toNap; updatePowerBtn(); ui.post(() -> Toast.makeText(this, "Couldn't reach the tablet", Toast.LENGTH_SHORT).show()); }
+        });
     }
 
     void updatePowerBtn() { ui.post(() -> powerBtn.setTextColor(napping ? WARN : GOOD)); }
@@ -341,6 +393,7 @@ public class RemoteActivity extends Activity {
         }
         final boolean conn = kodi.connected();
         if (conn && kodi.activeHost() != null) prefs.edit().putString("lastip", kodi.activeHost()).apply();
+        if (conn && mPlaylists == null) fetchPlaylists();   // load the device's real playlists once
         final String label = kodi.activeLabel();
         String active = conn ? kodi.rpc("Player.GetActivePlayers", null) : null;
         boolean playing = active != null && active.contains("\"playerid\"");

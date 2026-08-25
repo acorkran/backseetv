@@ -62,6 +62,7 @@ public class BridgeService extends Service {
     static final String TAG = "KidsBridge";
     static final int HTTP_PORT = 8080;
     static final int KODI_TCP = 9090;
+    static final String UPLOAD_DIR = "/storage/emulated/0/KidodiUploads";  // phone->tablet uploads land here (played by path)
     static final String CHAN = "kidstv_kiosk";
     static final int NOTIF_ID = 42;
     static final String ACTION_REMOVE_OVERLAY = "com.kidstv.kiosk.REMOVE_OVERLAY";
@@ -569,6 +570,8 @@ public class BridgeService extends Service {
             }
 
             if (method.equalsIgnoreCase("OPTIONS")) { writeResponse(c, ""); c.close(); return; }
+            if (target.startsWith("/uploads")) { handleListUploads(c); return; }   // GET: list uploaded files (check before /upload)
+            if (target.startsWith("/upload")) { handleUpload(target, contentLength, in, c); return; }
 
             String json = null;
             if (method.equalsIgnoreCase("POST") && contentLength > 0) {
@@ -604,6 +607,87 @@ public class BridgeService extends Service {
         } catch (Exception e) {
             try { c.close(); } catch (Exception ce) {}
         }
+    }
+
+    /** Receive a phone->tablet file upload (POST /upload?name=X, raw bytes in the body) over the same
+        8080 bridge and stream it to shared storage where Kodi can play it by path. Enables the remote
+        to send a file it downloaded on the phone to the playback device over WiFi - no cloud. Writing
+        to shared storage needs the MANAGE_EXTERNAL_STORAGE app-op (granted once via adb appops). */
+    void handleUpload(String target, int contentLength, InputStream in, Socket c) {
+        try {
+            c.setSoTimeout(60000);   // a video body can take a while; keep the socket alive
+            String name = "upload_" + System.currentTimeMillis() + ".bin";
+            int q = target.indexOf("name=");
+            if (q >= 0) {
+                String n = urlDecode(target.substring(q + 5));
+                int amp = n.indexOf('&'); if (amp >= 0) n = n.substring(0, amp);
+                n = sanitizeName(n);
+                if (n.length() > 0) name = n;
+            }
+            java.io.File dir = new java.io.File(UPLOAD_DIR);
+            dir.mkdirs();
+            java.io.File out = new java.io.File(dir, name);
+            long written = 0;
+            java.io.OutputStream fos = new java.io.FileOutputStream(out);
+            try {
+                byte[] buf = new byte[65536];
+                long remaining = (contentLength > 0) ? contentLength : Long.MAX_VALUE;
+                while (remaining > 0) {
+                    int want = (int) Math.min(buf.length, remaining);
+                    int n = in.read(buf, 0, want);
+                    if (n < 0) break;
+                    fos.write(buf, 0, n);
+                    written += n; remaining -= n;
+                }
+                fos.flush();
+            } finally { try { fos.close(); } catch (Exception e) {} }
+            String path = out.getAbsolutePath().replace("\\", "\\\\").replace("\"", "\\\"");
+            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"path\":\"" + path + "\",\"bytes\":" + written + "}}");
+            Log.i(TAG, "upload: " + written + " bytes -> " + out.getAbsolutePath());
+        } catch (Exception e) {
+            Log.w(TAG, "upload: " + e);
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32001,\"message\":\"upload failed\"}}"); } catch (Exception e2) {}
+        } finally {
+            try { c.close(); } catch (Exception e) {}
+        }
+    }
+
+    /** GET /uploads -> JSON list of files in UPLOAD_DIR. Kodi can't browse this raw path (not a
+        source), but the bridge (which owns the dir) can, so the remote lists uploads through here. */
+    void handleListUploads(Socket c) {
+        try {
+            StringBuilder sb = new StringBuilder("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"files\":[");
+            java.io.File[] fs = new java.io.File(UPLOAD_DIR).listFiles();
+            boolean first = true;
+            if (fs != null) {
+                java.util.Arrays.sort(fs, new java.util.Comparator<java.io.File>() {
+                    public int compare(java.io.File a, java.io.File b) { return a.getName().compareToIgnoreCase(b.getName()); }
+                });
+                for (java.io.File f : fs) {
+                    if (!f.isFile()) continue;
+                    if (!first) sb.append(",");
+                    first = false;
+                    String nm = f.getName().replace("\\", "\\\\").replace("\"", "\\\"");
+                    String pt = f.getAbsolutePath().replace("\\", "\\\\").replace("\"", "\\\"");
+                    sb.append("{\"name\":\"").append(nm).append("\",\"file\":\"").append(pt).append("\",\"size\":").append(f.length()).append("}");
+                }
+            }
+            sb.append("]}}");
+            writeResponse(c, sb.toString());
+        } catch (Exception e) {
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"files\":[]}}"); } catch (Exception e2) {}
+        } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** Filename hygiene: drop any path/traversal, keep a safe basename so an upload can only land in
+        UPLOAD_DIR (never write outside it). */
+    String sanitizeName(String n) {
+        n = n.replace("\\", "/");
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) n = n.substring(slash + 1);
+        n = n.replaceAll("[^A-Za-z0-9._ ()\\-]", "_").trim();
+        if (n.startsWith(".")) n = "_" + n;
+        return n;
     }
 
     /** Relay one JSON-RPC string to Kodi's 9090 and return the first result/error object. */
