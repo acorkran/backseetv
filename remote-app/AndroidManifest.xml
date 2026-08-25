@@ -5,6 +5,9 @@
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- list the phone's own video files to send to the tablet (item 5 Local source) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <application android:label="KidsTV Remote" android:icon="@android:drawable/ic_media_play"
         android:allowBackup="false"
         android:usesCleartextTraffic="true">

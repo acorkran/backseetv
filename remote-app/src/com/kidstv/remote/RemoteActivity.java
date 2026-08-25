@@ -52,6 +52,11 @@ public class RemoteActivity extends Activity {
     final java.util.ArrayList<View> mTabViews = new java.util.ArrayList<>();   // generic N-tab plumbing
     final java.util.ArrayList<String> mTabLabels = new java.util.ArrayList<>();
     final java.util.ArrayList<Button> mTabBtns = new java.util.ArrayList<>();
+    View filesView;                         // kept so showTab() can refresh files when shown
+    LinearLayout fileList;                  // dynamic file rows
+    Button srcTablet, srcPhone;
+    TextView fileHint;
+    int mFileSrc = 0;                        // 0 = tablet uploads (Remote), 1 = phone videos (Local)
 
     volatile boolean polling = false, seeking = false, napping = false;
     volatile int curVol = 0;
@@ -84,6 +89,7 @@ public class RemoteActivity extends Activity {
         addTab(content, "Playlists", playlistsTab());
         addTab(content, "Queue", queueView = queueTab());
         addTab(content, "Controls", controlsTab());
+        addTab(content, "Files", filesView = filesTab());
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(bottomBar());
@@ -275,6 +281,161 @@ public class RemoteActivity extends Activity {
         ui.postDelayed(this::fetchQueue, 500);
     }
 
+    // ---------------- files tab (item 5: Local | Remote browser + phone->tablet upload) ----------------
+
+    View filesTab() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout srcBar = new LinearLayout(this);
+        srcBar.setOrientation(LinearLayout.HORIZONTAL);
+        srcBar.setPadding(dp(8), dp(8), dp(8), dp(4));
+        srcTablet = plainBtn("Tablet", v -> showFileSrc(0));
+        srcPhone = plainBtn("Phone", v -> showFileSrc(1));
+        srcTablet.setTextColor(TXT); srcPhone.setTextColor(TXT);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, dp(44), 1f); sp.setMargins(0, 0, dp(6), 0);
+        srcBar.addView(srcTablet, sp);
+        srcBar.addView(srcPhone, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        col.addView(srcBar);
+        fileHint = new TextView(this);
+        fileHint.setTextColor(SUB); fileHint.setTextSize(12); fileHint.setPadding(dp(12), dp(2), dp(12), dp(4));
+        col.addView(fileHint);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        fileList = new LinearLayout(this);
+        fileList.setOrientation(LinearLayout.VERTICAL);
+        fileList.setPadding(dp(8), 0, dp(8), dp(8));
+        sv.addView(fileList);
+        col.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return col;
+    }
+
+    void showFileSrc(int src) {
+        mFileSrc = src;
+        if (srcTablet != null) srcTablet.setBackgroundColor(src == 0 ? ACCENT : CARD);
+        if (srcPhone != null) srcPhone.setBackgroundColor(src == 1 ? ACCENT : CARD);
+        if (src == 0) fetchTabletFiles(); else fetchPhoneFiles();
+    }
+
+    /** Remote source: files already uploaded to the tablet (GET /uploads via the bridge). Tap to play. */
+    void fetchTabletFiles() {
+        ui.post(() -> { fileHint.setText("On the tablet — tap Play"); if (fileList != null) fileList.removeAllViews(); });
+        bg(() -> {
+            String r = kodi.bridgeGet("/uploads");
+            final java.util.ArrayList<String[]> rows = new java.util.ArrayList<>();
+            try {
+                JSONArray files = new JSONObject(r).getJSONObject("result").getJSONArray("files");
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject f = files.getJSONObject(i);
+                    rows.add(new String[]{ f.optString("name", ""), f.optString("file", ""), String.valueOf(f.optLong("size", 0)) });
+                }
+            } catch (Exception e) {}
+            ui.post(() -> renderFiles(rows, false));
+        });
+    }
+
+    /** Local source: the phone's own videos (MediaStore). Tap Send to upload to the tablet + play. */
+    void fetchPhoneFiles() {
+        ui.post(() -> { fileHint.setText("On this phone — tap Send to copy to the tablet + play"); if (fileList != null) fileList.removeAllViews(); });
+        final String perm = (android.os.Build.VERSION.SDK_INT >= 33) ? android.Manifest.permission.READ_MEDIA_VIDEO : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+        if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{perm}, 7);   // onRequestPermissionsResult re-fetches on grant
+            return;
+        }
+        bg(() -> {
+            final java.util.ArrayList<String[]> rows = new java.util.ArrayList<>();
+            try {
+                android.net.Uri coll = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                String[] proj = { android.provider.MediaStore.Video.Media._ID, android.provider.MediaStore.Video.Media.DISPLAY_NAME, android.provider.MediaStore.Video.Media.SIZE };
+                android.database.Cursor c = getContentResolver().query(coll, proj, null, null, android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC");
+                if (c != null) {
+                    int iId = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media._ID);
+                    int iNm = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME);
+                    int iSz = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.SIZE);
+                    int count = 0;
+                    while (c.moveToNext() && count < 300) {
+                        long id = c.getLong(iId), sz = c.getLong(iSz);
+                        String nm = c.getString(iNm); if (nm == null) nm = "video_" + id;
+                        rows.add(new String[]{ nm, android.content.ContentUris.withAppendedId(coll, id).toString(), String.valueOf(sz) });
+                        count++;
+                    }
+                    c.close();
+                }
+            } catch (Exception e) {}
+            ui.post(() -> renderFiles(rows, true));
+        });
+    }
+
+    @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        if (req == 7 && res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) { if (mFileSrc == 1) fetchPhoneFiles(); }
+        else if (req == 7 && fileHint != null) ui.post(() -> fileHint.setText("Phone media permission denied — enable it in Settings"));
+    }
+
+    void renderFiles(java.util.List<String[]> rows, final boolean isPhone) {
+        if (fileList == null) return;
+        fileList.removeAllViews();
+        if (rows.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText(isPhone ? "No videos found on the phone" : "Nothing uploaded to the tablet yet");
+            t.setTextColor(SUB); t.setTextSize(15); t.setGravity(Gravity.CENTER); t.setPadding(0, dp(40), 0, 0);
+            fileList.addView(t);
+            return;
+        }
+        for (String[] row : rows) {
+            final String name = row[0], ref = row[1];
+            long sz = 0; try { sz = Long.parseLong(row[2]); } catch (Exception e) {}
+            final long size = sz;
+            LinearLayout r = new LinearLayout(this);
+            r.setOrientation(LinearLayout.HORIZONTAL);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setBackgroundColor(CARD);
+            TextView t = new TextView(this);
+            t.setText(name + (size > 0 ? "\n" + humanSize(size) : ""));
+            t.setTextColor(TXT); t.setTextSize(14); t.setPadding(dp(10), dp(12), dp(8), dp(12)); t.setMaxLines(2);
+            r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            Button act = new Button(this);
+            act.setAllCaps(false); act.setTextColor(TXT); act.setTextSize(13); act.setBackgroundColor(BTN);
+            if (isPhone) { act.setText("Send ▸"); act.setOnClickListener(v -> uploadPhoneFile(ref, name, size)); }
+            else { act.setText("▶ Play"); act.setOnClickListener(v -> playTabletFile(ref)); }
+            r.addView(act, new LinearLayout.LayoutParams(dp(96), dp(52)));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, dp(2), 0, 0);
+            fileList.addView(r, lp);
+        }
+    }
+
+    void playTabletFile(final String path) {
+        Toast.makeText(this, "Playing on the tablet…", Toast.LENGTH_SHORT).show();
+        bg(() -> kodi.rpc("Addons.ExecuteAddon", "{\"addonid\":\"script.kidstv.play\",\"params\":[\"" + jesc(path) + "\"]}"));
+    }
+
+    void uploadPhoneFile(final String uriStr, final String name, final long size) {
+        Toast.makeText(this, "Sending " + name + " …", Toast.LENGTH_SHORT).show();
+        bg(() -> {
+            String resp = null;
+            try {
+                java.io.InputStream in = getContentResolver().openInputStream(android.net.Uri.parse(uriStr));
+                if (in != null) resp = kodi.upload(name, in, size);
+            } catch (Exception e) {}
+            String path = null;
+            try { path = new JSONObject(resp).getJSONObject("result").optString("path", null); } catch (Exception e) {}
+            final String fpath = path;
+            ui.post(() -> Toast.makeText(this, fpath != null ? (name + " → sent, playing") : ("Couldn't send " + name), Toast.LENGTH_LONG).show());
+            if (fpath != null) {
+                kodi.rpc("Addons.ExecuteAddon", "{\"addonid\":\"script.kidstv.play\",\"params\":[\"" + jesc(fpath) + "\"]}");
+                ui.post(() -> { if (mFileSrc == 0 && filesView != null && filesView.getVisibility() == View.VISIBLE) fetchTabletFiles(); });
+            }
+        });
+    }
+
+    String jesc(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\""); }
+
+    String humanSize(long b) {
+        if (b >= 1_000_000_000L) return String.format("%.1f GB", b / 1e9);
+        if (b >= 1_000_000L) return String.format("%.0f MB", b / 1e6);
+        if (b >= 1000L) return String.format("%.0f KB", b / 1e3);
+        return b + " B";
+    }
+
     View controlsTab() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -377,6 +538,7 @@ public class RemoteActivity extends Activity {
             if (i < mTabBtns.size()) mTabBtns.get(i).setBackgroundColor(i == idx ? ACCENT : CARD);
         }
         if (queueView != null && mTabViews.get(idx) == queueView) fetchQueue();
+        if (filesView != null && mTabViews.get(idx) == filesView) showFileSrc(mFileSrc);
     }
 
     // small view helpers

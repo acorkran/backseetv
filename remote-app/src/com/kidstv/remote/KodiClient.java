@@ -193,6 +193,57 @@ class KodiClient {
         }
     }
 
+    /** Stream a local file to the kiosk's 8080 /upload endpoint; it lands in the tablet's uploads dir
+        and becomes playable. Returns the JSON response body (has the stored `path`) on HTTP 200, else
+        null. Closes `data`. */
+    String upload(String name, java.io.InputStream data, long len) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return null; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            String url = "http://" + host + ":" + BRIDGE_PORT + "/upload?name=" + java.net.URLEncoder.encode(name, "UTF-8");
+            con = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            con.setConnectTimeout(3000); con.setReadTimeout(60000);
+            con.setRequestMethod("POST");
+            con.setRequestProperty("Content-Type", "application/octet-stream");
+            con.setDoOutput(true);
+            if (len > 0) con.setFixedLengthStreamingMode(len); else con.setChunkedStreamingMode(0);
+            java.io.OutputStream out = con.getOutputStream();
+            byte[] buf = new byte[65536]; int n;
+            while ((n = data.read(buf)) >= 0) out.write(buf, 0, n);
+            out.flush();
+            int code = con.getResponseCode();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            try { java.io.InputStream rin = con.getInputStream(); byte[] rb = new byte[4096]; int rn; while ((rn = rin.read(rb)) >= 0) bo.write(rb, 0, rn); } catch (Exception e) {}
+            return code == 200 ? new String(bo.toByteArray(), "UTF-8") : null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            try { data.close(); } catch (Exception e) {}
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
+    }
+
+    /** GET a path on the kiosk's 8080 bridge (e.g. /uploads) and return the body, or null. */
+    String bridgeGet(String path) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return null; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            con = (java.net.HttpURLConnection) new java.net.URL("http://" + host + ":" + BRIDGE_PORT + path).openConnection();
+            con.setConnectTimeout(2500); con.setReadTimeout(5000);
+            java.io.InputStream in = con.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[8192]; int n;
+            while ((n = in.read(b)) >= 0) bo.write(b, 0, n);
+            return new String(bo.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
+    }
+
     private String call(String host, String req, int timeoutMs) {
         Socket s = new Socket();
         try {
