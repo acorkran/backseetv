@@ -33,3 +33,11 @@ public release yet.
 
 No Gradle. From either app dir: `./build.sh` (needs an Android SDK with build-tools + a platform).
 It compiles, signs with the local `debug.keystore`, and produces a `*.apk` you can `adb install`.
+
+## License
+
+Everything here is licensed **PolyForm Noncommercial 1.0.0** (see [`LICENSE.md`](LICENSE.md)):
+free for any non-commercial use, but **commercial use requires a separate license** from the
+copyright holder. It is source-available, not OSI "open source."
+
+It runs on **Kodi** (GPL-2.0), which you install separately — Kodi itself is not part of this repo.
