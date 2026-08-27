@@ -58,7 +58,6 @@ import java.util.List;
 public class KioskActivity extends Activity {
     static final String KODI = "org.xbmc.kodi";
     static final String DEFAULT_PIN = "1234";
-    static final String ARTHUR_S1 = "special://profile/playlists/video/ArthurS1.m3u";
     static final long AUTO_LAUNCH_MS = 1800;    // cold boot: straight into shows
     static final long HOME_LAUNCH_MS = 8000;    // Home-press: give the admin time to escape
     static boolean sFirstShow = true;           // false after the first (boot) launcher
@@ -572,7 +571,10 @@ public class KioskActivity extends Activity {
         setContentView(sv);
     }
 
-    /** Pull the tablet's real .xsp smart playlists (local Kodi 9090) and render tiles into `holder`. */
+    /** List whatever playlists live in the device's Kodi playlists folder (.xsp smart playlists AND
+        .m3u lists) and render one tile per playlist - a plain reflection of what's on the device, with
+        nothing hardcoded. A fresh install with different content simply shows that user's own playlists
+        (or "(no playlists found)" until they add some). */
     void fetchPlaylistsInto(final LinearLayout holder) {
         bg(() -> {
             final java.util.ArrayList<String[]> pls = new java.util.ArrayList<>();   // {label, file}
@@ -583,8 +585,24 @@ public class KioskActivity extends Activity {
                 for (int i = 0; i < files.length(); i++) {
                     JSONObject f = files.getJSONObject(i);
                     String file = f.optString("file", ""), label = f.optString("label", "");
-                    if (file.toLowerCase().endsWith(".xsp") && label.length() > 0) pls.add(new String[]{label, file});
+                    String lf = file.toLowerCase();
+                    if ((lf.endsWith(".xsp") || lf.endsWith(".m3u")) && label.length() > 0) {
+                        // Kodi returns the .xsp <name> as the label but the raw filename for .m3u -
+                        // strip a trailing extension so every button reads cleanly.
+                        if (label.length() > 4) {
+                            String le = label.substring(label.length() - 4).toLowerCase();
+                            if (le.equals(".xsp") || le.equals(".m3u")) label = label.substring(0, label.length() - 4);
+                        }
+                        pls.add(new String[]{label, file});
+                    }
                 }
+                // Pin an all-shows shuffle first, then the rest alphabetically - stable, content-agnostic order.
+                java.util.Collections.sort(pls, (a, b) -> {
+                    boolean sa = a[0].toLowerCase().contains("shuffle") || a[0].toLowerCase().contains("all show");
+                    boolean sb = b[0].toLowerCase().contains("shuffle") || b[0].toLowerCase().contains("all show");
+                    if (sa != sb) return sa ? -1 : 1;
+                    return a[0].compareToIgnoreCase(b[0]);
+                });
             } catch (Exception e) {}
             mHandler.post(() -> {
                 holder.removeAllViews();
