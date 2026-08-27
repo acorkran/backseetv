@@ -1,4 +1,5 @@
 import xbmc
+import xbmcvfs
 import json
 
 # Boot default = shuffle of ALL shows (no repeats). The smart playlist is randomly
@@ -9,6 +10,34 @@ import json
 # Mini Kids / Naptime / Shuffle All) live - and the self-heal resumes WHATEVER is loaded,
 # not this default. (AllShows.m3u is kept as a library-independent fallback if needed.)
 BOOT = 'special://profile/playlists/video/ShuffleAll.xsp'
+
+# The all-shows shuffle is a *smart* playlist: "every episode in the library, shuffled, EXCEPT
+# anything under a folder whose name contains '!hidden'". That makes it fully content-agnostic (works
+# for ANY library, no show names baked in) and gives a dead-simple safety valve: to keep something
+# out of the kid shuffle (e.g. a folder scanned in by accident), put '!hidden' in its folder name. We
+# (re)create this file when it's missing, so a fresh install always has a working boot playlist and
+# so "delete ShuffleAll.xsp -> it rebuilds itself on next boot" holds.
+# NB: the marker must NOT contain SQL LIKE wildcards - Kodi compiles path "contains" to LIKE, so '_'
+# or '%' in the value match ANY char / any run and would exclude the whole library. '!hidden' is literal.
+SHUFFLE_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<smartplaylist type="episodes">\n'
+    '    <name>Shuffle All Shows</name>\n'
+    '    <match>all</match>\n'
+    '    <rule field="path" operator="doesnotcontain"><value>!hidden</value></rule>\n'
+    '    <order direction="ascending">random</order>\n'
+    '</smartplaylist>\n'
+)
+
+
+def ensure_shuffleall():
+    try:
+        if not xbmcvfs.exists(BOOT):
+            f = xbmcvfs.File(BOOT, 'w')
+            f.write(SHUFFLE_XML)
+            f.close()
+    except Exception:
+        pass
 
 
 def jrpc(method, params=None):
@@ -90,6 +119,9 @@ if monitor.waitForAbort(4):
 
 # ALWAYS start silent (only here - never touched again, so the front-seat level sticks)
 xbmc.executebuiltin('SetVolume(0)')
+
+# make sure the agnostic all-shows shuffle exists (fresh install / after a rebuild) before booting it
+ensure_shuffleall()
 
 # initial start: retry briskly through cold-boot path/library lag
 tries = 0

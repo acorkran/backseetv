@@ -1,6 +1,7 @@
 import sys
 import json
 import xbmc
+import xbmcvfs
 
 # RunScript(script.kidstv.play,<arg>)
 #   <arg> = a smart-playlist basename (e.g. Bluey, ShuffleAll)  -> load that .xsp
@@ -11,6 +12,31 @@ import xbmc
 # fail to queue/start a raw path, but PlayMedia (run inside Kodi) plays it fine. This is how an
 # uploaded file (phone -> tablet) gets played.
 arg = sys.argv[1] if len(sys.argv) > 1 else "ShuffleAll"
+
+# RunScript(script.kidstv.play,rebuild) -> wipe + regenerate the content-agnostic all-shows shuffle
+# from the CURRENT library, then play it. Use after content changes (e.g. you hid/removed a folder
+# that shouldn't be in the kid mix). The shuffle is "all episodes EXCEPT anything under a folder whose
+# name contains '!hidden'", so hiding content is just putting '!hidden' in its folder name. (The marker
+# is literal on purpose - a '_' or '%' would be a SQL LIKE wildcard and blank the whole library.)
+SHUFFLE_XSP = "special://profile/playlists/video/ShuffleAll.xsp"
+if arg == "rebuild":
+    try:
+        xbmcvfs.delete(SHUFFLE_XSP)
+        f = xbmcvfs.File(SHUFFLE_XSP, 'w')
+        f.write(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<smartplaylist type="episodes">\n'
+            '    <name>Shuffle All Shows</name>\n'
+            '    <match>all</match>\n'
+            '    <rule field="path" operator="doesnotcontain"><value>!hidden</value></rule>\n'
+            '    <order direction="ascending">random</order>\n'
+            '</smartplaylist>\n'
+        )
+        f.close()
+    except Exception:
+        pass
+    xbmc.executebuiltin('CleanLibrary(video)')   # drop library entries for files that are gone
+    arg = "ShuffleAll"                            # fall through and play the fresh shuffle
 
 MEDIA_EXT = (".mp4", ".mkv", ".avi", ".m4v", ".mov", ".webm", ".ts", ".flv")
 is_file = arg.startswith("/") or arg.startswith("special://") or arg.lower().endswith(MEDIA_EXT)

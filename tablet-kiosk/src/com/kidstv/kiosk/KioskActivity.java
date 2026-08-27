@@ -530,6 +530,9 @@ public class KioskActivity extends Activity {
         plHolder.addView(loading);
         col.addView(plHolder);
         fetchPlaylistsInto(plHolder);
+        Button rebuild = cardBtn("↻  Rebuild Shuffle All", v -> rebuildShuffle());
+        rebuild.setTextSize(14);
+        col.addView(rebuild, wide());
 
         section(col, "Settings");
         final int wsec = watchdogSec();
@@ -627,6 +630,16 @@ public class KioskActivity extends Activity {
                 }
             });
         });
+    }
+
+    /** Ask the in-Kodi addon to wipe + regenerate the content-agnostic all-shows shuffle and play it.
+        The rebuild lives in the addon because it runs inside Kodi and can write the playlists folder -
+        this app (a separate package) can't, under Android scoped storage. The shuffle is "every
+        episode EXCEPT anything under a folder whose name contains '!hidden'", so hiding content that
+        got scanned in by mistake is just putting '!hidden' in its folder name. */
+    void rebuildShuffle() {
+        android.widget.Toast.makeText(this, "Rebuilding Shuffle All…", android.widget.Toast.LENGTH_SHORT).show();
+        bg(() -> rpc("Addons.ExecuteAddon", "{\"addonid\":\"script.kidstv.play\",\"params\":[\"rebuild\"]}"));
     }
 
     /** Clear the queue + load a smart playlist (shuffle only the all-shows mix). Mirrors the remote. */
