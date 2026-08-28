@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The raw-TCP JSON-RPC socket to Kodi (:9090) + the subnet sweep both need INTERNET. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+
+    <application
+        android:label="Kidodi Remote"
+        android:allowBackup="false"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+
+        <!-- Declares this as an Android Auto MEDIA app (res/xml/automotive_app_desc.xml). -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc"/>
+
+        <!-- Minimal launcher: a status / "connect" screen. All real control is via the
+             MediaBrowserService, which the head unit binds to directly. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- The AA media wiring: a MediaBrowserServiceCompat with the browse intent-filter.
+             The head unit discovers it, browses the tablet's playlists, and drives transport. -->
+        <service
+            android:name=".KodiMediaService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService"/>
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

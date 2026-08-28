@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.kidstv.aaremote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.kidstv.aaremote'
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+
+    buildTypes {
+        debug {
+            // default debug signing; produces app-debug.apk you can adb install
+        }
+    }
+}
+
+dependencies {
+    // androidx.media = MediaBrowserServiceCompat + MediaSessionCompat, the idiomatic
+    // Android Auto MEDIA-app surface. The head unit renders browse + transport for us.
+    implementation 'androidx.media:media:1.7.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
