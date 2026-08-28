@@ -23,6 +23,7 @@
     <!-- keep the bridge process/CPU alive with the screen off (Yatse "nap mode") so the
          wake command can still land -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <!-- auto-join a paired phone's Bluetooth tether (PANU->NAP) so the driver never has to
          flip "Internet access" by hand -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>

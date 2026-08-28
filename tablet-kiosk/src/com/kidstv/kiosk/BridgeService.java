@@ -20,6 +20,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.wifi.WifiManager;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.graphics.PixelFormat;
@@ -96,6 +97,7 @@ public class BridgeService extends Service {
     final ArrayDeque<Long> mTaps = new ArrayDeque<>();   // timestamps of recent valid multi-finger taps
 
     PowerManager.WakeLock mNapLock;   // keeps CPU/socket alive with the screen off during a nap
+    WifiManager.WifiLock mWifiLock;   // keeps Wi-Fi associated with the screen off (remote reachability)
     BroadcastReceiver mScreen;        // screen-on clears a nap
     volatile BluetoothProfile mPanProxy;   // BluetoothPan proxy for auto-joining a phone's BT tether
     volatile boolean mPanGaveUp = false;   // BluetoothPan.connect needs BLUETOOTH_PRIVILEGED (system-only)
@@ -149,6 +151,7 @@ public class BridgeService extends Service {
             Thread t = new Thread(new Runnable() { public void run() { serve(); } });
             t.setDaemon(true);
             t.start();
+            acquireWifiLock();
             startDiscovery();
             registerScreen();
             requestPanProxy();
@@ -170,11 +173,26 @@ public class BridgeService extends Service {
     @Override public void onDestroy() {
         running = false;
         removeOverlay();
+        try { if (mWifiLock != null && mWifiLock.isHeld()) mWifiLock.release(); } catch (Exception e) {}
         try { if (server != null) server.close(); } catch (Exception e) {}
         try { if (mCm != null && mNetCb != null) mCm.unregisterNetworkCallback(mNetCb); } catch (Exception e) {}
         try { if (mNsd != null && mNsdListener != null) mNsd.unregisterService(mNsdListener); } catch (Exception e) {}
         try { if (mScreen != null) unregisterReceiver(mScreen); } catch (Exception e) {}
         try { mMain.removeCallbacks(mPanTick); } catch (Exception e) {}
+    }
+
+    /** Hold the Wi-Fi radio fully associated even when the screen is off, so the front-seat remote can
+        always reach this tablet. Android power-saves Wi-Fi with the screen asleep, which left the tablet
+        un-findable until it was physically woken. Held for the life of this always-on service. */
+    void acquireWifiLock() {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wm == null) return;
+            mWifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "kidodi:wifi");
+            mWifiLock.setReferenceCounted(false);
+            mWifiLock.acquire();
+            Log.i(TAG, "Wi-Fi lock held (tablet stays reachable with the screen off)");
+        } catch (Exception e) { Log.w(TAG, "wifi lock: " + e); }
     }
 
     /** SCREEN_ON: clear a nap. A nap always coincides with screen-off, so ANY wake - the
