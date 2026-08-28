@@ -54,6 +54,8 @@ public class RemoteActivity extends Activity {
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     LinearLayout queueList;                 // dynamic queue rows live here
     LinearLayout buildList;                 // Build tab: the working-set rows
+    FrameLayout plSub;                       // Playlists tab: swaps tiles / Build / Files sub-views
+    View[] plSubViews;                       // [tiles, build, files]
     TextView buildHint;
     final java.util.ArrayList<String[]> mBuildSet = new java.util.ArrayList<>();  // {label, file, episodeid}
     volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
@@ -97,8 +99,6 @@ public class RemoteActivity extends Activity {
         addTab(content, "Playlists", playlistsTab());
         addTab(content, "Queue", queueView = queueTab());
         addTab(content, "Controls", controlsTab());
-        addTab(content, "Files", filesView = filesTab());
-        addTab(content, "Build", buildTab());
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(bottomBar());
@@ -152,14 +152,60 @@ public class RemoteActivity extends Activity {
         return bar;
     }
 
+    /** The Playlists tab is now a hub: a FrameLayout that swaps three sub-views — the tile grid
+        (default), Build, and Files — so those two no longer clutter the bottom bar. */
     View playlistsTab() {
+        plSub = new FrameLayout(this);
+        View tiles = tilesView();
+        View build = subPage(buildTab());
+        View files = subPage(filesView = filesTab());
+        plSubViews = new View[]{tiles, build, files};
+        for (View v : plSubViews) { v.setVisibility(View.GONE); plSub.addView(v); }
+        showPlSub(0);
+        return plSub;
+    }
+
+    /** Default sub-view: a compact header (New/Import + Browse files) over the tile grid. */
+    View tilesView() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.HORIZONTAL);
+        hdr.setPadding(dp(10), dp(10), dp(10), dp(4));
+        LinearLayout.LayoutParams eq = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        eq.rightMargin = dp(6);
+        hdr.addView(cardBtn("+  New / Import", v -> showPlSub(1)), eq);
+        hdr.addView(cardBtn("Browse files", v -> showPlSub(2)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        col.addView(hdr);
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         playlistGrid = new LinearLayout(this);
         playlistGrid.setOrientation(LinearLayout.VERTICAL);
-        playlistGrid.setPadding(dp(10), dp(10), dp(10), dp(10));
+        playlistGrid.setPadding(dp(10), dp(6), dp(10), dp(10));
         sv.addView(playlistGrid);
+        col.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         renderPlaylists();   // placeholder until fetchPlaylists() populates mPlaylists
-        return sv;
+        return col;
+    }
+
+    /** Wrap a sub-page (Build / Files) with a "‹ Playlists" back header that returns to the tiles. */
+    View subPage(View inner) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        Button back = plainBtn("‹  Playlists", v -> showPlSub(0));
+        back.setTextColor(SUB); back.setTextSize(15); back.setAllCaps(false);
+        back.setBackgroundColor(CARD);
+        col.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
+        col.addView(inner, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return col;
+    }
+
+    /** Swap the Playlists-tab sub-view: 0 = tiles, 1 = Build, 2 = Files. */
+    void showPlSub(int idx) {
+        if (plSubViews == null) return;
+        for (int i = 0; i < plSubViews.length; i++)
+            plSubViews[i].setVisibility(i == idx ? View.VISIBLE : View.GONE);
+        if (idx == 0) renderPlaylists();          // refresh tiles (e.g. after a Save)
+        if (idx == 2) showFileSrc(mFileSrc);      // (re)load the Files browse list
     }
 
     /** (Re)build the playlist tiles from mPlaylists on the UI thread — two per row, scrollable, since
