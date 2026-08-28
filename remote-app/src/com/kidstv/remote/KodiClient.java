@@ -104,6 +104,26 @@ class KodiClient {
         return found.get();
     }
 
+    /** Best-effort: is THIS phone's WiFi hotspot on? When it is, the soft-AP shows up as its own
+     *  up interface carrying a site-local IPv4 (Samsung 'swlan0', AOSP 'ap0'/'wlan1', some 'softap');
+     *  the phone's normal WiFi client 'wlan0' is excluded by the name test. No permission needed. */
+    public boolean isHotspotOn() {
+        try {
+            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                NetworkInterface ni = ifs.nextElement();
+                if (ni.isLoopback() || !ni.isUp()) continue;
+                String n = ni.getName().toLowerCase();
+                if (!(n.startsWith("ap") || n.contains("swlan") || n.equals("wlan1") || n.contains("softap"))) continue;
+                for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    InetAddress a = ia.getAddress();
+                    if (a instanceof Inet4Address && a.isSiteLocalAddress()) return true;
+                }
+            }
+        } catch (Exception e) {}
+        return false;
+    }
+
     /** Every host on each of the phone's own site-local /24s (its hotspot + WiFi), self excluded.
      *  Cellular interfaces are skipped so we don't scan a carrier subnet for nothing. */
     private List<String> subnetHosts() {

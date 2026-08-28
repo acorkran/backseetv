@@ -45,7 +45,7 @@ public class RemoteActivity extends Activity {
     View queueView;                         // kept so showTab() can refresh the queue when it's shown
     TextView statusDot, nowTitle, timeLabel, upNext, volLabel;
     SeekBar seek;
-    Button powerBtn;
+    IconView powerBtn, hotspotChip;   // Canvas-drawn — always render (⏻/emoji glyphs tofu on-device)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     LinearLayout queueList;                 // dynamic queue rows live here
     volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
@@ -116,6 +116,14 @@ public class RemoteActivity extends Activity {
         title.setTextSize(20);
         bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        // Phone's own hotspot state — the ONE thing the user flips each ride (the tablet joins THIS
+        // phone's AP). A red/green WiFi button; tap jumps to the hotspot toggle (an app can't flip it).
+        hotspotChip = new IconView(this, IconView.WIFI, WARN, TXT);
+        hotspotChip.setOnClickListener(v -> openHotspotSettings());
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(46), dp(40));
+        hp.rightMargin = dp(6);
+        bar.addView(hotspotChip, hp);
+
         statusDot = new TextView(this);
         statusDot.setText("● …");
         statusDot.setTextColor(SUB);
@@ -124,10 +132,9 @@ public class RemoteActivity extends Activity {
         statusDot.setOnClickListener(v -> statusTap());
         bar.addView(statusDot);
 
-        powerBtn = plainBtn("⏻", v -> togglePower());
-        powerBtn.setTextSize(22);
-        powerBtn.setTextColor(GOOD);
-        bar.addView(powerBtn, new LinearLayout.LayoutParams(dp(52), dp(48)));
+        powerBtn = new IconView(this, IconView.POWER, BTN, GOOD);
+        powerBtn.setOnClickListener(v -> togglePower());
+        bar.addView(powerBtn, new LinearLayout.LayoutParams(dp(48), dp(44)));
 
         Button gear = plainBtn("⚙", v -> settings());
         gear.setTextSize(22);
@@ -610,7 +617,7 @@ public class RemoteActivity extends Activity {
         });
     }
 
-    void updatePowerBtn() { ui.post(() -> powerBtn.setTextColor(napping ? WARN : GOOD)); }
+    void updatePowerBtn() { ui.post(() -> powerBtn.setColors(BTN, napping ? WARN : GOOD)); }
 
     void volDelta(final int d) {
         final int next = Math.max(0, Math.min(100, curVol + d));
@@ -694,9 +701,11 @@ public class RemoteActivity extends Activity {
         }
 
         curVol = vol; muted = mut;
+        final boolean hotOn = kodi.isHotspotOn();   // the phone's own AP that the tablet joins
         final String fTitle = title, fTime = time, fNext = next;
         final int fProg = prog, fVol = vol; final boolean fMut = mut;
         ui.post(() -> {
+            hotspotChip.setColors(hotOn ? GOOD : WARN, TXT);   // green = on, red = off
             statusDot.setText("● " + (conn ? label : "offline"));
             statusDot.setTextColor(conn ? GOOD : WARN);
             nowTitle.setText(fTitle);
@@ -760,6 +769,55 @@ public class RemoteActivity extends Activity {
         } catch (Exception e) {
             try { startActivity(new Intent(Settings.ACTION_WIRELESS_SETTINGS)); }
             catch (Exception e2) { Toast.makeText(this, "Open Settings → Connections → Mobile Hotspot", Toast.LENGTH_LONG).show(); }
+        }
+    }
+
+    /** Font-independent top-bar icons drawn with Canvas — the ⏻ power glyph and WiFi emoji tofu on
+        this device. WIFI = a dot with arcs fanning up; POWER = the IEC mark (near-complete ring with a
+        line through the top gap). Rounded pill background so it reads as a button; recolor via setColors. */
+    class IconView extends View {
+        static final int WIFI = 0, POWER = 1;
+        final int mode;
+        int bgCol, iconCol;
+        final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        final android.graphics.drawable.GradientDrawable bgd = new android.graphics.drawable.GradientDrawable();
+        IconView(android.content.Context c, int mode, int bgCol, int iconCol) {
+            super(c);
+            this.mode = mode; this.bgCol = bgCol; this.iconCol = iconCol;
+            setClickable(true);
+            bgd.setCornerRadius(dp(10));
+            bgd.setColor(bgCol);
+            setBackground(bgd);
+        }
+        void setColors(int bg, int icon) {
+            boolean ch = false;
+            if (bg != bgCol) { bgCol = bg; bgd.setColor(bg); ch = true; }
+            if (icon != iconCol) { iconCol = icon; ch = true; }
+            if (ch) invalidate();
+        }
+        @Override protected void onDraw(android.graphics.Canvas cv) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float s = Math.min(getWidth(), getHeight()) * 0.30f;
+            p.setColor(iconCol);
+            p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            if (mode == POWER) {
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setStrokeWidth(Math.max(dp(2), s * 0.22f));
+                android.graphics.RectF r = new android.graphics.RectF(cx - s, cy - s, cx + s, cy + s);
+                cv.drawArc(r, -63f, 306f, false, p);                    // ring with ~54° gap at the top
+                cv.drawLine(cx, cy - s * 1.15f, cx, cy - s * 0.10f, p); // vertical line through the gap
+            } else {                                                    // WIFI: dot + fanning arcs
+                float baseY = cy + s * 0.70f;
+                p.setStyle(android.graphics.Paint.Style.FILL);
+                cv.drawCircle(cx, baseY, Math.max(dp(2), s * 0.16f), p);
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                for (int i = 1; i <= 3; i++) {
+                    float rad = s * 0.42f * i;
+                    p.setStrokeWidth(Math.max(dp(2), s * 0.15f));
+                    android.graphics.RectF r = new android.graphics.RectF(cx - rad, baseY - rad, cx + rad, baseY + rad);
+                    cv.drawArc(r, 234f, 72f, false, p);
+                }
+            }
         }
     }
 
