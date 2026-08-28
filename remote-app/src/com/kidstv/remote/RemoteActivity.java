@@ -37,6 +37,11 @@ public class RemoteActivity extends Activity {
 
     static final int BG = 0xFF10151C, CARD = 0xFF1B2735, BTN = 0xFF35516E, ACCENT = 0xFF2F6FEB;
     static final int TXT = 0xFFFFFFFF, SUB = 0xFF9DB0C6, GOOD = 0xFF33C05B, WARN = 0xFFE0653D;
+    // Curated tile accents — each playlist name hashes to one, so the dynamic list reads as distinct
+    // VARIABLES (its own colour + initial per show), not identical fixtures. Tuned for the dark theme.
+    static final int[] TILE_COLORS = {
+        0xFF4E86E0, 0xFF2FB3A2, 0xFFE0673F, 0xFF9B72E0, 0xFF3FBB63, 0xFFE0A63D, 0xFFE05D8C, 0xFF56A6E6
+    };
 
     final KodiClient kodi = new KodiClient();
     final Handler ui = new Handler(Looper.getMainLooper());
@@ -45,7 +50,7 @@ public class RemoteActivity extends Activity {
     View queueView;                         // kept so showTab() can refresh the queue when it's shown
     TextView statusDot, nowTitle, timeLabel, upNext, volLabel;
     SeekBar seek;
-    IconView powerBtn, hotspotChip;   // Canvas-drawn — always render (⏻/emoji glyphs tofu on-device)
+    IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     LinearLayout queueList;                 // dynamic queue rows live here
     volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
@@ -167,16 +172,30 @@ public class RemoteActivity extends Activity {
             playlistGrid.addView(t);
             return;
         }
-        for (int r = 0; r < pls.length; r += 2) {
+        // Pull the all-shows shuffle out as the primary, full-width tile; the rest go 2-per-row.
+        java.util.ArrayList<String[]> rest = new java.util.ArrayList<>();
+        String[] shuffle = null;
+        for (String[] pl : pls) {
+            String l = pl[0].toLowerCase();
+            if (shuffle == null && (l.contains("shuffle") || l.contains("all show"))) shuffle = pl;
+            else rest.add(pl);
+        }
+        if (shuffle != null) {
+            final String label = shuffle[0], file = shuffle[1];
+            LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
+            pp.setMargins(dp(6), dp(6), dp(6), dp(6));
+            playlistGrid.addView(playlistTile(label, () -> playPlaylist(label, file), true), pp);
+        }
+        for (int r = 0; r < rest.size(); r += 2) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             for (int c = 0; c < 2; c++) {
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(110), 1f);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(120), 1f);
                 lp.setMargins(dp(6), dp(6), dp(6), dp(6));
                 int idx = r + c;
-                if (idx < pls.length) {
-                    final String label = pls[idx][0], file = pls[idx][1];
-                    row.addView(cardBtn(label, v -> playPlaylist(label, file)), lp);
+                if (idx < rest.size()) {
+                    final String label = rest.get(idx)[0], file = rest.get(idx)[1];
+                    row.addView(playlistTile(label, () -> playPlaylist(label, file), false), lp);
                 } else {
                     row.addView(new View(this), lp);   // keep the final row aligned
                 }
@@ -481,13 +500,16 @@ public class RemoteActivity extends Activity {
         timeLabel.setGravity(Gravity.END);
         col.addView(timeLabel);
 
-        // transport row
+        // transport cluster — drawn glyphs (always render); play/pause is the accent centrepiece
         LinearLayout tr = row();
-        tr.addView(cardBtn("⏮", v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"previous\"}")), eq());
-        tr.addView(cardBtn("⏯", v -> input("Player.PlayPause", "{\"playerid\":1}")), eq());
-        tr.addView(cardBtn("⏭", v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"next\"}")), eq());
-        tr.addView(cardBtn("⏹", v -> input("Player.Stop", "{\"playerid\":1}")), eq());
-        marginTop(tr, 10);
+        tr.setGravity(Gravity.CENTER);
+        marginTop(tr, 14);
+        tr.addView(iconBtn(IconView.PREV, BTN, TXT, v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"previous\"}")), iconLp(58));
+        playPause = new IconView(this, IconView.PLAYPAUSE, ACCENT, TXT);
+        playPause.setOnClickListener(v -> input("Player.PlayPause", "{\"playerid\":1}"));
+        tr.addView(playPause, iconLp(74));
+        tr.addView(iconBtn(IconView.NEXT, BTN, TXT, v -> input("Player.GoTo", "{\"playerid\":1,\"to\":\"next\"}")), iconLp(58));
+        tr.addView(iconBtn(IconView.STOP, BTN, WARN, v -> input("Player.Stop", "{\"playerid\":1}")), iconLp(58));
         col.addView(tr);
 
         // D-pad + Back/Home/Info (menu browsing)
@@ -504,16 +526,16 @@ public class RemoteActivity extends Activity {
         dpad.addView(d4);
         col.addView(dpad);
 
-        // volume row
-        LinearLayout vr = row(); marginTop(vr, 10);
-        vr.addView(cardBtn("−", v -> volDelta(-volStep())), eq());
+        // volume — drawn −/+ glyph buttons with the level between them
+        LinearLayout vr = row(); marginTop(vr, 14); vr.setGravity(Gravity.CENTER_VERTICAL);
+        vr.addView(iconBtn(IconView.VOLDOWN, BTN, TXT, v -> volDelta(-volStep())), iconLp(54));
         volLabel = new TextView(this);
-        volLabel.setText("🔊 --");
+        volLabel.setText("--");
         volLabel.setTextColor(TXT);
-        volLabel.setTextSize(16);
+        volLabel.setTextSize(18);
         volLabel.setGravity(Gravity.CENTER);
         vr.addView(volLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.4f));
-        vr.addView(cardBtn("+", v -> volDelta(volStep())), eq());
+        vr.addView(iconBtn(IconView.VOLUP, BTN, TXT, v -> volDelta(volStep())), iconLp(54));
         vr.addView(cardBtn("Mute", v -> toggleMute()), eq());
         col.addView(vr);
 
@@ -573,9 +595,94 @@ public class RemoteActivity extends Activity {
         b.setAllCaps(false);
         b.setTextColor(TXT);
         b.setTextSize(16);
-        b.setBackgroundColor(BTN);
+        b.setBackground(pressBg(BTN, withAlpha(0xFFFFFFFF, 0x1A), dp(12)));
         b.setOnClickListener(onClick);
         return b;
+    }
+
+    // ---------------- design helpers (rounded cards, press feedback, per-name accent, avatars) ------
+    int shade(int c, float f) {   // scale RGB (f<1 darkens) — pressed states
+        int a = (c >>> 24) & 0xff;
+        int r = Math.min(255, (int) (((c >> 16) & 0xff) * f));
+        int g = Math.min(255, (int) (((c >> 8) & 0xff) * f));
+        int bl = Math.min(255, (int) ((c & 0xff) * f));
+        return (a << 24) | (r << 16) | (g << 8) | bl;
+    }
+    int withAlpha(int c, int a) { return (a << 24) | (c & 0xFFFFFF); }
+    int tileColorFor(String name) {
+        int h = 0;
+        for (int i = 0; i < name.length(); i++) h = h * 31 + name.charAt(i);
+        return TILE_COLORS[Math.abs(h) % TILE_COLORS.length];
+    }
+    android.graphics.drawable.GradientDrawable roundRect(int fill, int stroke, int strokeW, int radius) {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(fill);
+        g.setCornerRadius(radius);
+        if (strokeW > 0) g.setStroke(strokeW, stroke);
+        return g;
+    }
+    /** Card background that darkens on press so buttons/tiles feel tactile. */
+    android.graphics.drawable.StateListDrawable pressBg(int fill, int stroke, int radius) {
+        android.graphics.drawable.StateListDrawable sl = new android.graphics.drawable.StateListDrawable();
+        sl.addState(new int[]{android.R.attr.state_pressed}, roundRect(shade(fill, 0.80f), stroke, dp(1), radius));
+        sl.addState(new int[]{}, roundRect(fill, stroke, dp(1), radius));
+        return sl;
+    }
+    /** A round colour-chip with the playlist's initial — a distinct anchor per show. */
+    View letterAvatar(String label, int accent, int sizePx) {
+        TextView a = new TextView(this);
+        String s = label == null ? "" : label.trim();
+        a.setText(s.isEmpty() ? "?" : s.substring(0, 1).toUpperCase());
+        a.setTextColor(TXT);
+        a.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, sizePx * 0.44f);
+        a.setTypeface(null, android.graphics.Typeface.BOLD);
+        a.setGravity(Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable o = new android.graphics.drawable.GradientDrawable();
+        o.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        o.setColor(accent);
+        a.setBackground(o);
+        return a;
+    }
+    /** One playlist as a content card: per-name colour + initial avatar + name. The Shuffle-All tile
+        is the accent-filled primary (a drawn shuffle glyph, not a letter). Rounded + pressable. */
+    View playlistTile(final String label, final Runnable onClick, boolean primary) {
+        int accent = primary ? ACCENT : tileColorFor(label);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(primary ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(12), dp(14), dp(12), dp(14));
+        card.setClickable(true);
+        card.setBackground(pressBg(primary ? accent : CARD, primary ? accent : withAlpha(accent, 0x66), dp(16)));
+        card.setOnClickListener(v -> onClick.run());
+        int av = dp(primary ? 40 : 46);
+        View avatar = primary ? new IconView(this, IconView.SHUFFLE, withAlpha(0xFFFFFFFF, 0x30), TXT)
+                              : letterAvatar(label, accent, av);
+        avatar.setClickable(false);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(av, av);
+        if (primary) ap.rightMargin = dp(12);
+        card.addView(avatar, ap);
+        TextView t = new TextView(this);
+        t.setText(primary ? "Shuffle All Shows" : label);
+        t.setTextColor(TXT);
+        t.setTextSize(primary ? 18 : 15);
+        t.setTypeface(null, primary ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        t.setGravity(primary ? (Gravity.START | Gravity.CENTER_VERTICAL) : Gravity.CENTER);
+        t.setMaxLines(2);
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(
+            primary ? 0 : ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, primary ? 1f : 0f);
+        if (!primary) tp.topMargin = dp(9);
+        card.addView(t, tp);
+        return card;
+    }
+    IconView iconBtn(int mode, int bg, int icon, View.OnClickListener onClick) {
+        IconView v = new IconView(this, mode, bg, icon);
+        v.setOnClickListener(onClick);
+        return v;
+    }
+    LinearLayout.LayoutParams iconLp(int sizeDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp));
+        lp.setMargins(dp(6), dp(6), dp(6), dp(6));
+        return lp;
     }
 
     // ---------------- actions ----------------
@@ -703,7 +810,7 @@ public class RemoteActivity extends Activity {
         curVol = vol; muted = mut;
         final boolean hotOn = kodi.isHotspotOn();   // the phone's own AP that the tablet joins
         final String fTitle = title, fTime = time, fNext = next;
-        final int fProg = prog, fVol = vol; final boolean fMut = mut;
+        final int fProg = prog, fVol = vol; final boolean fMut = mut, fPlaying = playing;
         ui.post(() -> {
             hotspotChip.setColors(hotOn ? GOOD : WARN, TXT);   // green = on, red = off
             statusDot.setText("● " + (conn ? label : "offline"));
@@ -712,7 +819,8 @@ public class RemoteActivity extends Activity {
             timeLabel.setText(fTime);
             if (!seeking) seek.setProgress(fProg);
             upNext.setText(fNext);
-            volLabel.setText((fMut ? "🔇 " : "🔊 ") + fVol);
+            if (playPause != null) playPause.setPlaying(fPlaying);
+            volLabel.setText(fMut ? "Muted" : ("Vol " + fVol));
         });
     }
 
@@ -776,16 +884,17 @@ public class RemoteActivity extends Activity {
         this device. WIFI = a dot with arcs fanning up; POWER = the IEC mark (near-complete ring with a
         line through the top gap). Rounded pill background so it reads as a button; recolor via setColors. */
     class IconView extends View {
-        static final int WIFI = 0, POWER = 1;
+        static final int WIFI = 0, POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, STOP = 5, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8;
         final int mode;
         int bgCol, iconCol;
+        boolean playing = false;
         final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
         final android.graphics.drawable.GradientDrawable bgd = new android.graphics.drawable.GradientDrawable();
         IconView(android.content.Context c, int mode, int bgCol, int iconCol) {
             super(c);
             this.mode = mode; this.bgCol = bgCol; this.iconCol = iconCol;
             setClickable(true);
-            bgd.setCornerRadius(dp(10));
+            bgd.setCornerRadius(dp(mode == SHUFFLE ? 40 : 14));
             bgd.setColor(bgCol);
             setBackground(bgd);
         }
@@ -795,27 +904,87 @@ public class RemoteActivity extends Activity {
             if (icon != iconCol) { iconCol = icon; ch = true; }
             if (ch) invalidate();
         }
+        void setPlaying(boolean pl) { if (pl != playing) { playing = pl; invalidate(); } }
         @Override protected void onDraw(android.graphics.Canvas cv) {
             float cx = getWidth() / 2f, cy = getHeight() / 2f;
             float s = Math.min(getWidth(), getHeight()) * 0.30f;
             p.setColor(iconCol);
             p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
-            if (mode == POWER) {
-                p.setStyle(android.graphics.Paint.Style.STROKE);
-                p.setStrokeWidth(Math.max(dp(2), s * 0.22f));
-                android.graphics.RectF r = new android.graphics.RectF(cx - s, cy - s, cx + s, cy + s);
-                cv.drawArc(r, -63f, 306f, false, p);                    // ring with ~54° gap at the top
-                cv.drawLine(cx, cy - s * 1.15f, cx, cy - s * 0.10f, p); // vertical line through the gap
-            } else {                                                    // WIFI: dot + fanning arcs
-                float baseY = cy + s * 0.70f;
-                p.setStyle(android.graphics.Paint.Style.FILL);
-                cv.drawCircle(cx, baseY, Math.max(dp(2), s * 0.16f), p);
-                p.setStyle(android.graphics.Paint.Style.STROKE);
-                for (int i = 1; i <= 3; i++) {
-                    float rad = s * 0.42f * i;
-                    p.setStrokeWidth(Math.max(dp(2), s * 0.15f));
-                    android.graphics.RectF r = new android.graphics.RectF(cx - rad, baseY - rad, cx + rad, baseY + rad);
-                    cv.drawArc(r, 234f, 72f, false, p);
+            p.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            android.graphics.RectF r;
+            switch (mode) {
+                case POWER:
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    p.setStrokeWidth(Math.max(3f, s * 0.22f));
+                    r = new android.graphics.RectF(cx - s, cy - s, cx + s, cy + s);
+                    cv.drawArc(r, -63f, 306f, false, p);                    // ring, ~54° gap at top
+                    cv.drawLine(cx, cy - s * 1.15f, cx, cy - s * 0.10f, p); // line through the gap
+                    break;
+                case WIFI: {
+                    float baseY = cy + s * 0.70f;
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    cv.drawCircle(cx, baseY, Math.max(2f, s * 0.16f), p);
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    for (int i = 1; i <= 3; i++) {
+                        float rad = s * 0.42f * i;
+                        p.setStrokeWidth(Math.max(2f, s * 0.15f));
+                        r = new android.graphics.RectF(cx - rad, baseY - rad, cx + rad, baseY + rad);
+                        cv.drawArc(r, 234f, 72f, false, p);
+                    }
+                    break;
+                }
+                case PLAYPAUSE:
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    if (playing) {                                          // two bars
+                        float bw = s * 0.40f, gap = s * 0.34f;
+                        cv.drawRoundRect(new android.graphics.RectF(cx - gap - bw, cy - s, cx - gap, cy + s), dp(2), dp(2), p);
+                        cv.drawRoundRect(new android.graphics.RectF(cx + gap, cy - s, cx + gap + bw, cy + s), dp(2), dp(2), p);
+                    } else {                                                // play triangle
+                        android.graphics.Path tp = new android.graphics.Path();
+                        tp.moveTo(cx - s * 0.60f, cy - s);
+                        tp.lineTo(cx + s * 0.95f, cy);
+                        tp.lineTo(cx - s * 0.60f, cy + s);
+                        tp.close();
+                        cv.drawPath(tp, p);
+                    }
+                    break;
+                case PREV:
+                case NEXT: {                                                // triangle + end bar
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    int dir = (mode == NEXT) ? 1 : -1;
+                    float bw = Math.max(2f, s * 0.16f);
+                    float bx = cx + dir * s * 0.9f;
+                    cv.drawRoundRect(new android.graphics.RectF(bx - bw, cy - s, bx + bw, cy + s), bw, bw, p);
+                    android.graphics.Path tp = new android.graphics.Path();
+                    tp.moveTo(cx + dir * s * 0.85f, cy);
+                    tp.lineTo(cx - dir * s * 0.55f, cy - s);
+                    tp.lineTo(cx - dir * s * 0.55f, cy + s);
+                    tp.close();
+                    cv.drawPath(tp, p);
+                    break;
+                }
+                case STOP:
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    cv.drawRoundRect(new android.graphics.RectF(cx - s * 0.82f, cy - s * 0.82f, cx + s * 0.82f, cy + s * 0.82f), dp(3), dp(3), p);
+                    break;
+                case VOLUP:
+                case VOLDOWN:                                               // − / +
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    p.setStrokeWidth(Math.max(3f, s * 0.24f));
+                    cv.drawLine(cx - s, cy, cx + s, cy, p);
+                    if (mode == VOLUP) cv.drawLine(cx, cy - s, cx, cy + s, p);
+                    break;
+                case SHUFFLE: {                                            // crossed arrows
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    p.setStrokeWidth(Math.max(2f, s * 0.16f));
+                    float t = s;
+                    cv.drawLine(cx - t, cy - t * 0.55f, cx + t, cy + t * 0.55f, p);
+                    cv.drawLine(cx - t, cy + t * 0.55f, cx + t, cy - t * 0.55f, p);
+                    cv.drawLine(cx + t, cy + t * 0.55f, cx + t * 0.45f, cy + t * 0.55f, p);
+                    cv.drawLine(cx + t, cy + t * 0.55f, cx + t, cy + t * 0.02f, p);
+                    cv.drawLine(cx + t, cy - t * 0.55f, cx + t * 0.45f, cy - t * 0.55f, p);
+                    cv.drawLine(cx + t, cy - t * 0.55f, cx + t, cy - t * 0.02f, p);
+                    break;
                 }
             }
         }
