@@ -64,6 +64,8 @@ public class BridgeService extends Service {
     static final int HTTP_PORT = 8080;
     static final int KODI_TCP = 9090;
     static final String UPLOAD_DIR = "/storage/emulated/0/KidodiUploads";  // phone->tablet uploads land here (played by path)
+    static final String IMPORT_DIR_KEY = "kidodi_import_dir";              // Settings.Global; shared with KioskActivity + adb
+    static final String IMPORT_DIR_DEFAULT = "/storage/emulated/0/Download/";
     static final String CHAN = "kidstv_kiosk";
     static final int NOTIF_ID = 42;
     static final String ACTION_REMOVE_OVERLAY = "com.kidstv.kiosk.REMOVE_OVERLAY";
@@ -623,6 +625,10 @@ public class BridgeService extends Service {
                 if (q >= 0) json = urlDecode(target.substring(q + 8));
             }
 
+            // Build/import featureset endpoints (need the body read, so handled after it):
+            if (target.startsWith("/importdir"))   { handleImportDir(method, json, c); return; }
+            if (target.startsWith("/saveplaylist")) { handleSavePlaylist(json, c); return; }
+
             String reply;
             if (json == null || json.trim().length() == 0) {
                 // Yatse's initial reachability probe / bare GET
@@ -711,6 +717,96 @@ public class BridgeService extends Service {
             writeResponse(c, sb.toString());
         } catch (Exception e) {
             try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"files\":[]}}"); } catch (Exception e2) {}
+        } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    static String jsonEsc(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\""); }
+
+    /** Import destination = where phone->tablet imports land. Shared setting (Settings.Global), so the
+        kiosk admin menu, the remote (via the endpoints below), and adb can all set it. Default: Download. */
+    String importDir() {
+        try {
+            String v = android.provider.Settings.Global.getString(getContentResolver(), IMPORT_DIR_KEY);
+            if (v != null && v.length() > 0) return v;
+        } catch (Exception e) {}
+        return IMPORT_DIR_DEFAULT;
+    }
+    void setImportDir(String p) {
+        try { android.provider.Settings.Global.putString(getContentResolver(), IMPORT_DIR_KEY, p); } catch (Exception e) {}
+    }
+
+    /** Storage volumes for the import-destination picker: Internal + any mounted SD/USB card. */
+    String volumesJson() {
+        // {label, destPath, statfsRoot}. getExternalFilesDirs() returns an app dir on EVERY mounted
+        // volume (incl. a portable SD) this app can reach — the raw /storage listing + canRead() are
+        // both blocked for a portable card, but this API isn't. Strip the /Android/... suffix to get
+        // each volume root, then offer a sensible import subfolder on it.
+        java.util.ArrayList<String[]> vols = new java.util.ArrayList<>();
+        vols.add(new String[]{"Internal storage", IMPORT_DIR_DEFAULT, "/storage/emulated/0/"});
+        try {
+            for (java.io.File d : getApplicationContext().getExternalFilesDirs(null)) {
+                if (d == null) continue;
+                String p = d.getAbsolutePath();
+                int cut = p.indexOf("/Android/");
+                if (cut <= 0) continue;
+                String root = p.substring(0, cut + 1);                 // e.g. /storage/3762-3632/
+                if (root.startsWith("/storage/emulated")) continue;    // Internal, already added
+                String nm = root.replace("/storage/", "").replace("/", "");
+                vols.add(new String[]{"SD card (" + nm + ")", root + "Imports/", root});
+            }
+        } catch (Exception e) {}
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < vols.size(); i++) {
+            if (i > 0) sb.append(",");
+            long free = 0;
+            try { android.os.StatFs st = new android.os.StatFs(vols.get(i)[2]); free = st.getAvailableBytes(); } catch (Exception e) {}
+            sb.append("{\"label\":\"").append(jsonEsc(vols.get(i)[0]))
+              .append("\",\"path\":\"").append(jsonEsc(vols.get(i)[1]))
+              .append("\",\"freeGB\":").append(free / (1024L * 1024L * 1024L)).append("}");
+        }
+        return sb.append("]").toString();
+    }
+
+    /** GET /importdir -> {dir, volumes[]} ; POST /importdir {"dir":"..."} -> set it (must be under /storage). */
+    void handleImportDir(String method, String body, Socket c) {
+        try {
+            if (method.equalsIgnoreCase("POST") && body != null && body.length() > 0) {
+                String dir = new JSONObject(body).optString("dir", "");
+                boolean ok = false;
+                if (dir.startsWith("/storage/") && !dir.contains("..")) {
+                    java.io.File d = new java.io.File(dir);
+                    if (d.isDirectory() || d.mkdirs()) { setImportDir(dir.endsWith("/") ? dir : dir + "/"); ok = true; }
+                }
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":" + ok + "}}");
+            } else {
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"dir\":\"" + jsonEsc(importDir()) + "\",\"volumes\":" + volumesJson() + "}}");
+            }
+        } catch (Exception e) {
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32003,\"message\":\"importdir failed\"}}"); } catch (Exception e2) {}
+        } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** POST /saveplaylist {"name":"...","items":["<tablet file path>",...]} -> build an .m3u and hand it
+        to the Kodi addon (which runs inside Kodi and CAN write the playlists dir) to save as a tile. */
+    void handleSavePlaylist(String body, Socket c) {
+        try {
+            JSONObject o = new JSONObject(body);
+            String name = o.optString("name", "Playlist");
+            org.json.JSONArray items = o.optJSONArray("items");
+            StringBuilder m3u = new StringBuilder("#EXTM3U\n");
+            if (items != null) for (int i = 0; i < items.length(); i++) {
+                String p = items.optString(i, "");
+                if (p.length() > 0) m3u.append(p).append("\n");
+            }
+            java.io.File dir = new java.io.File(UPLOAD_DIR); dir.mkdirs();
+            java.io.File tmp = new java.io.File(dir, "kidodi_playlist_" + System.currentTimeMillis() + ".m3u");
+            java.io.OutputStream fos = new java.io.FileOutputStream(tmp);
+            try { fos.write(m3u.toString().getBytes("UTF-8")); fos.flush(); } finally { try { fos.close(); } catch (Exception e) {} }
+            forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Addons.ExecuteAddon\",\"params\":{\"addonid\":\"script.kidstv.play\",\"params\":[\"savem3u\",\"" + jsonEsc(name) + "\",\"" + jsonEsc(tmp.getAbsolutePath()) + "\"]}}");
+            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}");
+        } catch (Exception e) {
+            Log.w(TAG, "saveplaylist: " + e);
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32002,\"message\":\"save failed\"}}"); } catch (Exception e2) {}
         } finally { try { c.close(); } catch (Exception e) {} }
     }
 

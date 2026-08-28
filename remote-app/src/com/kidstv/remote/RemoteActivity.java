@@ -53,6 +53,9 @@ public class RemoteActivity extends Activity {
     IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     LinearLayout queueList;                 // dynamic queue rows live here
+    LinearLayout buildList;                 // Build tab: the working-set rows
+    TextView buildHint;
+    final java.util.ArrayList<String[]> mBuildSet = new java.util.ArrayList<>();  // {label, file, episodeid}
     volatile String[][] mPlaylists = null;  // {label, file} per real .xsp on the device; null until loaded
     final java.util.ArrayList<View> mTabViews = new java.util.ArrayList<>();   // generic N-tab plumbing
     final java.util.ArrayList<String> mTabLabels = new java.util.ArrayList<>();
@@ -95,6 +98,7 @@ public class RemoteActivity extends Activity {
         addTab(content, "Queue", queueView = queueTab());
         addTab(content, "Controls", controlsTab());
         addTab(content, "Files", filesView = filesTab());
+        addTab(content, "Build", buildTab());
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         root.addView(bottomBar());
@@ -694,6 +698,174 @@ public class RemoteActivity extends Activity {
         bg(() -> kodi.rpc(method, params));
     }
 
+    static String jsonEscR(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\""); }
+
+    /** Build tab: assemble a working set from the tablet library, then Play now or Save as a playlist
+        tile. (Phone-file + .m3u sources land in a later phase — the button is a disabled placeholder.) */
+    View buildTab() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+        TextView title = new TextView(this);
+        title.setText("Build a playlist");
+        title.setTextColor(TXT); title.setTextSize(19); title.setPadding(0, 0, 0, dp(2));
+        root.addView(title);
+        buildHint = new TextView(this);
+        buildHint.setTextColor(SUB); buildHint.setTextSize(13);
+        buildHint.setText("Add episodes, then Play now or Save as a playlist tile.");
+        root.addView(buildHint);
+
+        LinearLayout addRow = new LinearLayout(this); addRow.setOrientation(LinearLayout.HORIZONTAL);
+        addRow.addView(cardBtn("＋  Add from library", v -> addFromLibrary()), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f));
+        Button ph = cardBtn("Phone files (soon)", null);
+        ph.setEnabled(false); ph.setAlpha(0.45f);
+        addRow.addView(ph, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams arlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        arlp.setMargins(0, dp(8), 0, dp(4));
+        root.addView(addRow, arlp);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        buildList = new LinearLayout(this);
+        buildList.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(buildList);
+        root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout actRow = new LinearLayout(this); actRow.setOrientation(LinearLayout.HORIZONTAL);
+        actRow.addView(cardBtn("▶  Play now", v -> buildPlayNow()), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button save = cardBtn("💾  Save", v -> buildSave());
+        save.setBackgroundColor(ACCENT);
+        actRow.addView(save, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams aclp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        aclp.setMargins(0, dp(6), 0, 0);
+        root.addView(actRow, aclp);
+
+        renderBuildSet();
+        return root;
+    }
+
+    void renderBuildSet() {
+        if (buildList == null) return;
+        buildList.removeAllViews();
+        if (mBuildSet.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText("Nothing added yet."); t.setTextColor(SUB); t.setGravity(Gravity.CENTER); t.setPadding(0, dp(30), 0, 0);
+            buildList.addView(t);
+            if (buildHint != null) buildHint.setText("Add episodes, then Play now or Save as a playlist tile.");
+            return;
+        }
+        for (int i = 0; i < mBuildSet.size(); i++) {
+            final int idx = i;
+            LinearLayout r = new LinearLayout(this);
+            r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setBackground(roundRect(CARD, 0x22FFFFFF, dp(1), dp(10)));
+            r.setPadding(dp(12), dp(10), dp(6), dp(10));
+            TextView lab = new TextView(this);
+            lab.setText(mBuildSet.get(idx)[0]); lab.setTextColor(TXT); lab.setTextSize(15);
+            r.addView(lab, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            Button rm = plainBtn("✕", v -> { if (idx < mBuildSet.size()) mBuildSet.remove(idx); renderBuildSet(); });
+            rm.setTextColor(SUB);
+            r.addView(rm, new LinearLayout.LayoutParams(dp(44), dp(40)));
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rlp.setMargins(0, dp(4), 0, dp(4));
+            buildList.addView(r, rlp);
+        }
+        if (buildHint != null) buildHint.setText(mBuildSet.size() + " item(s) — Play now, or Save as a tile.");
+    }
+
+    void addFromLibrary() {
+        bg(() -> {
+            final java.util.ArrayList<String[]> shows = new java.util.ArrayList<>();
+            try {
+                JSONArray a = new JSONObject(kodi.rpc("VideoLibrary.GetTVShows", "{\"properties\":[\"title\"],\"sort\":{\"method\":\"title\"}}"))
+                    .getJSONObject("result").getJSONArray("tvshows");
+                for (int i = 0; i < a.length(); i++) { JSONObject s = a.getJSONObject(i);
+                    shows.add(new String[]{ s.optString("label", s.optString("title", "?")), String.valueOf(s.optInt("tvshowid", -1)) }); }
+            } catch (Exception e) {}
+            ui.post(() -> {
+                if (shows.isEmpty()) { Toast.makeText(this, "No shows found — is the tablet connected?", Toast.LENGTH_SHORT).show(); return; }
+                final String[] labels = new String[shows.size()];
+                for (int i = 0; i < shows.size(); i++) labels[i] = shows.get(i)[0];
+                new AlertDialog.Builder(this).setTitle("Add from which show?")
+                    .setItems(labels, (d, w) -> pickEpisodes(shows.get(w)[0], Integer.parseInt(shows.get(w)[1])))
+                    .setNegativeButton("Cancel", null).show();
+            });
+        });
+    }
+
+    void pickEpisodes(final String showTitle, final int tvshowid) {
+        bg(() -> {
+            final java.util.ArrayList<String[]> eps = new java.util.ArrayList<>();
+            try {
+                JSONArray a = new JSONObject(kodi.rpc("VideoLibrary.GetEpisodes",
+                        "{\"tvshowid\":" + tvshowid + ",\"properties\":[\"title\",\"season\",\"episode\",\"file\"],\"sort\":{\"method\":\"episode\"}}"))
+                    .getJSONObject("result").getJSONArray("episodes");
+                for (int i = 0; i < a.length(); i++) { JSONObject e = a.getJSONObject(i);
+                    String el = e.optString("label", "");
+                    if (el.length() == 0) el = "S" + e.optInt("season") + "E" + e.optInt("episode");
+                    eps.add(new String[]{ showTitle + " · " + el, e.optString("file", ""), String.valueOf(e.optInt("episodeid", -1)) }); }
+            } catch (Exception e) {}
+            ui.post(() -> {
+                if (eps.isEmpty()) { Toast.makeText(this, "No episodes", Toast.LENGTH_SHORT).show(); return; }
+                final String[] labels = new String[eps.size()];
+                final boolean[] checked = new boolean[eps.size()];
+                for (int i = 0; i < eps.size(); i++) labels[i] = eps.get(i)[0];
+                new AlertDialog.Builder(this).setTitle(showTitle)
+                    .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                    .setPositiveButton("Add", (d, w) -> {
+                        int n = 0; for (int i = 0; i < eps.size(); i++) if (checked[i]) { mBuildSet.add(eps.get(i)); n++; }
+                        renderBuildSet();
+                        if (n > 0) Toast.makeText(this, "Added " + n, Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Cancel", null).show();
+            });
+        });
+    }
+
+    void buildPlayNow() {
+        if (mBuildSet.isEmpty()) { Toast.makeText(this, "Add something first", Toast.LENGTH_SHORT).show(); return; }
+        final java.util.ArrayList<String[]> items = new java.util.ArrayList<>(mBuildSet);
+        Toast.makeText(this, "Playing " + items.size() + "…", Toast.LENGTH_SHORT).show();
+        bg(() -> {
+            kodi.rpc("Playlist.Clear", "{\"playlistid\":1}");
+            for (String[] it : items) {
+                int epid = -1; try { epid = Integer.parseInt(it[2]); } catch (Exception e) {}
+                if (epid >= 0) kodi.rpc("Playlist.Add", "{\"playlistid\":1,\"item\":{\"episodeid\":" + epid + "}}");
+            }
+            kodi.rpc("Player.Open", "{\"item\":{\"playlistid\":1}}");
+            try { Thread.sleep(500); } catch (Exception e) {}
+            kodi.rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":false}");
+            kodi.rpc("Player.SetRepeat", "{\"playerid\":1,\"repeat\":\"all\"}");
+        });
+    }
+
+    void buildSave() {
+        if (mBuildSet.isEmpty()) { Toast.makeText(this, "Add something first", Toast.LENGTH_SHORT).show(); return; }
+        final EditText name = new EditText(this);
+        name.setHint("Playlist name"); name.setInputType(InputType.TYPE_CLASS_TEXT);
+        new AlertDialog.Builder(this).setTitle("Save as playlist").setView(name)
+            .setPositiveButton("Save", (d, w) -> {
+                final String nm = name.getText().toString().trim();
+                if (nm.length() == 0) { Toast.makeText(this, "Enter a name", Toast.LENGTH_SHORT).show(); return; }
+                final java.util.ArrayList<String[]> items = new java.util.ArrayList<>(mBuildSet);
+                Toast.makeText(this, "Saving…", Toast.LENGTH_SHORT).show();
+                bg(() -> {
+                    StringBuilder arr = new StringBuilder("[");
+                    boolean first = true;
+                    for (String[] it : items) { String f = it[1]; if (f == null || f.length() == 0) continue; if (!first) arr.append(","); first = false; arr.append("\"").append(jsonEscR(f)).append("\""); }
+                    arr.append("]");
+                    String body = "{\"name\":\"" + jsonEscR(nm) + "\",\"items\":" + arr + "}";
+                    String resp = kodi.bridgePost("/saveplaylist", body);
+                    final boolean ok = resp != null && resp.contains("\"ok\":true");
+                    ui.post(() -> {
+                        Toast.makeText(this, ok ? ("Saved \"" + nm + "\" — see Playlists") : "Save failed", Toast.LENGTH_LONG).show();
+                        if (ok) { mBuildSet.clear(); renderBuildSet(); mPlaylists = null; fetchPlaylists(); }
+                    });
+                });
+            })
+            .setNegativeButton("Cancel", null).show();
+    }
+
     void playPlaylist(final String label, final String file) {
         final String l = label.toLowerCase();
         // shuffle the all-shows mixes; play a specific show/playlist in order (mirrors the kiosk's rule)
@@ -1050,6 +1222,41 @@ public class RemoteActivity extends Activity {
             vrow.addView(sb, lp);
         }
         box.addView(vrow);
+
+        // --- Imports (shared setting on the tablet; where phone->tablet imports land) ---
+        sectionHeader(box, "Imports");
+        final TextView idl = new TextView(this);
+        idl.setTextColor(TXT); idl.setText("Import folder: (loading…)"); idl.setPadding(0, dp(2), 0, dp(4));
+        box.addView(idl);
+        final LinearLayout ivrow = new LinearLayout(this); ivrow.setOrientation(LinearLayout.HORIZONTAL);
+        box.addView(ivrow);
+        bg(() -> {
+            String resp = kodi.bridgeGet("/importdir");
+            String curDir = "";
+            final java.util.ArrayList<String[]> vols = new java.util.ArrayList<>();
+            try {
+                JSONObject res = new JSONObject(resp).getJSONObject("result");
+                curDir = res.optString("dir", "");
+                JSONArray va = res.optJSONArray("volumes");
+                if (va != null) for (int i = 0; i < va.length(); i++) { JSONObject v = va.getJSONObject(i); vols.add(new String[]{ v.optString("label", "?"), v.optString("path", "") }); }
+            } catch (Exception e) {}
+            final String curImp = curDir;
+            ui.post(() -> {
+                idl.setText("Import folder: " + (curImp.length() > 0 ? curImp : "(unknown — tablet offline?)"));
+                for (final String[] v : vols) {
+                    final String path = v[1] + "Download/";
+                    Button vb = cardBtn(v[0], null);
+                    vb.setTextSize(13);
+                    vb.setOnClickListener(w -> bg(() -> {
+                        String r = kodi.bridgePost("/importdir", "{\"dir\":\"" + jsonEscR(path) + "\"}");
+                        final boolean ok = r != null && r.contains("\"ok\":true");
+                        ui.post(() -> { if (ok) idl.setText("Import folder: " + path); Toast.makeText(this, ok ? ("Imports → " + path) : "Couldn't set", Toast.LENGTH_SHORT).show(); });
+                    }));
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f); lp.setMargins(dp(4), dp(6), dp(4), dp(6));
+                    ivrow.addView(vb, lp);
+                }
+            });
+        });
 
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         sv.addView(box);

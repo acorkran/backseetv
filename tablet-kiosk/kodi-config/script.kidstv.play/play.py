@@ -38,6 +38,29 @@ if arg == "rebuild":
     xbmc.executebuiltin('CleanLibrary(video)')   # drop library entries for files that are gone
     arg = "ShuffleAll"                            # fall through and play the fresh shuffle
 
+if arg == "savem3u":
+    # RunScript(script.kidstv.play, savem3u, <name>, <tmp_m3u_path>) -> write a ready-made .m3u into
+    # the playlists folder so it shows up as a tile. No playback. The remote/bridge can't write Kodi's
+    # own dir (scoped storage), so it hands us the finished .m3u as a temp file (which we then delete).
+    name = sys.argv[2] if len(sys.argv) > 2 else "Playlist"
+    tmp = sys.argv[3] if len(sys.argv) > 3 else ""
+    name = name.replace("/", "").replace("\\", "").strip()
+    if name[-4:].lower() == ".m3u":
+        name = name[:-4].strip()
+    if not name:
+        name = "Playlist"
+    try:
+        src = xbmcvfs.File(tmp)
+        data = src.read()
+        src.close()
+        out = xbmcvfs.File("special://profile/playlists/video/%s.m3u" % name, 'w')
+        out.write(data)
+        out.close()
+        xbmcvfs.delete(tmp)
+    except Exception:
+        pass
+    sys.exit()
+
 MEDIA_EXT = (".mp4", ".mkv", ".avi", ".m4v", ".mov", ".webm", ".ts", ".flv")
 is_file = arg.startswith("/") or arg.startswith("special://") or arg.lower().endswith(MEDIA_EXT)
 

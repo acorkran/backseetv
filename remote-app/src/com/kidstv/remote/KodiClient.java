@@ -213,6 +213,31 @@ class KodiClient {
         }
     }
 
+    /** POST a raw JSON body to an arbitrary bridge (8080) path; returns the response body, or null.
+        Used by the Build featureset (/importdir, /saveplaylist) alongside bridge()/bridgeGet(). */
+    String bridgePost(String path, String body) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return null; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            java.net.URL url = new java.net.URL("http://" + host + ":" + BRIDGE_PORT + path);
+            con = (java.net.HttpURLConnection) url.openConnection();
+            con.setConnectTimeout(2500); con.setReadTimeout(8000);
+            con.setRequestMethod("POST");
+            con.setRequestProperty("Content-Type", "application/json");
+            con.setDoOutput(true);
+            con.getOutputStream().write(body.getBytes("UTF-8"));
+            int code = con.getResponseCode();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            try { java.io.InputStream rin = con.getInputStream(); byte[] rb = new byte[4096]; int rn; while ((rn = rin.read(rb)) >= 0) bo.write(rb, 0, rn); } catch (Exception e) {}
+            return code == 200 ? new String(bo.toByteArray(), "UTF-8") : null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
+    }
+
     /** Stream a local file to the kiosk's 8080 /upload endpoint; it lands in the tablet's uploads dir
         and becomes playable. Returns the JSON response body (has the stored `path`) on HTTP 200, else
         null. Closes `data`. */

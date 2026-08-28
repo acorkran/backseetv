@@ -644,6 +644,31 @@ public class KioskActivity extends Activity {
         }
     }
 
+    /** Import destination = where phone->tablet imports land. Shared (Settings.Global) with the bridge,
+        the remote (via /importdir), and adb. Default: Download. */
+    String importDir() {
+        try { String v = Settings.Global.getString(getContentResolver(), "kidodi_import_dir"); if (v != null && v.length() > 0) return v; } catch (Exception e) {}
+        return "/storage/emulated/0/Download/";
+    }
+    void setImportDir(String p) {
+        try { Settings.Global.putString(getContentResolver(), "kidodi_import_dir", p); }
+        catch (Exception e) { android.widget.Toast.makeText(this, "Can't save — grant WRITE_SECURE_SETTINGS via adb", android.widget.Toast.LENGTH_LONG).show(); }
+    }
+    /** Internal + any SD/USB card, as {label, mount-path-with-trailing-slash}. */
+    java.util.ArrayList<String[]> importVolumes() {
+        java.util.ArrayList<String[]> vols = new java.util.ArrayList<>();
+        vols.add(new String[]{"Internal", "/storage/emulated/0/"});
+        try {
+            java.io.File[] vs = new java.io.File("/storage").listFiles();
+            if (vs != null) for (java.io.File v : vs) {
+                String nm = v.getName();
+                if (v.isDirectory() && !nm.equals("emulated") && !nm.equals("self") && v.canRead())
+                    vols.add(new String[]{"SD card", v.getAbsolutePath() + "/"});
+            }
+        } catch (Exception e) {}
+        return vols;
+    }
+
     /** The post-PIN admin surface: playback controls + the tablet's real playlists + a couple of
         settings + exit options - so the tablet is usable without the phone remote. */
     void showAdminMenu() {
@@ -707,6 +732,26 @@ public class KioskActivity extends Activity {
             wrow.addView(b, eqp());
         }
         col.addView(wrow);
+
+        // Import destination — where phone->tablet imports land (shared with the remote + adb)
+        final TextView idl = new TextView(this);
+        idl.setTextColor(TXT); idl.setPadding(dp(4), dp(8), 0, dp(4));
+        idl.setText("Import folder: " + importDir());
+        col.addView(idl);
+        LinearLayout idrow = row();
+        for (final String[] v : importVolumes()) {
+            final String path = v[1] + "Download/";
+            Button vb = cardBtn(v[0], null);
+            vb.setTextSize(14);
+            vb.setOnClickListener(w -> {
+                setImportDir(path);
+                idl.setText("Import folder: " + importDir());
+                android.widget.Toast.makeText(this, "Imports → " + path, android.widget.Toast.LENGTH_SHORT).show();
+            });
+            idrow.addView(vb, eqp());
+        }
+        col.addView(idrow);
+
         Button restart = cardBtn("↻  Restart Kodi", v -> {
             android.widget.Toast.makeText(this, "Restarting Kodi…", android.widget.Toast.LENGTH_SHORT).show();
             input("Application.Quit", null);   // HOME relaunches Kodi fresh; the addon resumes
