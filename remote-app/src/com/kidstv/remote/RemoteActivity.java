@@ -52,6 +52,12 @@ public class RemoteActivity extends Activity {
     SeekBar seek;
     IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
+    Button[] mLayoutBtns;                    // the List/2/3/4 layout segmented control
+    int mGridCols = 2;                       // columns the current grid render is using (avatar/text scale)
+    // Playlist tile layout (pref "pl_cols"): PL_LIST = full-width rows, else 2/3/4 = grid columns.
+    static final int PL_LIST = 0;
+    // playlistTile styles.
+    static final int STYLE_PRIMARY = 0, STYLE_GRID = 1, STYLE_LIST = 2;
     LinearLayout queueList;                 // dynamic queue rows live here
     LinearLayout buildList;                 // Build tab: the working-set rows
     FrameLayout plSub;                       // Playlists tab: swaps tiles / Build / Files sub-views
@@ -177,6 +183,7 @@ public class RemoteActivity extends Activity {
         hdr.addView(cardBtn("+  New / Import", v -> showPlSub(1)), eq);
         hdr.addView(cardBtn("Browse files", v -> showPlSub(2)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         col.addView(hdr);
+        col.addView(layoutBar());
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         playlistGrid = new LinearLayout(this);
         playlistGrid.setOrientation(LinearLayout.VERTICAL);
@@ -185,6 +192,46 @@ public class RemoteActivity extends Activity {
         col.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         renderPlaylists();   // placeholder until fetchPlaylists() populates mPlaylists
         return col;
+    }
+
+    /** The playlist tiles are read from the pref "pl_cols": PL_LIST (0) = full-width list rows, or
+        2/3/4 = a grid that many columns wide. Default 2. */
+    int plCols() { return prefs.getInt("pl_cols", 2); }
+
+    /** A compact segmented control (List / 2 / 3 / 4) to switch the tiles between a list and a
+        grid of N columns. Persists to "pl_cols" and re-renders immediately. */
+    View layoutBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(12), 0, dp(10), dp(4));
+        TextView cap = new TextView(this);
+        cap.setText("Layout");
+        cap.setTextColor(SUB); cap.setTextSize(13);
+        bar.addView(cap, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));  // pushes buttons right
+        final int[] vals = {PL_LIST, 2, 3, 4};
+        final String[] labels = {"List", "2", "3", "4"};
+        mLayoutBtns = new Button[vals.length];
+        int cur = plCols();
+        for (int i = 0; i < vals.length; i++) {
+            final int val = vals[i];
+            Button b = new Button(this);
+            b.setText(labels[i]); b.setAllCaps(false); b.setTextColor(TXT); b.setTextSize(13);
+            b.setMinWidth(0); b.setMinHeight(0); b.setMinimumWidth(0); b.setMinimumHeight(0);
+            b.setPadding(0, 0, 0, 0);
+            b.setBackground(roundRect(val == cur ? ACCENT : BTN, 0, 0, dp(9)));
+            b.setOnClickListener(v -> {
+                prefs.edit().putInt("pl_cols", val).apply();
+                for (int j = 0; j < vals.length; j++)
+                    mLayoutBtns[j].setBackground(roundRect(vals[j] == val ? ACCENT : BTN, 0, 0, dp(9)));
+                renderPlaylists();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(val == PL_LIST ? 54 : 40), dp(34));
+            lp.leftMargin = dp(5);
+            mLayoutBtns[i] = b;
+            bar.addView(b, lp);
+        }
+        return bar;
     }
 
     /** Wrap a sub-page (Build / Files) with a "‹ Playlists" back header that returns to the tiles. */
@@ -208,8 +255,9 @@ public class RemoteActivity extends Activity {
         if (idx == 2) showFileSrc(mFileSrc);      // (re)load the Files browse list
     }
 
-    /** (Re)build the playlist tiles from mPlaylists on the UI thread — two per row, scrollable, since
-        the list is now the device's ACTUAL playlists and can be any length. */
+    /** (Re)build the playlist tiles from mPlaylists on the UI thread. Honours the "pl_cols" pref:
+        PL_LIST = full-width rows, or 2/3/4 = a grid that many columns wide (tiles shrink as columns
+        grow). The all-shows shuffle is always the primary tile on top. Scrollable + any length. */
     void renderPlaylists() {
         if (playlistGrid == null) return;
         playlistGrid.removeAllViews();
@@ -222,7 +270,7 @@ public class RemoteActivity extends Activity {
             playlistGrid.addView(t);
             return;
         }
-        // Pull the all-shows shuffle out as the primary, full-width tile; the rest go 2-per-row.
+        // Pull the all-shows shuffle out as the primary, full-width tile; the rest follow per the layout.
         java.util.ArrayList<String[]> rest = new java.util.ArrayList<>();
         String[] shuffle = null;
         for (String[] pl : pls) {
@@ -232,25 +280,38 @@ public class RemoteActivity extends Activity {
         }
         if (shuffle != null) {
             final String label = shuffle[0], file = shuffle[1];
-            LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
-            pp.setMargins(dp(6), dp(6), dp(6), dp(6));
-            playlistGrid.addView(playlistTile(label, () -> playPlaylist(label, file), true), pp);
+            LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
+            pp.setMargins(dp(5), dp(5), dp(5), dp(5));
+            playlistGrid.addView(playlistTile(label, () -> playPlaylist(label, file), STYLE_PRIMARY), pp);
         }
-        for (int r = 0; r < rest.size(); r += 2) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            for (int c = 0; c < 2; c++) {
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(120), 1f);
-                lp.setMargins(dp(6), dp(6), dp(6), dp(6));
-                int idx = r + c;
-                if (idx < rest.size()) {
-                    final String label = rest.get(idx)[0], file = rest.get(idx)[1];
-                    row.addView(playlistTile(label, () -> playPlaylist(label, file), false), lp);
-                } else {
-                    row.addView(new View(this), lp);   // keep the final row aligned
-                }
+        int cols = plCols();
+        if (cols == PL_LIST) {                       // full-width, compact rows
+            for (String[] pl : rest) {
+                final String label = pl[0], file = pl[1];
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+                lp.setMargins(dp(5), dp(4), dp(5), dp(4));
+                playlistGrid.addView(playlistTile(label, () -> playPlaylist(label, file), STYLE_LIST), lp);
             }
-            playlistGrid.addView(row);
+        } else {                                     // N-column grid; tiles shrink as N grows
+            mGridCols = cols;
+            int h = cols == 2 ? 100 : cols == 3 ? 88 : 78;
+            for (int r = 0; r < rest.size(); r += cols) {
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                for (int c = 0; c < cols; c++) {
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(h), 1f);
+                    lp.setMargins(dp(5), dp(5), dp(5), dp(5));
+                    int idx = r + c;
+                    if (idx < rest.size()) {
+                        final String label = rest.get(idx)[0], file = rest.get(idx)[1];
+                        row.addView(playlistTile(label, () -> playPlaylist(label, file), STYLE_GRID), lp);
+                    } else {
+                        row.addView(new View(this), lp);   // keep the final row aligned
+                    }
+                }
+                playlistGrid.addView(row);
+            }
         }
     }
 
@@ -693,34 +754,40 @@ public class RemoteActivity extends Activity {
         a.setBackground(o);
         return a;
     }
-    /** One playlist as a content card: per-name colour + initial avatar + name. The Shuffle-All tile
-        is the accent-filled primary (a drawn shuffle glyph, not a letter). Rounded + pressable. */
-    View playlistTile(final String label, final Runnable onClick, boolean primary) {
+    /** One playlist as a content card: per-name colour + initial avatar + name. STYLE_PRIMARY = the
+        accent-filled Shuffle-All tile (a drawn shuffle glyph, horizontal). STYLE_LIST = a compact
+        horizontal row. STYLE_GRID = a vertical card sized to the current column count (mGridCols).
+        Rounded + pressable. */
+    View playlistTile(final String label, final Runnable onClick, int style) {
+        boolean primary = style == STYLE_PRIMARY, list = style == STYLE_LIST;
+        boolean horiz = primary || list;                  // avatar-left rows; grid tiles stack vertically
         int accent = primary ? ACCENT : tileColorFor(label);
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(primary ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        card.setGravity(Gravity.CENTER);
-        card.setPadding(dp(12), dp(14), dp(12), dp(14));
+        card.setOrientation(horiz ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        card.setGravity(horiz ? (Gravity.START | Gravity.CENTER_VERTICAL) : Gravity.CENTER);
+        if (list)         card.setPadding(dp(10), dp(8), dp(10), dp(8));
+        else if (primary) card.setPadding(dp(12), dp(11), dp(12), dp(11));
+        else              card.setPadding(dp(8), dp(9), dp(8), dp(9));
         card.setClickable(true);
-        card.setBackground(pressBg(primary ? accent : CARD, primary ? accent : withAlpha(accent, 0x66), dp(16)));
+        card.setBackground(pressBg(primary ? accent : CARD, primary ? accent : withAlpha(accent, 0x66), dp(14)));
         card.setOnClickListener(v -> onClick.run());
-        int av = dp(primary ? 40 : 46);
+        int av = dp(primary ? 34 : list ? 34 : (mGridCols >= 4 ? 30 : mGridCols == 3 ? 34 : 40));
         View avatar = primary ? new IconView(this, IconView.SHUFFLE, withAlpha(0xFFFFFFFF, 0x30), TXT)
                               : letterAvatar(label, accent, av);
         avatar.setClickable(false);
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(av, av);
-        if (primary) ap.rightMargin = dp(12);
+        if (horiz) ap.rightMargin = dp(10);
         card.addView(avatar, ap);
         TextView t = new TextView(this);
         t.setText(primary ? "Shuffle All Shows" : label);
         t.setTextColor(TXT);
-        t.setTextSize(primary ? 18 : 15);
+        t.setTextSize(primary ? 17 : list ? 15 : (mGridCols >= 4 ? 12 : mGridCols == 3 ? 13 : 14));
         t.setTypeface(null, primary ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
-        t.setGravity(primary ? (Gravity.START | Gravity.CENTER_VERTICAL) : Gravity.CENTER);
+        t.setGravity(horiz ? (Gravity.START | Gravity.CENTER_VERTICAL) : Gravity.CENTER);
         t.setMaxLines(2);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(
-            primary ? 0 : ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, primary ? 1f : 0f);
-        if (!primary) tp.topMargin = dp(9);
+            horiz ? 0 : ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, horiz ? 1f : 0f);
+        if (style == STYLE_GRID) tp.topMargin = dp(7);
         card.addView(t, tp);
         return card;
     }
