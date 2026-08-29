@@ -16,6 +16,7 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.media.MediaBrowserServiceCompat;
+import androidx.media.VolumeProviderCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -37,6 +38,12 @@ import java.util.concurrent.Executors;
  *               phone remote's playPlaylist, mirrored), shuffle for the all-shows mixes.
  *   Transport:  onPlay/onPause -> Player.PlayPause, onSkipToNext/Previous -> Player.GoTo,
  *               onStop -> Player.Stop.
+ *   Volume:     the session declares REMOTE volume (setPlaybackToRemote) so the head unit's own
+ *               volume rocker drives Kodi's Application.SetVolume on the tablet - INDEPENDENT of the
+ *               car's audio volume (this app plays no audio of its own).
+ *   Power:      a custom action ("Turn off / Wake tablet") posts System.Shutdown/Reboot to the
+ *               kiosk's 8080 bridge, which naps (stop + screen off + dpm.lockNow) / wakes the tablet
+ *               - a real, STICKY power-off the self-heal addon won't undo (a bare Player.Stop would).
  *   State:      a 1 Hz poll of Player.GetActivePlayers/GetItem/GetProperties publishes
  *               PlaybackStateCompat + MediaMetadataCompat so the head unit shows the right state.
  */
@@ -46,9 +53,15 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     static final String NOOP_PREFIX = "noop:";                 // placeholder items that do nothing
     static final String PLAYLIST_DIR = "special://profile/playlists/video/";
     static final int VIDEO_PLAYER = 1;                         // Kodi's video playlist/player id
+    static final int VOL_STEP = 5;                             // Kodi volume step per rocker press (0-100)
+    static final String ACT_POWER = "com.kidstv.aaremote.POWER";   // custom-action id: nap/wake toggle
+    // 8080-bridge payloads the kiosk intercepts: Shutdown -> nap (off), Reboot -> wake (on).
+    static final String NAP_JSON  = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"System.Shutdown\"}";
+    static final String WAKE_JSON = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"System.Reboot\"}";
 
     private final KodiClient kodi = new KodiClient();
     private MediaSessionCompat session;
+    private KodiVolume volume;                                 // remote VolumeProvider -> Kodi volume
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newCachedThreadPool();
     private SharedPreferences prefs;
@@ -56,6 +69,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     // Live cache of the tablet's playlists as {label, file}; null until first successful fetch.
     private volatile String[][] playlists = null;
     private volatile boolean lastConnected = false;            // edge-detect connect to refresh browse
+    private volatile boolean napped = false;                   // last power-toggle direction (label swap)
+    private volatile long lastVolTouch = 0;                    // suppress poll clobbering a fresh user vol change
 
     private static final long ACTIONS =
             PlaybackStateCompat.ACTION_PLAY
@@ -83,6 +98,11 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
         int piFlags = PendingIntent.FLAG_UPDATE_CURRENT
                 | (android.os.Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
         session.setSessionActivity(PendingIntent.getActivity(this, 0, open, piFlags));
+
+        // Declare REMOTE volume: the head unit's volume rocker now drives Kodi's volume on the tablet
+        // (independent of the car's own audio) instead of a local stream this app doesn't even play.
+        volume = new KodiVolume();
+        session.setPlaybackToRemote(volume);
 
         setSessionToken(session.getSessionToken());
         publishState(PlaybackStateCompat.STATE_CONNECTING, 0, "Connecting to tablet…", null, 0);
@@ -211,6 +231,14 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             }
             io.execute(() -> playPlaylist(mediaId));
         }
+        @Override public void onCustomAction(String action, Bundle extras) {
+            if (!ACT_POWER.equals(action)) return;
+            io.execute(() -> {
+                boolean toNap = !napped;                 // toggle: off if awake, on if napping
+                if (kodi.bridge(toNap ? NAP_JSON : WAKE_JSON)) napped = toNap;
+                main.postDelayed(KodiMediaService.this::pollOnce, 400);  // republish -> swap the label
+            });
+        }
     }
 
     /** Mirror of the phone remote's playPlaylist: clear queue, add the .xsp/.m3u directory, open it,
@@ -268,6 +296,16 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             return;
         }
 
+        // Mirror Kodi's real volume into the head-unit slider, unless the user just changed it (avoid
+        // a stale poll fighting a fresh press).
+        if (volume != null && System.currentTimeMillis() - lastVolTouch > 2500) {
+            try {
+                int kv = new JSONObject(kodi.rpc("Application.GetProperties",
+                        "{\"properties\":[\"volume\"]}")).getJSONObject("result").optInt("volume", -1);
+                if (kv >= 0) volume.setCurrentVolume(kv);
+            } catch (Exception e) {}
+        }
+
         int pid = activePlayerId();
         if (pid < 0) {   // connected, nothing playing
             publishState(PlaybackStateCompat.STATE_STOPPED, 0, "Not playing", null, 0);
@@ -316,6 +354,10 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             PlaybackStateCompat.Builder ps = new PlaybackStateCompat.Builder()
                     .setActions(ACTIONS)
                     .setState(state, positionMs, state == PlaybackStateCompat.STATE_PLAYING ? 1f : 0f);
+            // Power button: sticky nap/wake via the 8080 bridge. Label reflects the last toggle so a
+            // second press reverses it.
+            ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
+                    ACT_POWER, napped ? "Wake tablet" : "Turn off tablet", R.drawable.ic_power).build());
             session.setPlaybackState(ps.build());
 
             MediaMetadataCompat.Builder md = new MediaMetadataCompat.Builder()
@@ -356,5 +398,28 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
 
     private String jesc(String s) {
         return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    // ---------------- remote volume -> Kodi ----------------
+
+    /** A REMOTE VolumeProvider: the head unit's volume rocker adjusts THIS (Kodi's volume on the
+        tablet), not the car's audio stream. ABSOLUTE so a head unit with a slider works too. We push
+        the value to Kodi off the binder thread but update the displayed level immediately for snappy
+        feedback; the poll loop reconciles it with Kodi's real volume (see lastVolTouch). */
+    private final class KodiVolume extends VolumeProviderCompat {
+        KodiVolume() { super(VOLUME_CONTROL_ABSOLUTE, 100, 50); }
+
+        @Override public void onSetVolumeTo(int vol) { apply(Math.max(0, Math.min(100, vol))); }
+
+        @Override public void onAdjustVolume(int direction) {
+            if (direction == 0) return;
+            apply(Math.max(0, Math.min(100, getCurrentVolume() + (direction > 0 ? VOL_STEP : -VOL_STEP))));
+        }
+
+        private void apply(final int v) {
+            lastVolTouch = System.currentTimeMillis();
+            setCurrentVolume(v);   // optimistic: move the slider now
+            io.execute(() -> kodi.rpc("Application.SetVolume", "{\"volume\":" + v + "}"));
+        }
     }
 }
