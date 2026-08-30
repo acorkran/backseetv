@@ -1165,6 +1165,19 @@ public class RemoteActivity extends Activity {
         }
     }
 
+    /** Ask the launcher to pin the home-screen remote widget (system shows an "Add" confirm). Falls
+        back to a hint if the launcher doesn't support programmatic pinning. */
+    void addWidgetToHome() {
+        try {
+            android.appwidget.AppWidgetManager awm = android.appwidget.AppWidgetManager.getInstance(this);
+            android.content.ComponentName cn = new android.content.ComponentName(this, RemoteWidgetProvider.class);
+            if (awm.isRequestPinAppWidgetSupported()) awm.requestPinAppWidget(cn, null, null);
+            else Toast.makeText(this, "Long-press the home screen → Widgets → KidsTV Remote", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Long-press the home screen → Widgets → KidsTV Remote", Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** Font-independent top-bar icons drawn with Canvas — the ⏻ power glyph and WiFi emoji tofu on
         this device. WIFI = a dot with arcs fanning up; POWER = the IEC mark (near-complete ring with a
         line through the top gap). Rounded pill background so it reads as a button; recolor via setColors. */
@@ -1296,6 +1309,7 @@ public class RemoteActivity extends Activity {
         LinearLayout.LayoutParams lph = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lph.setMargins(0, dp(6), 0, 0);
         box.addView(cardBtn("🔍  Find tablet now", v -> rescan()), lpf);
         box.addView(cardBtn("📶  Hotspot settings", v -> openHotspotSettings()), lph);
+        box.addView(cardBtn("➕  Add remote widget to home screen", v -> addWidgetToHome()), lph);
 
         // --- Phone media folders (Files -> Phone source) ---
         sectionHeader(box, "Phone media folders");
