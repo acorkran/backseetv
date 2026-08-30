@@ -52,7 +52,6 @@ public class RemoteActivity extends Activity {
     SeekBar seek;
     IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
-    Button[] mLayoutBtns;                    // the List/2/3/4 layout segmented control
     int mGridCols = 2;                       // columns the current grid render is using (avatar/text scale)
     // Playlist tile layout (pref "pl_cols"): PL_LIST = full-width rows, else 2/3/4 = grid columns.
     static final int PL_LIST = 0;
@@ -183,7 +182,6 @@ public class RemoteActivity extends Activity {
         hdr.addView(cardBtn("+  New / Import", v -> showPlSub(1)), eq);
         hdr.addView(cardBtn("Browse files", v -> showPlSub(2)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         col.addView(hdr);
-        col.addView(layoutBar());
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         playlistGrid = new LinearLayout(this);
         playlistGrid.setOrientation(LinearLayout.VERTICAL);
@@ -197,42 +195,6 @@ public class RemoteActivity extends Activity {
     /** The playlist tiles are read from the pref "pl_cols": PL_LIST (0) = full-width list rows, or
         2/3/4 = a grid that many columns wide. Default 2. */
     int plCols() { return prefs.getInt("pl_cols", 2); }
-
-    /** A compact segmented control (List / 2 / 3 / 4) to switch the tiles between a list and a
-        grid of N columns. Persists to "pl_cols" and re-renders immediately. */
-    View layoutBar() {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), 0, dp(10), dp(4));
-        TextView cap = new TextView(this);
-        cap.setText("Layout");
-        cap.setTextColor(SUB); cap.setTextSize(13);
-        bar.addView(cap, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));  // pushes buttons right
-        final int[] vals = {PL_LIST, 2, 3, 4};
-        final String[] labels = {"List", "2", "3", "4"};
-        mLayoutBtns = new Button[vals.length];
-        int cur = plCols();
-        for (int i = 0; i < vals.length; i++) {
-            final int val = vals[i];
-            Button b = new Button(this);
-            b.setText(labels[i]); b.setAllCaps(false); b.setTextColor(TXT); b.setTextSize(13);
-            b.setMinWidth(0); b.setMinHeight(0); b.setMinimumWidth(0); b.setMinimumHeight(0);
-            b.setPadding(0, 0, 0, 0);
-            b.setBackground(roundRect(val == cur ? ACCENT : BTN, 0, 0, dp(9)));
-            b.setOnClickListener(v -> {
-                prefs.edit().putInt("pl_cols", val).apply();
-                for (int j = 0; j < vals.length; j++)
-                    mLayoutBtns[j].setBackground(roundRect(vals[j] == val ? ACCENT : BTN, 0, 0, dp(9)));
-                renderPlaylists();
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(val == PL_LIST ? 54 : 40), dp(34));
-            lp.leftMargin = dp(5);
-            mLayoutBtns[i] = b;
-            bar.addView(b, lp);
-        }
-        return bar;
-    }
 
     /** Wrap a sub-page (Build / Files) with a "‹ Playlists" back header that returns to the tiles. */
     View subPage(View inner) {
@@ -650,6 +612,28 @@ public class RemoteActivity extends Activity {
         vr.addView(cardBtn("Mute", v -> toggleMute()), eq());
         col.addView(vr);
 
+        // Go to sleep: zZ button — ramps volume + tablet brightness down, then turns it off (configured
+        // in Settings → Sleep timer). A full-width card with the drawn Zz glyph + label.
+        LinearLayout sleepRow = new LinearLayout(this);
+        sleepRow.setOrientation(LinearLayout.HORIZONTAL);
+        sleepRow.setGravity(Gravity.CENTER);
+        sleepRow.setClickable(true);
+        sleepRow.setBackground(pressBg(BTN, withAlpha(0xFFFFFFFF, 0x1A), dp(12)));
+        sleepRow.setPadding(dp(10), dp(8), dp(10), dp(8));
+        sleepRow.setOnClickListener(v -> goToSleep());
+        IconView zicon = new IconView(this, IconView.SLEEP, BTN, TXT);
+        zicon.setClickable(false);
+        sleepRow.addView(zicon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        TextView zlbl = new TextView(this);
+        zlbl.setText("Go to sleep");
+        zlbl.setTextColor(TXT); zlbl.setTextSize(16);
+        LinearLayout.LayoutParams zlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        zlp.leftMargin = dp(8);
+        sleepRow.addView(zlbl, zlp);
+        LinearLayout.LayoutParams srp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        srp.setMargins(0, dp(14), 0, 0);
+        col.addView(sleepRow, srp);
+
         upNext = new TextView(this);
         upNext.setText("Up next: —");
         upNext.setTextColor(SUB);
@@ -659,7 +643,9 @@ public class RemoteActivity extends Activity {
         up.setMargins(0, dp(12), 0, 0);
         upNext.setOnClickListener(v -> showQueue());
         col.addView(upNext, up);
-        return col;
+        android.widget.ScrollView csv = new android.widget.ScrollView(this);   // tab is now tall (+ sleep) — scroll
+        csv.addView(col);
+        return csv;
     }
 
     LinearLayout bottomBar() {
@@ -995,6 +981,30 @@ public class RemoteActivity extends Activity {
         });
     }
 
+    /** zZ "Go to sleep": optionally start the configured playlist, then tell the tablet to ramp its
+        volume + screen brightness down over N minutes and turn off (the ramp runs on the tablet). */
+    void goToSleep() {
+        final int mins = prefs.getInt("sleep_minutes", 20);
+        final String plFile = prefs.getString("sleep_playlist", "");        // "" = keep whatever's playing
+        final String plLabel = prefs.getString("sleep_playlist_label", "");
+        Toast.makeText(this, "Sleep: fading out over " + mins + " min…", Toast.LENGTH_LONG).show();
+        bg(() -> {
+            if (plFile.length() > 0) {
+                String l = plLabel.toLowerCase();
+                boolean shuffle = l.contains("shuffle") || l.contains("all") || plFile.toLowerCase().contains("shuffleall");
+                kodi.rpc("Playlist.Clear", "{\"playlistid\":1}");
+                kodi.rpc("Playlist.Add", "{\"playlistid\":1,\"item\":{\"directory\":\"" + jsonEscR(plFile) + "\"}}");
+                kodi.rpc("Player.Open", "{\"item\":{\"playlistid\":1}}");
+                try { Thread.sleep(700); } catch (Exception e) {}
+                kodi.rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":" + shuffle + "}");
+                kodi.rpc("Player.SetRepeat", "{\"playerid\":1,\"repeat\":\"all\"}");
+                kodi.rpc("GUI.SetFullscreen", "{\"fullscreen\":true}");
+            }
+            boolean ok = kodi.bridgePost("/sleep", "{\"minutes\":" + mins + "}") != null;
+            if (!ok) ui.post(() -> Toast.makeText(this, "Couldn't reach the tablet", Toast.LENGTH_SHORT).show());
+        });
+    }
+
     void togglePower() {
         final boolean toNap = !napping;
         napping = toNap;
@@ -1183,7 +1193,7 @@ public class RemoteActivity extends Activity {
         this device. WIFI = a dot with arcs fanning up; POWER = the IEC mark (near-complete ring with a
         line through the top gap). Rounded pill background so it reads as a button; recolor via setColors. */
     class IconView extends View {
-        static final int WIFI = 0, POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, STOP = 5, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8;
+        static final int WIFI = 0, POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, STOP = 5, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9;
         final int mode;
         int bgCol, iconCol;
         boolean playing = false;
@@ -1273,6 +1283,19 @@ public class RemoteActivity extends Activity {
                     cv.drawLine(cx - s, cy, cx + s, cy, p);
                     if (mode == VOLUP) cv.drawLine(cx, cy - s, cx, cy + s, p);
                     break;
+                case SLEEP: {                                             // "Zz" — a big Z + small z
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    p.setStrokeWidth(Math.max(2.5f, s * 0.17f));
+                    float bl = cx - s, bt = cy - s * 0.10f, br = cx + s * 0.30f, bb = cy + s * 0.95f;
+                    cv.drawLine(bl, bt, br, bt, p);                        // big Z: top
+                    cv.drawLine(br, bt, bl, bb, p);                        //        diagonal
+                    cv.drawLine(bl, bb, br, bb, p);                        //        bottom
+                    float sl = cx + s * 0.22f, st = cy - s * 0.98f, sr = cx + s, sb = cy - s * 0.25f;
+                    cv.drawLine(sl, st, sr, st, p);                        // small z: top
+                    cv.drawLine(sr, st, sl, sb, p);                        //         diagonal
+                    cv.drawLine(sl, sb, sr, sb, p);                        //         bottom
+                    break;
+                }
                 case SHUFFLE: {                                            // crossed arrows
                     p.setStyle(android.graphics.Paint.Style.STROKE);
                     p.setStrokeWidth(Math.max(2f, s * 0.16f));
@@ -1315,23 +1338,13 @@ public class RemoteActivity extends Activity {
         // --- Phone media folders (Files -> Phone source) ---
         sectionHeader(box, "Phone media folders");
         TextView finfo = new TextView(this);
-        finfo.setText("Folders scanned for the Files → Phone list. Untick one to hide it.");
+        finfo.setText("Which phone folders the Files → Phone list scans.");
         finfo.setTextColor(SUB); finfo.setTextSize(12); box.addView(finfo);
-        final java.util.List<String> buckets = queryVideoBuckets();
-        final java.util.Set<String> avoided = avoidedBuckets();
-        final java.util.ArrayList<android.widget.CheckBox> boxes = new java.util.ArrayList<>();
-        if (buckets.isEmpty()) {
-            TextView none = new TextView(this);
-            none.setText("(open Files → Phone once to grant media access, then folders appear here)");
-            none.setTextColor(SUB); none.setTextSize(12); box.addView(none);
-        } else {
-            for (String b : buckets) {
-                android.widget.CheckBox cb = new android.widget.CheckBox(this);
-                cb.setText(b); cb.setTextColor(TXT); cb.setChecked(!avoided.contains(b));
-                cb.setTag(b);
-                box.addView(cb); boxes.add(cb);
-            }
-        }
+        final Button folderBtn = cardBtn(folderBtnLabel(), null);
+        folderBtn.setTextSize(15);
+        folderBtn.setOnClickListener(v -> chooseFolders(folderBtn));
+        LinearLayout.LayoutParams lpfold = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lpfold.setMargins(0, dp(6), 0, 0);
+        box.addView(folderBtn, lpfold);
 
         // --- Playback ---
         sectionHeader(box, "Playback");
@@ -1350,6 +1363,50 @@ public class RemoteActivity extends Activity {
             vrow.addView(sb, lp);
         }
         box.addView(vrow);
+
+        // --- Sleep timer (the zZ "Go to sleep" button on Controls) ---
+        sectionHeader(box, "Sleep timer");
+        TextView slpInfo = new TextView(this);
+        slpInfo.setText("“Go to sleep” fades the tablet's volume + screen brightness down, then turns it off.");
+        slpInfo.setTextColor(SUB); slpInfo.setTextSize(12); box.addView(slpInfo);
+        final Button sleepPlBtn = cardBtn(sleepPlBtnLabel(), null);
+        sleepPlBtn.setTextSize(15);
+        sleepPlBtn.setOnClickListener(v -> chooseSleepPlaylist(sleepPlBtn));
+        LinearLayout.LayoutParams lpspl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lpspl.setMargins(0, dp(6), 0, 0);
+        box.addView(sleepPlBtn, lpspl);
+        TextView dlab = new TextView(this); dlab.setText("Fade duration (minutes)"); dlab.setTextColor(TXT); dlab.setPadding(0, dp(8), 0, 0); box.addView(dlab);
+        LinearLayout drow = new LinearLayout(this); drow.setOrientation(LinearLayout.HORIZONTAL);
+        final int[] mins = {15, 20, 30, 45};
+        final int curMin = prefs.getInt("sleep_minutes", 20);
+        final Button[] minBtns = new Button[mins.length];
+        for (int i = 0; i < mins.length; i++) {
+            final int mm = mins[i];
+            Button mb = cardBtn(String.valueOf(mm), null);
+            mb.setBackgroundColor(mm == curMin ? ACCENT : BTN);
+            mb.setOnClickListener(v -> { prefs.edit().putInt("sleep_minutes", mm).apply(); for (int j = 0; j < mins.length; j++) minBtns[j].setBackgroundColor(mins[j] == mm ? ACCENT : BTN); });
+            minBtns[i] = mb;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f); lp.setMargins(dp(4), dp(6), dp(4), dp(6));
+            drow.addView(mb, lp);
+        }
+        box.addView(drow);
+
+        // --- Playlist grid layout (moved here from the Playlists tab) ---
+        sectionHeader(box, "Playlist grid layout");
+        LinearLayout lrow = new LinearLayout(this); lrow.setOrientation(LinearLayout.HORIZONTAL);
+        final int[] cvals = {PL_LIST, 2, 3, 4};
+        final String[] clabs = {"List", "2", "3", "4"};
+        final int curCols = plCols();
+        final Button[] colBtns = new Button[cvals.length];
+        for (int i = 0; i < cvals.length; i++) {
+            final int cvv = cvals[i];
+            Button cb2 = cardBtn(clabs[i], null);
+            cb2.setBackgroundColor(cvv == curCols ? ACCENT : BTN);
+            cb2.setOnClickListener(v -> { prefs.edit().putInt("pl_cols", cvv).apply(); for (int j = 0; j < cvals.length; j++) colBtns[j].setBackgroundColor(cvals[j] == cvv ? ACCENT : BTN); renderPlaylists(); });
+            colBtns[i] = cb2;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f); lp.setMargins(dp(4), dp(6), dp(4), dp(6));
+            lrow.addView(cb2, lp);
+        }
+        box.addView(lrow);
 
         // --- Imports (shared setting on the tablet; where phone->tablet imports land) ---
         sectionHeader(box, "Imports");
@@ -1393,12 +1450,8 @@ public class RemoteActivity extends Activity {
             .setView(sv)
             .setPositiveButton("Save", (d, w) -> {
                 String w1 = wifi.getText().toString().trim(), bb = bt.getText().toString().trim();
-                java.util.HashSet<String> avoid = new java.util.HashSet<>();
-                for (android.widget.CheckBox cb : boxes) if (!cb.isChecked()) avoid.add((String) cb.getTag());
-                prefs.edit().putString("wifi", w1).putString("bt", bb)
-                     .putString("avoid_buckets", android.text.TextUtils.join("\n", avoid)).apply();
-                kodi.setPinned(w1, bb);
-                if (filesView != null && filesView.getVisibility() == View.VISIBLE && mFileSrc == 1) fetchPhoneFiles();
+                prefs.edit().putString("wifi", w1).putString("bt", bb).apply();
+                kodi.setPinned(w1, bb);   // folders/sleep/layout persist as you change them, above
             })
             .setNegativeButton("Close", null)
             .show();
@@ -1412,6 +1465,62 @@ public class RemoteActivity extends Activity {
     }
 
     int volStep() { return prefs.getInt("vol_step", 8); }
+
+    /** Label for the "phone folders" settings button: "N of M" selected. */
+    String folderBtnLabel() {
+        java.util.List<String> b = queryVideoBuckets();
+        if (b.isEmpty()) return "Phone folders — open Files → Phone once to grant access";
+        java.util.Set<String> av = avoidedBuckets();
+        int n = 0; for (String x : b) if (!av.contains(x)) n++;
+        return "Phone folders to scan:  " + n + " of " + b.size();
+    }
+
+    /** Multi-select dialog for the phone folders to scan (replaces the old inline checkbox list). */
+    void chooseFolders(final Button label) {
+        final java.util.List<String> b = queryVideoBuckets();
+        if (b.isEmpty()) { Toast.makeText(this, "Open Files → Phone once to grant media access.", Toast.LENGTH_LONG).show(); return; }
+        final String[] items = b.toArray(new String[0]);
+        final boolean[] checked = new boolean[items.length];
+        java.util.Set<String> av = avoidedBuckets();
+        for (int i = 0; i < items.length; i++) checked[i] = !av.contains(items[i]);
+        new AlertDialog.Builder(this)
+            .setTitle("Folders to scan")
+            .setMultiChoiceItems(items, checked, (d, which, isChecked) -> checked[which] = isChecked)
+            .setPositiveButton("Done", (d, w) -> {
+                java.util.HashSet<String> avoid = new java.util.HashSet<>();
+                for (int i = 0; i < items.length; i++) if (!checked[i]) avoid.add(items[i]);
+                prefs.edit().putString("avoid_buckets", android.text.TextUtils.join("\n", avoid)).apply();
+                if (label != null) label.setText(folderBtnLabel());
+                if (filesView != null && mFileSrc == 1) fetchPhoneFiles();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** Label for the sleep-playlist settings button. */
+    String sleepPlBtnLabel() {
+        String lbl = prefs.getString("sleep_playlist_label", "");
+        return "Sleep playlist:  " + (lbl.length() > 0 ? lbl : "Current (keep playing)");
+    }
+
+    /** Pick the playlist the "Go to sleep" button starts (or "Current" = keep whatever's playing). */
+    void chooseSleepPlaylist(final Button label) {
+        String[][] pls = mPlaylists;
+        java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        final java.util.ArrayList<String[]> map = new java.util.ArrayList<>();   // parallel; index 0 = current
+        names.add("Current (keep playing)"); map.add(null);
+        if (pls != null) for (String[] pl : pls) { names.add(pl[0]); map.add(pl); }
+        final String[] items = names.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+            .setTitle("Play at sleep")
+            .setItems(items, (d, which) -> {
+                String[] sel = map.get(which);
+                if (sel == null) prefs.edit().putString("sleep_playlist", "").putString("sleep_playlist_label", "").apply();
+                else prefs.edit().putString("sleep_playlist", sel[1]).putString("sleep_playlist_label", sel[0]).apply();
+                if (label != null) label.setText(sleepPlBtnLabel());
+            })
+            .show();
+    }
 
     java.util.Set<String> avoidedBuckets() {
         java.util.HashSet<String> s = new java.util.HashSet<>();
