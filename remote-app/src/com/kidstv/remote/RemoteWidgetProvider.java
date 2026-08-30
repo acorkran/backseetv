@@ -244,6 +244,7 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
         try { Thread.sleep(700); } catch (Exception e) {}
         k.rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":" + shuffle + "}");
         k.rpc("Player.SetRepeat", "{\"playerid\":1,\"repeat\":\"all\"}");
+        k.rpc("GUI.SetFullscreen", "{\"fullscreen\":true}");   // don't leave Kodi on its menu
     }
 
     // ---------------- shared helpers ----------------

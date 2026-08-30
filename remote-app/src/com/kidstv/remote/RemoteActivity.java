@@ -991,6 +991,7 @@ public class RemoteActivity extends Activity {
             try { Thread.sleep(700); } catch (Exception e) {}
             kodi.rpc("Player.SetShuffle", "{\"playerid\":1,\"shuffle\":" + shuffle + "}");
             kodi.rpc("Player.SetRepeat", "{\"playerid\":1,\"repeat\":\"all\"}");
+            kodi.rpc("GUI.SetFullscreen", "{\"fullscreen\":true}");   // don't leave Kodi on its menu
         });
     }
 
