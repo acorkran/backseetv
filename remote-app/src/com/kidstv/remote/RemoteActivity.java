@@ -57,6 +57,7 @@ public class RemoteActivity extends Activity {
     static final int PL_LIST = 0;
     // playlistTile styles.
     static final int STYLE_PRIMARY = 0, STYLE_GRID = 1, STYLE_LIST = 2;
+    static final int REQ_SAF = 42;           // system file picker (SAF) request code
     LinearLayout queueList;                 // dynamic queue rows live here
     LinearLayout buildList;                 // Build tab: the working-set rows
     FrameLayout plSub;                       // Playlists tab: swaps tiles / Build / Files sub-views
@@ -72,6 +73,11 @@ public class RemoteActivity extends Activity {
     Button srcTablet, srcPhone;
     TextView fileHint;
     int mFileSrc = 0;                        // 0 = tablet uploads (Remote), 1 = phone videos (Local)
+    FrameLayout mRoot;                       // top-level: main UI + the Settings page on top
+    View mMainUi, mSettingsView;             // mSettingsView non-null = Settings page is open
+    EditText mWifiEt, mBtEt;                 // Settings IP overrides (saved on leaving the page)
+    String mPhoneBucket = null;              // Files→Phone browser: null = folder list, else this folder
+    java.util.LinkedHashMap<String, java.util.ArrayList<String[]>> mPhoneByBucket;   // folder -> {name,uri,size}
 
     volatile boolean polling = false, seeking = false, napping = false;
     volatile int curVol = 0;
@@ -94,6 +100,13 @@ public class RemoteActivity extends Activity {
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
     View buildUi() {
+        mRoot = new FrameLayout(this);
+        mMainUi = mainUi();
+        mRoot.addView(mMainUi);
+        return mRoot;   // the Settings page is added on top of this (a real in-app page, not a dialog)
+    }
+
+    View mainUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
@@ -431,40 +444,146 @@ public class RemoteActivity extends Activity {
         });
     }
 
-    /** Local source: the phone's own videos (MediaStore). Tap Send to upload to the tablet + play. */
+    /** Local source: an in-app BROWSER of the phone's videos — folders first, then the videos inside,
+        each with Send. Plus a "Pick a file…" card that opens the system file picker (SAF) for anything
+        (even non-media / outside the media folders). Replaces the old flat list + folder-filter setting. */
     void fetchPhoneFiles() {
-        ui.post(() -> { fileHint.setText("On this phone — tap Send to copy to the tablet + play"); if (fileList != null) fileList.removeAllViews(); });
+        mPhoneBucket = null;
+        ui.post(() -> { if (fileHint != null) fileHint.setText("Loading phone videos…"); if (fileList != null) fileList.removeAllViews(); });
         final String perm = (android.os.Build.VERSION.SDK_INT >= 33) ? android.Manifest.permission.READ_MEDIA_VIDEO : android.Manifest.permission.READ_EXTERNAL_STORAGE;
         if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            // no media perm yet — still offer the SAF picker (it needs no media permission)
+            ui.post(() -> { if (fileList != null) { fileList.removeAllViews(); addBrowseCard("📂  Pick a file…  (system file browser)", this::openSafPicker); } });
             requestPermissions(new String[]{perm}, 7);   // onRequestPermissionsResult re-fetches on grant
             return;
         }
-        final java.util.Set<String> avoid = avoidedBuckets();   // folders the user unticked in settings
         bg(() -> {
-            final java.util.ArrayList<String[]> rows = new java.util.ArrayList<>();
+            final java.util.LinkedHashMap<String, java.util.ArrayList<String[]>> map = new java.util.LinkedHashMap<>();
             try {
                 android.net.Uri coll = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
                 String[] proj = { android.provider.MediaStore.Video.Media._ID, android.provider.MediaStore.Video.Media.DISPLAY_NAME, android.provider.MediaStore.Video.Media.SIZE, android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME };
-                android.database.Cursor c = getContentResolver().query(coll, proj, null, null, android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC");
+                android.database.Cursor c = getContentResolver().query(coll, proj, null, null,
+                        android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME + " ASC, " + android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC");
                 if (c != null) {
                     int iId = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media._ID);
                     int iNm = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME);
                     int iSz = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.SIZE);
                     int iBk = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
-                    int count = 0;
-                    while (c.moveToNext() && count < 300) {
-                        String bk = c.getString(iBk);
-                        if (bk != null && avoid.contains(bk)) continue;   // folder unticked in settings
+                    while (c.moveToNext()) {
+                        String bk = c.getString(iBk); if (bk == null || bk.length() == 0) bk = "Other";
                         long id = c.getLong(iId), sz = c.getLong(iSz);
                         String nm = c.getString(iNm); if (nm == null) nm = "video_" + id;
-                        rows.add(new String[]{ nm, android.content.ContentUris.withAppendedId(coll, id).toString(), String.valueOf(sz) });
-                        count++;
+                        java.util.ArrayList<String[]> list = map.get(bk);
+                        if (list == null) { list = new java.util.ArrayList<>(); map.put(bk, list); }
+                        list.add(new String[]{ nm, android.content.ContentUris.withAppendedId(coll, id).toString(), String.valueOf(sz) });
                     }
                     c.close();
                 }
             } catch (Exception e) {}
-            ui.post(() -> renderFiles(rows, true));
+            mPhoneByBucket = map;
+            ui.post(() -> renderPhoneFolders());
         });
+    }
+
+    /** Top level of the phone browser: a "Pick a file…" card + one card per folder (with a video count). */
+    void renderPhoneFolders() {
+        if (fileList == null) return;
+        fileList.removeAllViews();
+        fileHint.setText("Pick a folder — or “Pick a file…” for anything else on the phone");
+        addBrowseCard("📂  Pick a file…  (system file browser)", this::openSafPicker);
+        if (mPhoneByBucket == null || mPhoneByBucket.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText("No videos found on the phone"); t.setTextColor(SUB); t.setTextSize(15);
+            t.setGravity(Gravity.CENTER); t.setPadding(0, dp(40), 0, 0);
+            fileList.addView(t);
+            return;
+        }
+        for (java.util.Map.Entry<String, java.util.ArrayList<String[]>> e : mPhoneByBucket.entrySet()) {
+            final String bucket = e.getKey();
+            int n = e.getValue().size();
+            addBrowseCard("📁  " + bucket + "     " + n + (n == 1 ? " video" : " videos"),
+                    () -> { mPhoneBucket = bucket; renderPhoneVideos(); });
+        }
+    }
+
+    /** Inside a folder: a "‹ Folders" back card + each video with Send. */
+    void renderPhoneVideos() {
+        if (fileList == null || mPhoneByBucket == null) return;
+        fileList.removeAllViews();
+        fileHint.setText(mPhoneBucket + " — tap Send to copy to the tablet + play");
+        addBrowseCard("‹  Folders", () -> { mPhoneBucket = null; renderPhoneFolders(); });
+        java.util.ArrayList<String[]> vids = mPhoneByBucket.get(mPhoneBucket);
+        if (vids != null) for (String[] row : vids) {
+            final String name = row[0], ref = row[1];
+            long sz = 0; try { sz = Long.parseLong(row[2]); } catch (Exception e) {}
+            final long size = sz;
+            addFileRow(name, size, "Send ▸", () -> uploadPhoneFile(ref, name, size));
+        }
+    }
+
+    /** A full-width tappable card (folder / pick-file / back) in the Files browser. */
+    void addBrowseCard(String label, final Runnable onClick) {
+        Button b = cardBtn(label, v -> onClick.run());
+        b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        b.setTextSize(15);
+        b.setPadding(dp(14), 0, dp(10), 0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+        lp.setMargins(0, dp(6), 0, 0);
+        fileList.addView(b, lp);
+    }
+
+    /** A file row: name + size on the left, an action button (Send / Play) on the right. */
+    void addFileRow(String name, long size, String actLabel, final Runnable onClick) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL); r.setBackgroundColor(CARD);
+        TextView t = new TextView(this);
+        t.setText(name + (size > 0 ? "\n" + humanSize(size) : ""));
+        t.setTextColor(TXT); t.setTextSize(14); t.setPadding(dp(10), dp(12), dp(8), dp(12)); t.setMaxLines(2);
+        r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button act = new Button(this);
+        act.setAllCaps(false); act.setTextColor(TXT); act.setTextSize(13); act.setBackgroundColor(BTN);
+        act.setText(actLabel); act.setOnClickListener(v -> onClick.run());
+        r.addView(act, new LinearLayout.LayoutParams(dp(96), dp(52)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(2), 0, 0);
+        fileList.addView(r, lp);
+    }
+
+    /** The system file picker (SAF) — Android's built-in file browser. Pick any file; we upload it to
+        the tablet (making it a local file there) and play it. Needs no media permission. */
+    void openSafPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        try { startActivityForResult(i, REQ_SAF); }
+        catch (Exception e) { Toast.makeText(this, "No file picker available", Toast.LENGTH_SHORT).show(); }
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_SAF && res == RESULT_OK && data != null && data.getData() != null) {
+            android.net.Uri uri = data.getData();
+            uploadPhoneFile(uri.toString(), safName(uri), safSize(uri));
+        }
+    }
+
+    String safName(android.net.Uri uri) {
+        String n = null;
+        try {
+            android.database.Cursor c = getContentResolver().query(uri, new String[]{ android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null);
+            if (c != null) { if (c.moveToFirst() && !c.isNull(0)) n = c.getString(0); c.close(); }
+        } catch (Exception e) {}
+        if (n == null) { n = uri.getLastPathSegment(); if (n != null) { int s = n.lastIndexOf('/'); if (s >= 0) n = n.substring(s + 1); } }
+        return (n != null && n.length() > 0) ? n : "file";
+    }
+
+    long safSize(android.net.Uri uri) {
+        long sz = 0;
+        try {
+            android.database.Cursor c = getContentResolver().query(uri, new String[]{ android.provider.OpenableColumns.SIZE }, null, null, null);
+            if (c != null) { if (c.moveToFirst() && !c.isNull(0)) sz = c.getLong(0); c.close(); }
+        } catch (Exception e) {}
+        return sz;
     }
 
     @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
@@ -1312,10 +1431,47 @@ public class RemoteActivity extends Activity {
         }
     }
 
+    /** Open Settings as a real in-app page (slides over the main UI), not a popup dialog. */
     void settings() {
+        if (mSettingsView != null) return;
+        mSettingsView = settingsPage();
+        mRoot.addView(mSettingsView);
+        if (mMainUi != null) mMainUi.setVisibility(View.GONE);
+    }
+
+    /** Leave the Settings page: persist the IP overrides + show the main UI again. */
+    void closeSettings() {
+        if (mSettingsView == null) return;
+        if (mWifiEt != null && mBtEt != null) {
+            String w1 = mWifiEt.getText().toString().trim(), bb = mBtEt.getText().toString().trim();
+            prefs.edit().putString("wifi", w1).putString("bt", bb).apply();
+            kodi.setPinned(w1, bb);   // everything else on the page persists as you change it
+        }
+        mRoot.removeView(mSettingsView);
+        mSettingsView = null; mWifiEt = null; mBtEt = null;
+        if (mMainUi != null) mMainUi.setVisibility(View.VISIBLE);
+    }
+
+    @Override public void onBackPressed() {
+        if (mSettingsView != null) { closeSettings(); return; }
+        super.onBackPressed();
+    }
+
+    View settingsPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(BG);
+        // header with a back arrow (matches the Playlists sub-page back header)
+        Button back = plainBtn("‹  Settings", v -> closeSettings());
+        back.setTextColor(TXT); back.setTextSize(19); back.setAllCaps(false);
+        back.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        back.setBackgroundColor(CARD);
+        back.setPadding(dp(12), 0, dp(12), 0);
+        page.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(6), dp(20), dp(0));
+        box.setPadding(dp(20), dp(6), dp(20), dp(24));
 
         // --- Connection ---
         sectionHeader(box, "Connection");
@@ -1323,28 +1479,17 @@ public class RemoteActivity extends Activity {
         info.setText("Finds the tablet automatically on your hotspot. IPs are optional overrides — blank = auto.");
         info.setTextColor(SUB); info.setTextSize(12);
         box.addView(info);
-        final EditText wifi = new EditText(this);
-        wifi.setHint("auto"); wifi.setInputType(InputType.TYPE_CLASS_TEXT); wifi.setText(prefs.getString("wifi", ""));
-        final EditText bt = new EditText(this);
-        bt.setHint("auto"); bt.setInputType(InputType.TYPE_CLASS_TEXT); bt.setText(prefs.getString("bt", ""));
-        TextView l1 = new TextView(this); l1.setText("WiFi IP (optional)"); l1.setTextColor(TXT); box.addView(l1); box.addView(wifi);
-        TextView l2 = new TextView(this); l2.setText("Bluetooth IP (optional)"); l2.setTextColor(TXT); box.addView(l2); box.addView(bt);
+        mWifiEt = new EditText(this);
+        mWifiEt.setHint("auto"); mWifiEt.setInputType(InputType.TYPE_CLASS_TEXT); mWifiEt.setText(prefs.getString("wifi", ""));
+        mBtEt = new EditText(this);
+        mBtEt.setHint("auto"); mBtEt.setInputType(InputType.TYPE_CLASS_TEXT); mBtEt.setText(prefs.getString("bt", ""));
+        TextView l1 = new TextView(this); l1.setText("WiFi IP (optional)"); l1.setTextColor(TXT); box.addView(l1); box.addView(mWifiEt);
+        TextView l2 = new TextView(this); l2.setText("Bluetooth IP (optional)"); l2.setTextColor(TXT); box.addView(l2); box.addView(mBtEt);
         LinearLayout.LayoutParams lpf = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lpf.setMargins(0, dp(10), 0, 0);
         LinearLayout.LayoutParams lph = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lph.setMargins(0, dp(6), 0, 0);
         box.addView(cardBtn("🔍  Find tablet now", v -> rescan()), lpf);
         box.addView(cardBtn("📶  Hotspot settings", v -> openHotspotSettings()), lph);
         box.addView(cardBtn("➕  Add remote widget to home screen", v -> addWidgetToHome()), lph);
-
-        // --- Phone media folders (Files -> Phone source) ---
-        sectionHeader(box, "Phone media folders");
-        TextView finfo = new TextView(this);
-        finfo.setText("Which phone folders the Files → Phone list scans.");
-        finfo.setTextColor(SUB); finfo.setTextSize(12); box.addView(finfo);
-        final Button folderBtn = cardBtn(folderBtnLabel(), null);
-        folderBtn.setTextSize(15);
-        folderBtn.setOnClickListener(v -> chooseFolders(folderBtn));
-        LinearLayout.LayoutParams lpfold = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)); lpfold.setMargins(0, dp(6), 0, 0);
-        box.addView(folderBtn, lpfold);
 
         // --- Playback ---
         sectionHeader(box, "Playback");
@@ -1445,16 +1590,8 @@ public class RemoteActivity extends Activity {
 
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         sv.addView(box);
-        new AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(sv)
-            .setPositiveButton("Save", (d, w) -> {
-                String w1 = wifi.getText().toString().trim(), bb = bt.getText().toString().trim();
-                prefs.edit().putString("wifi", w1).putString("bt", bb).apply();
-                kodi.setPinned(w1, bb);   // folders/sleep/layout persist as you change them, above
-            })
-            .setNegativeButton("Close", null)
-            .show();
+        page.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return page;
     }
 
     void sectionHeader(LinearLayout box, String title) {
@@ -1465,37 +1602,6 @@ public class RemoteActivity extends Activity {
     }
 
     int volStep() { return prefs.getInt("vol_step", 8); }
-
-    /** Label for the "phone folders" settings button: "N of M" selected. */
-    String folderBtnLabel() {
-        java.util.List<String> b = queryVideoBuckets();
-        if (b.isEmpty()) return "Phone folders — open Files → Phone once to grant access";
-        java.util.Set<String> av = avoidedBuckets();
-        int n = 0; for (String x : b) if (!av.contains(x)) n++;
-        return "Phone folders to scan:  " + n + " of " + b.size();
-    }
-
-    /** Multi-select dialog for the phone folders to scan (replaces the old inline checkbox list). */
-    void chooseFolders(final Button label) {
-        final java.util.List<String> b = queryVideoBuckets();
-        if (b.isEmpty()) { Toast.makeText(this, "Open Files → Phone once to grant media access.", Toast.LENGTH_LONG).show(); return; }
-        final String[] items = b.toArray(new String[0]);
-        final boolean[] checked = new boolean[items.length];
-        java.util.Set<String> av = avoidedBuckets();
-        for (int i = 0; i < items.length; i++) checked[i] = !av.contains(items[i]);
-        new AlertDialog.Builder(this)
-            .setTitle("Folders to scan")
-            .setMultiChoiceItems(items, checked, (d, which, isChecked) -> checked[which] = isChecked)
-            .setPositiveButton("Done", (d, w) -> {
-                java.util.HashSet<String> avoid = new java.util.HashSet<>();
-                for (int i = 0; i < items.length; i++) if (!checked[i]) avoid.add(items[i]);
-                prefs.edit().putString("avoid_buckets", android.text.TextUtils.join("\n", avoid)).apply();
-                if (label != null) label.setText(folderBtnLabel());
-                if (filesView != null && mFileSrc == 1) fetchPhoneFiles();
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
 
     /** Label for the sleep-playlist settings button. */
     String sleepPlBtnLabel() {
@@ -1520,32 +1626,5 @@ public class RemoteActivity extends Activity {
                 if (label != null) label.setText(sleepPlBtnLabel());
             })
             .show();
-    }
-
-    java.util.Set<String> avoidedBuckets() {
-        java.util.HashSet<String> s = new java.util.HashSet<>();
-        String v = prefs.getString("avoid_buckets", "");
-        if (v.length() > 0) for (String p : v.split("\n")) if (p.length() > 0) s.add(p);
-        return s;
-    }
-
-    /** Distinct folder names that contain videos on the phone (for the scan/avoid list). */
-    java.util.List<String> queryVideoBuckets() {
-        java.util.ArrayList<String> out = new java.util.ArrayList<>();
-        java.util.HashSet<String> seen = new java.util.HashSet<>();
-        String perm = (android.os.Build.VERSION.SDK_INT >= 33) ? android.Manifest.permission.READ_MEDIA_VIDEO : android.Manifest.permission.READ_EXTERNAL_STORAGE;
-        if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) return out;
-        try {
-            android.database.Cursor c = getContentResolver().query(
-                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                new String[]{ android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME },
-                null, null, android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME + " ASC");
-            if (c != null) {
-                int i = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
-                while (c.moveToNext()) { String b = c.getString(i); if (b != null && seen.add(b)) out.add(b); }
-                c.close();
-            }
-        } catch (Exception e) {}
-        return out;
     }
 }
