@@ -23,7 +23,12 @@ import android.net.NetworkRequest;
 import android.net.wifi.WifiManager;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
+import android.graphics.Canvas;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.RectF;
+import android.graphics.Shader;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -95,6 +100,7 @@ public class BridgeService extends Service {
     // activity being recreated (config changes at boot) or backgrounded behind Kodi.
     WindowManager mWm;
     View mOverlay;
+    volatile SplashOverlay mOverlayView;   // same view as mOverlay, typed so we can toggle the splash
     final Handler mMain = new Handler(Looper.getMainLooper());
     // admin-escape gesture state
     int mSeqMaxFingers = 0;                     // peak finger count in the current touch
@@ -167,6 +173,9 @@ public class BridgeService extends Service {
             Thread w = new Thread(new Runnable() { public void run() { watchdog(); } });
             w.setDaemon(true);
             w.start();
+            Thread sp = new Thread(new Runnable() { public void run() { splashLoop(); } });
+            sp.setDaemon(true);
+            sp.start();
             startCameraMonitor();
         }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
@@ -231,36 +240,7 @@ public class BridgeService extends Service {
         if (mOverlay != null) return;   // single process-scoped overlay
         try {
             mWm = (WindowManager) getSystemService(WINDOW_SERVICE);
-            final View v = new View(this) {
-                @Override public boolean dispatchKeyEvent(KeyEvent ev) {
-                    int kc = ev.getKeyCode();
-                    if (kc == KeyEvent.KEYCODE_VOLUME_UP || kc == KeyEvent.KEYCODE_VOLUME_DOWN) {
-                        if (ev.getAction() == KeyEvent.ACTION_DOWN)
-                            adjustKodiVolume(kc == KeyEvent.KEYCODE_VOLUME_UP);
-                        return true;   // consume - don't let it wander off to STREAM_MUSIC
-                    }
-                    return super.dispatchKeyEvent(ev);
-                }
-            };
-            v.setBackgroundColor(0x00000000);   // fully transparent
-            v.setOnTouchListener(new View.OnTouchListener() {
-                public boolean onTouch(View view, MotionEvent ev) {
-                    switch (ev.getActionMasked()) {
-                        case MotionEvent.ACTION_DOWN:                 // first finger of a new touch
-                            mSeqStart = SystemClock.elapsedRealtime();
-                            mSeqMaxFingers = 1;
-                            break;
-                        case MotionEvent.ACTION_POINTER_DOWN:         // more fingers land
-                            if (ev.getPointerCount() > mSeqMaxFingers) mSeqMaxFingers = ev.getPointerCount();
-                            break;
-                        case MotionEvent.ACTION_UP:                  // last finger lifts -> touch ends
-                            long dur = SystemClock.elapsedRealtime() - mSeqStart;
-                            if (mSeqMaxFingers >= ESC_FINGERS && dur <= ESC_TAP_MAX_MS) registerEscapeTap();
-                            break;
-                    }
-                    return true;   // CONSUME everything - nothing reaches Kodi underneath
-                }
-            });
+            final SplashOverlay v = new SplashOverlay(this);
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -272,6 +252,7 @@ public class BridgeService extends Service {
                 PixelFormat.TRANSLUCENT);
             mWm.addView(v, lp);
             mOverlay = v;
+            mOverlayView = v;
         } catch (Exception e) {
             Log.w(TAG, "addOverlay: " + e);
             mOverlay = null;
@@ -284,6 +265,7 @@ public class BridgeService extends Service {
             try { mWm.removeView(mOverlay); } catch (Exception e) {}
         }
         mOverlay = null;
+        mOverlayView = null;
     }
 
     /** Record a valid multi-finger tap; if ESC_TAPS land within ESC_WINDOW_MS, escape. */
@@ -304,6 +286,92 @@ public class BridgeService extends Service {
                  | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         i.putExtra("escape", true);
         try { startActivity(i); } catch (Exception e) {}
+    }
+
+    /** The kid-proof overlay ABOVE Kodi: swallows every touch (admin escape = 4 four-finger taps in
+        3s), bridges the hardware VOLUME keys into Kodi's own volume, and — the SPLASH — paints a
+        cheerful full-screen scene whenever Kodi ISN'T showing fullscreen video, so the kid never sees
+        Kodi's menu / its own splash / a wedge. Transparent while the show plays. */
+    class SplashOverlay extends View {
+        volatile boolean splash = false;
+        private Paint bg, shape, text;
+
+        SplashOverlay(Context c) {
+            super(c);
+            setWillNotDraw(false);
+            setOnTouchListener(new OnTouchListener() {
+                public boolean onTouch(View view, MotionEvent ev) {
+                    switch (ev.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:    mSeqStart = SystemClock.elapsedRealtime(); mSeqMaxFingers = 1; break;
+                        case MotionEvent.ACTION_POINTER_DOWN: if (ev.getPointerCount() > mSeqMaxFingers) mSeqMaxFingers = ev.getPointerCount(); break;
+                        case MotionEvent.ACTION_UP:
+                            long dur = SystemClock.elapsedRealtime() - mSeqStart;
+                            if (mSeqMaxFingers >= ESC_FINGERS && dur <= ESC_TAP_MAX_MS) registerEscapeTap();
+                            break;
+                    }
+                    return true;   // CONSUME everything — nothing reaches Kodi underneath
+                }
+            });
+        }
+
+        @Override public boolean dispatchKeyEvent(KeyEvent ev) {
+            int kc = ev.getKeyCode();
+            if (kc == KeyEvent.KEYCODE_VOLUME_UP || kc == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                if (ev.getAction() == KeyEvent.ACTION_DOWN) adjustKodiVolume(kc == KeyEvent.KEYCODE_VOLUME_UP);
+                return true;   // consume — don't let it wander off to STREAM_MUSIC
+            }
+            return super.dispatchKeyEvent(ev);
+        }
+
+        void setSplash(boolean b) { if (splash != b) { splash = b; postInvalidate(); } }
+
+        @Override protected void onDraw(Canvas cv) {
+            if (!splash) return;   // transparent -> the video shows through
+            int w = getWidth(), h = getHeight();
+            if (bg == null) { bg = new Paint(); shape = new Paint(Paint.ANTI_ALIAS_FLAG); text = new Paint(Paint.ANTI_ALIAS_FLAG); }
+            bg.setShader(new LinearGradient(0, 0, 0, h, 0xFF5FC5F0, 0xFFBDE88F, Shader.TileMode.CLAMP));  // sky -> grass
+            cv.drawRect(0, 0, w, h, bg);
+            float cx = w / 2f, cy = h * 0.38f, r = Math.min(w, h) * 0.14f;
+            shape.setColor(0xFFFFC93C); shape.setStrokeCap(Paint.Cap.ROUND);
+            shape.setStyle(Paint.Style.STROKE); shape.setStrokeWidth(r * 0.16f);
+            for (int i = 0; i < 12; i++) {                       // sun rays
+                double a = Math.PI * 2 * i / 12;
+                cv.drawLine(cx + (float)Math.cos(a)*r*1.35f, cy + (float)Math.sin(a)*r*1.35f,
+                            cx + (float)Math.cos(a)*r*1.8f,  cy + (float)Math.sin(a)*r*1.8f, shape);
+            }
+            shape.setStyle(Paint.Style.FILL); cv.drawCircle(cx, cy, r, shape);   // sun disc
+            shape.setColor(0xFF4A3A00);                           // eyes
+            cv.drawCircle(cx - r*0.34f, cy - r*0.15f, r*0.11f, shape);
+            cv.drawCircle(cx + r*0.34f, cy - r*0.15f, r*0.11f, shape);
+            shape.setStyle(Paint.Style.STROKE); shape.setStrokeWidth(r*0.12f);   // smile
+            cv.drawArc(new RectF(cx - r*0.5f, cy - r*0.25f, cx + r*0.5f, cy + r*0.5f), 20, 140, false, shape);
+            text.setColor(0xFF12414F); text.setTextAlign(Paint.Align.CENTER); text.setFakeBoldText(true);
+            text.setTextSize(Math.min(w, h) * 0.08f);
+            cv.drawText("back in a sec!", cx, h * 0.72f, text);
+        }
+    }
+
+    // ---- Splash toggle: show the friendly splash whenever Kodi isn't on fullscreen video ----
+    void splashLoop() {
+        while (running) {
+            try { Thread.sleep(1500); } catch (Exception e) {}
+            if (!running) break;
+            try {
+                SplashOverlay ov = mOverlayView;
+                if (ov == null) continue;                                    // overlay down (admin escape)
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null && !pm.isInteractive()) continue;             // screen off (nap)
+                ov.setSplash(!isFullscreenVideo());
+            } catch (Throwable t) { /* best-effort */ }
+        }
+    }
+
+    /** True if Kodi is showing fullscreen video (the show). False on the menu / home / its own splash. */
+    boolean isFullscreenVideo() {
+        try {
+            String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"GUI.GetProperties\",\"params\":{\"properties\":[\"fullscreen\"]}}");
+            return new JSONObject(r).getJSONObject("result").optBoolean("fullscreen", false);
+        } catch (Exception e) { return true; }   // on error assume OK — don't flash the splash spuriously
     }
 
     /** Nudge KODI's own volume (physical volume key -> the same volume Yatse controls).
@@ -727,6 +795,7 @@ public class BridgeService extends Service {
             if (target.startsWith("/importdir"))   { handleImportDir(method, json, c); return; }
             if (target.startsWith("/saveplaylist")) { handleSavePlaylist(json, c); return; }
             if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
+            if (target.startsWith("/addwifi"))      { handleAddWifi(json, c); return; }
 
             String reply;
             if (json == null || json.trim().length() == 0) {
@@ -883,6 +952,31 @@ public class BridgeService extends Service {
         } catch (Exception e) {
             try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32003,\"message\":\"importdir failed\"}}"); } catch (Exception e2) {}
         } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** POST /addwifi {"ssid":"...","psk":"..."} -> add + join a Wi-Fi network. A device owner (us) can
+        configure Wi-Fi via WifiManager.addNetwork, which adb (uid 2000) can't. Used once to teach the
+        appliance the home network so it auto-joins at home (for the data sync); it keeps the hotspot
+        save too, so it still joins that in the car. Empty psk = open network. */
+    void handleAddWifi(String body, Socket c) {
+        boolean ok = false;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(body == null ? "{}" : body);
+            String ssid = o.optString("ssid", ""), psk = o.optString("psk", "");
+            if (ssid.length() > 0) {
+                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                        getApplicationContext().getSystemService(WIFI_SERVICE);
+                android.net.wifi.WifiConfiguration cfg = new android.net.wifi.WifiConfiguration();
+                cfg.SSID = "\"" + ssid + "\"";
+                if (psk.length() > 0) cfg.preSharedKey = "\"" + psk + "\"";
+                else cfg.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+                int id = wm.addNetwork(cfg);                 // allowed for the device owner
+                if (id >= 0) { wm.enableNetwork(id, true); wm.reconnect(); ok = true; }
+                Log.i(TAG, "addwifi '" + ssid + "' -> netId " + id);
+            }
+        } catch (Exception e) { Log.w(TAG, "addwifi: " + e); }
+        try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":" + ok + "}}"); } catch (Exception e) {}
+        try { c.close(); } catch (Exception e) {}
     }
 
     /** POST /sleep {"minutes":20} -> start the volume+brightness ramp then nap. minutes<=0 cancels a

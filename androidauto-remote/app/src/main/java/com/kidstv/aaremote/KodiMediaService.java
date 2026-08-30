@@ -58,6 +58,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     static final String ACT_POWER   = "com.kidstv.aaremote.POWER";     // custom action: nap/wake toggle
     static final String ACT_VOLUP   = "com.kidstv.aaremote.VOLUP";     // custom action: tablet volume +
     static final String ACT_VOLDOWN = "com.kidstv.aaremote.VOLDOWN";   // custom action: tablet volume -
+    static final String ACT_SLEEP   = "com.kidstv.aaremote.SLEEP";     // custom action: go-to-sleep fade
+    static final String SLEEP_JSON  = "{\"minutes\":20}";              // 20-min volume+brightness fade
     // 8080-bridge payloads the kiosk intercepts: Shutdown -> nap (off), Reboot -> wake (on).
     static final String NAP_JSON  = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"System.Shutdown\"}";
     static final String WAKE_JSON = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"System.Reboot\"}";
@@ -238,6 +240,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                 io.execute(() -> changeVolume(+VOL_STEP));
             } else if (ACT_VOLDOWN.equals(action)) {
                 io.execute(() -> changeVolume(-VOL_STEP));
+            } else if (ACT_SLEEP.equals(action)) {
+                io.execute(() -> { napped = true; kodi.bridgePost("/sleep", SLEEP_JSON); });  // fade vol+brightness, then off
             }
         }
     }
@@ -365,6 +369,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                     ACT_VOLDOWN, "Volume down", R.drawable.ic_voldown).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_VOLUP, "Volume up", R.drawable.ic_volup).build());
+            ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
+                    ACT_SLEEP, "Go to sleep", R.drawable.ic_sleep).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_POWER, napped ? "Wake tablet" : "Turn off tablet", R.drawable.ic_power).build());
             session.setPlaybackState(ps.build());

@@ -24,6 +24,8 @@
          wake command can still land -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <!-- device-owner Wi-Fi config (addNetwork) so the appliance can be taught the home network -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
     <!-- auto-join a paired phone's Bluetooth tether (PANU->NAP) so the driver never has to
          flip "Internet access" by hand -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>

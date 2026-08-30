@@ -213,6 +213,29 @@ class KodiClient {
         }
     }
 
+    /** POST a JSON body to an arbitrary bridge (8080) path (e.g. /sleep). Returns true on HTTP 200. */
+    boolean bridgePost(String path, String json) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return false; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            java.net.URL url = new java.net.URL("http://" + host + ":" + BRIDGE_PORT + path);
+            con = (java.net.HttpURLConnection) url.openConnection();
+            con.setConnectTimeout(2500); con.setReadTimeout(6000);
+            con.setRequestMethod("POST");
+            con.setRequestProperty("Content-Type", "application/json");
+            con.setDoOutput(true);
+            con.getOutputStream().write(json.getBytes("UTF-8"));
+            int code = con.getResponseCode();
+            try { con.getInputStream().close(); } catch (Exception e) {}
+            return code == 200;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
+    }
+
     private String call(String host, String req, int timeoutMs) {
         Socket s = new Socket();
         try {
