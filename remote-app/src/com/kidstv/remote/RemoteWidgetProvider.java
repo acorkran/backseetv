@@ -11,7 +11,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.net.Uri;
-import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.widget.RemoteViews;
 
@@ -20,10 +19,12 @@ import org.json.JSONObject;
 
 /**
  * Home-screen widget: an always-on remote for the tablet. A header (now-playing status + a
- * hotspot button + a nap/wake power button), a volume −/+ row, and a live scrollable grid of the
- * tablet's playlists (served by {@link WidgetPlaylistService}). Every button relays to Kodi with
- * the SAME calls the app uses — playlist play/shuffle over 9090, volume via Application.SetVolume,
- * and power routed to the kiosk's 8080 nap/wake bridge (a real device off, not a bare Player.Stop).
+ * "check WiFi" button that re-probes connection/hotspot status + a nap/wake power button), a
+ * volume −/mute/+ row, and a live scrollable grid of the tablet's playlists (served by
+ * {@link WidgetPlaylistService}). Every button relays to Kodi with the SAME calls the app uses —
+ * playlist play/shuffle over 9090, volume + mute via Application.SetVolume/SetMute, and power
+ * routed to the kiosk's 8080 nap/wake bridge (a real device off, not a bare Player.Stop). The WiFi
+ * button no longer deep-links settings (it can't flip WiFi anyway) — a tap just re-checks status.
  *
  * All network work runs off the main thread: onReceive uses goAsync() + a worker, and the grid's
  * fetch happens in the RemoteViewsFactory. The widget shares the app's "remote" prefs, so it reuses
@@ -42,6 +43,8 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
     static final String ACT_POWER   = "com.kidstv.remote.widget.POWER";
     static final String ACT_VOLUP   = "com.kidstv.remote.widget.VOLUP";
     static final String ACT_VOLDOWN = "com.kidstv.remote.widget.VOLDOWN";
+    static final String ACT_MUTE    = "com.kidstv.remote.widget.MUTE";
+    static final String ACT_CHECK   = "com.kidstv.remote.widget.CHECK";   // wifi button: re-check status
     static final String ACT_PLAY    = "com.kidstv.remote.widget.PLAY";
 
     // ---------------- lifecycle ----------------
@@ -58,7 +61,8 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
         super.onReceive(ctx, intent);   // dispatches onUpdate/onDeleted/etc. for framework actions
         final String a = intent.getAction();
         boolean ours = ACT_POWER.equals(a) || ACT_VOLUP.equals(a) || ACT_VOLDOWN.equals(a)
-                || ACT_PLAY.equals(a) || AppWidgetManager.ACTION_APPWIDGET_UPDATE.equals(a);
+                || ACT_MUTE.equals(a) || ACT_CHECK.equals(a) || ACT_PLAY.equals(a)
+                || AppWidgetManager.ACTION_APPWIDGET_UPDATE.equals(a);
         if (!ours) return;
         final PendingResult pr = goAsync();     // keep the process alive across the worker thread
         final String file = intent.getStringExtra("file"), label = intent.getStringExtra("label");
@@ -67,8 +71,10 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
                 if (ACT_POWER.equals(a))        doPower(ctx);
                 else if (ACT_VOLUP.equals(a))   doVol(ctx, +1);
                 else if (ACT_VOLDOWN.equals(a)) doVol(ctx, -1);
+                else if (ACT_MUTE.equals(a))    doMute(ctx);
                 else if (ACT_PLAY.equals(a))    doPlay(ctx, file, label);
-                refreshState(ctx);              // pull now-playing / volume / connection, push header
+                // ACT_CHECK / APPWIDGET_UPDATE: no side effect — refreshState() below IS the wifi check
+                refreshState(ctx);              // pull now-playing / volume / mute / connection, push header
             } catch (Exception e) {
                 // best-effort widget; never crash the host
             } finally {
@@ -99,10 +105,11 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
 
         rv.setOnClickPendingIntent(R.id.w_status, PendingIntent.getActivity(ctx, 1,
                 new Intent(ctx, RemoteActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), imm));
-        rv.setOnClickPendingIntent(R.id.w_wifi, PendingIntent.getActivity(ctx, 2, hotspotIntent(ctx), imm));
+        rv.setOnClickPendingIntent(R.id.w_wifi,    cast(ctx, ACT_CHECK, 2, imm));   // "check wifi": re-probe status
         rv.setOnClickPendingIntent(R.id.w_power,   cast(ctx, ACT_POWER, 3, imm));
         rv.setOnClickPendingIntent(R.id.w_voldown, cast(ctx, ACT_VOLDOWN, 4, imm));
         rv.setOnClickPendingIntent(R.id.w_volup,   cast(ctx, ACT_VOLUP, 5, imm));
+        rv.setOnClickPendingIntent(R.id.w_mute,    cast(ctx, ACT_MUTE, 6, imm));
 
         // cheap immediate state (no network): power/hotspot colours, neutral status/vol
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -110,6 +117,7 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
         boolean hot = new KodiClient().isHotspotOn();
         rv.setInt(R.id.w_power, "setColorFilter", nap ? WARN : GOOD);
         rv.setInt(R.id.w_wifi,  "setColorFilter", hot ? GOOD : WARN);
+        rv.setInt(R.id.w_mute,  "setColorFilter", TXT);
         rv.setTextViewText(R.id.w_status, "KidsTV");
         rv.setTextViewText(R.id.w_vol, "VOL");
         return rv;
@@ -135,6 +143,7 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
         boolean nap = p.getBoolean("w_nap", false);
 
         String status, vol = "VOL";
+        boolean muted = false;
         if (!conn) {
             status = "Searching for tablet…";
         } else {
@@ -150,9 +159,11 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
                 }
             } catch (Exception e) {}
             try {
-                int v = new JSONObject(k.rpc("Application.GetProperties", "{\"properties\":[\"volume\"]}"))
-                        .getJSONObject("result").optInt("volume", -1);
-                if (v >= 0) vol = v + "%";
+                JSONObject res = new JSONObject(k.rpc("Application.GetProperties",
+                        "{\"properties\":[\"volume\",\"muted\"]}")).getJSONObject("result");
+                muted = res.optBoolean("muted", false);
+                int v = res.optInt("volume", -1);
+                vol = muted ? "Muted" : (v >= 0 ? v + "%" : "VOL");
             } catch (Exception e) {}
         }
 
@@ -161,6 +172,7 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
             pv.setTextViewText(R.id.w_status, status);
             pv.setInt(R.id.w_power, "setColorFilter", nap ? WARN : GOOD);
             pv.setInt(R.id.w_wifi,  "setColorFilter", hot ? GOOD : WARN);
+            pv.setInt(R.id.w_mute,  "setColorFilter", muted ? WARN : TXT);
             pv.setTextViewText(R.id.w_vol, vol);
             mgr.partiallyUpdateAppWidget(id, pv);
         }
@@ -207,6 +219,18 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
         k.rpc("Application.SetVolume", "{\"volume\":" + next + "}");
     }
 
+    static void doMute(Context ctx) {
+        KodiClient k = client(ctx);
+        if (!k.findHost()) return;
+        saveLast(ctx, k);
+        boolean cur = false;   // read-then-flip an explicit boolean (this Kodi ignores "toggle")
+        try {
+            cur = new JSONObject(k.rpc("Application.GetProperties", "{\"properties\":[\"muted\"]}"))
+                    .getJSONObject("result").optBoolean("muted", false);
+        } catch (Exception e) {}
+        k.rpc("Application.SetMute", "{\"mute\":" + (!cur) + "}");
+    }
+
     static void doPlay(Context ctx, String file, String label) {
         if (file == null || file.length() == 0) return;
         KodiClient k = client(ctx);
@@ -236,17 +260,6 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
     static void saveLast(Context ctx, KodiClient k) {
         if (k.activeHost() != null)
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("lastip", k.activeHost()).apply();
-    }
-
-    /** Deep-link the hotspot toggle (no sideloaded app can flip it) — TetherSettings, else Wireless. */
-    static Intent hotspotIntent(Context ctx) {
-        Intent i = new Intent();
-        i.setClassName("com.android.settings", "com.android.settings.TetherSettings");
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (i.resolveActivity(ctx.getPackageManager()) != null) return i;
-        Intent w = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
-        w.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        return w;
     }
 
     static int tileColorFor(String name) {
