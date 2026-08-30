@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<smartplaylist type="episodes">
+    <name>Ginger and the Vegesaurs</name>
+    <match>all</match>
+    <rule field="tvshow" operator="is"><value>Ginger and the Vegesaurs</value></rule>
+    <order direction="ascending">episode</order>
+</smartplaylist>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<smartplaylist type="episodes">
+    <name>Stan Can</name>
+    <match>all</match>
+    <rule field="tvshow" operator="is"><value>Stan Can</value></rule>
+    <order direction="ascending">episode</order>
+</smartplaylist>
