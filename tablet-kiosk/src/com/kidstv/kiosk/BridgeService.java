@@ -28,6 +28,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -99,6 +100,7 @@ public class BridgeService extends Service {
     final ArrayDeque<Long> mTaps = new ArrayDeque<>();   // timestamps of recent valid multi-finger taps
 
     PowerManager.WakeLock mNapLock;   // keeps CPU/socket alive with the screen off during a nap
+    volatile Thread mSleepThread;     // the "go to sleep" volume+brightness ramp (null = not sleeping)
     WifiManager.WifiLock mWifiLock;   // keeps Wi-Fi associated with the screen off (remote reachability)
     BroadcastReceiver mScreen;        // screen-on clears a nap
     volatile BluetoothProfile mPanProxy;   // BluetoothPan proxy for auto-joining a phone's BT tether
@@ -344,6 +346,7 @@ public class BridgeService extends Service {
     /** End a nap: release the lock + tell the addon to resume self-healing. Called by an
         explicit Yatse "Reboot" AND by any screen-on (registerScreen) so it never sticks. */
     void clearNap() {
+        cancelSleep();                 // waking/any screen-on aborts a sleep ramp + restores brightness
         releaseNapLock();
         try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.NotifyAll\",\"params\":{\"sender\":\"kidstv\",\"message\":\"kidstvwake\"}}"); } catch (Exception e) {}
     }
@@ -359,6 +362,74 @@ public class BridgeService extends Service {
             i.putExtra("wake", true);
             try { startActivity(i); } catch (Exception e) {}
         }}).start();
+    }
+
+    // ---- Go to sleep: ramp volume + screen brightness down over N minutes, then nap ----
+    // The front seat taps "sleep" on the remote; the RAMP runs HERE on the tablet so it finishes
+    // even if the phone leaves range/sleeps mid-way. Volume rides Kodi (Application.SetVolume);
+    // brightness rides the kid-proof overlay's own screenBrightness override (no WRITE_SETTINGS
+    // needed - the overlay is always the top window). At the end we nap() (stop + screen off + lock).
+    // Any wake/screen-on cancels it via clearNap()->cancelSleep() and restores normal brightness.
+
+    /** Start (or restart) the sleep ramp. `minutes` may be fractional (for a quick test). */
+    void startSleep(final double minutes) {
+        cancelSleep();                       // supersede any ramp in progress
+        final double mins = minutes <= 0 ? 20 : minutes;
+        acquireNapLock();                    // keep the CPU alive through the (screen-dimming) ramp
+        Thread t = new Thread(new Runnable() { public void run() {
+            try {
+                int startVol = 30;
+                try {
+                    String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.GetProperties\",\"params\":{\"properties\":[\"volume\"]}}");
+                    startVol = new JSONObject(r).getJSONObject("result").getInt("volume");
+                } catch (Exception e) {}
+                float startBr;
+                try {
+                    int b = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
+                    startBr = Math.max(0.06f, Math.min(1f, b / 255f));
+                } catch (Exception e) { startBr = 0.7f; }
+
+                long totalMs = (long) (mins * 60_000);
+                long stepMs = 15_000;                          // adjust ~every 15s
+                int steps = (int) Math.max(1, totalMs / stepMs);
+                for (int i = 1; i <= steps; i++) {
+                    Thread.sleep(stepMs);                      // throws InterruptedException on cancel
+                    float frac = 1f - (float) i / steps;       // 1 -> 0
+                    int vol = Math.max(0, Math.round(startVol * frac));
+                    setOverlayBrightness(Math.max(0f, startBr * frac));
+                    try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.SetVolume\",\"params\":{\"volume\":" + vol + "}}"); } catch (Exception e) {}
+                }
+                mSleepThread = null;
+                nap();                                         // lights out: stop + screen off + lock
+            } catch (InterruptedException ie) {
+                // cancelled (woken / superseded) - cancelSleep() already restored brightness
+            } catch (Exception e) {
+                Log.w(TAG, "sleep ramp: " + e);
+            }
+        }});
+        mSleepThread = t;
+        t.start();
+    }
+
+    /** Stop a running ramp (if any) and drop the overlay's brightness override back to system default. */
+    void cancelSleep() {
+        Thread t = mSleepThread;
+        mSleepThread = null;
+        if (t != null) t.interrupt();
+        setOverlayBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE);   // -1 = use system
+    }
+
+    /** Override the actual screen brightness via the always-on overlay window (0..1, or -1 = none). */
+    void setOverlayBrightness(final float f) {
+        mMain.post(new Runnable() { public void run() {
+            try {
+                if (mOverlay == null || mWm == null) return;
+                WindowManager.LayoutParams lp = (WindowManager.LayoutParams) mOverlay.getLayoutParams();
+                if (lp == null) return;
+                lp.screenBrightness = f;
+                mWm.updateViewLayout(mOverlay, lp);
+            } catch (Exception e) { Log.w(TAG, "setOverlayBrightness: " + e); }
+        }});
     }
 
     void acquireNapLock() {
@@ -628,6 +699,7 @@ public class BridgeService extends Service {
             // Build/import featureset endpoints (need the body read, so handled after it):
             if (target.startsWith("/importdir"))   { handleImportDir(method, json, c); return; }
             if (target.startsWith("/saveplaylist")) { handleSavePlaylist(json, c); return; }
+            if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
 
             String reply;
             if (json == null || json.trim().length() == 0) {
@@ -783,6 +855,20 @@ public class BridgeService extends Service {
             }
         } catch (Exception e) {
             try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32003,\"message\":\"importdir failed\"}}"); } catch (Exception e2) {}
+        } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** POST /sleep {"minutes":20} -> start the volume+brightness ramp then nap. minutes<=0 cancels a
+        running ramp. (The remote starts any chosen sleep playlist itself over 9090 before calling this;
+        with none chosen, whatever is already playing keeps going as it fades.) */
+    void handleSleep(String body, Socket c) {
+        try {
+            double minutes = 20;
+            try { if (body != null && body.length() > 0) minutes = new JSONObject(body).optDouble("minutes", 20); } catch (Exception e) {}
+            if (minutes <= 0) cancelSleep(); else startSleep(minutes);
+            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"minutes\":" + minutes + "}}");
+        } catch (Exception e) {
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32004,\"message\":\"sleep failed\"}}"); } catch (Exception e2) {}
         } finally { try { c.close(); } catch (Exception e) {} }
     }
 
