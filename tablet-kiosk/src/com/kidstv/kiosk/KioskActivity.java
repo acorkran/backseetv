@@ -148,7 +148,7 @@ public class KioskActivity extends Activity {
         }
 
         if (owner) {
-            try { dpm.setLockTaskPackages(admin, new String[]{getPackageName(), KODI}); } catch (Exception e) {}
+            try { dpm.setLockTaskPackages(admin, new String[]{getPackageName(), KODI, "com.kidstv.cameramon"}); } catch (Exception e) {}
             // Lock down system UI in kid mode: NO Home/Recents/notifications/global-actions.
             // Blocking Home means Kodi never gets backgrounded by a stray Home press (which
             // made it pause/hitch), and the kid can't disrupt playback with the button at all.

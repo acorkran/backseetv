@@ -82,6 +82,8 @@ public class BridgeService extends Service {
     // (stuck on Splash / black) because its own Player.Open silently no-ops inside the broken Kodi.
     // This runs in the separate kiosk process and escalates only when service.py has clearly failed.
     static final long WATCH_POLL_MS = 8000;        // how often to verify Kodi is actually playing
+    static final long CAM_STALE_MS   = 45000;      // no camera heartbeat this long -> presume it died
+    static final long CAM_KICK_MIN_MS = 60000;     // min gap between camera relaunch attempts (anti-spam)
     static final int  WATCH_WEDGE_DEFAULT = 45;    // seconds of no-player -> restart Kodi. Override:
                                                    // settings put global kiosk_watchdog_sec <N>  (0 = off)
 
@@ -108,6 +110,8 @@ public class BridgeService extends Service {
 
     volatile long mLastPlaying = 0;   // watchdog: last time Kodi had an active player
     int mWatchFails = 0;              // watchdog: consecutive failed recoveries (drives escalation)
+    volatile long mLastCamBeat = 0;   // last /camalive heartbeat from the camera monitor (0 = never)
+    volatile long mLastCamKick = 0;   // last time we relaunched the camera (rate-limit)
 
     // Zeroconf/mDNS so Yatse can auto-discover the tablet as "KidsTV" on any
     // network (Wi-Fi or Bluetooth) instead of needing a typed IP. We advertise
@@ -447,20 +451,38 @@ public class BridgeService extends Service {
         try { if (mNapLock != null && mNapLock.isHeld()) mNapLock.release(); } catch (Exception e) {}
     }
 
-    /** Best-effort kick of the child-monitor camera capture service (separate Gradle app
-        com.kidstv.cameramon). KNOWN LIMIT (verified on a real Android-13 reboot): this does NOT
-        actually start it - the device-owner exemption lets US call startForegroundService, but the
-        camera app's own startForeground(CAMERA type) is still blocked because a camera/while-in-use FGS
-        can't be started while that app is in the background. The camera reliably starts only from its
-        OWN foreground (open the app once, or via the admin menu). Left as scaffolding; the proper
-        auto-start needs a brief foreground launch of the camera app at boot (a lock-task-whitelisted
-        MainActivity that starts the service then hands back to Kodi). Harmless if it no-ops. */
+    /** Start the child-monitor camera capture (separate Gradle app com.kidstv.cameramon). A camera FGS
+        can't be started from the background, so we can't just startForegroundService it - we briefly
+        launch its MainActivity in "autostart" mode (lock-task-whitelisted), which starts the FGS from
+        its own foreground then finishes back to Kodi. The FGS then survives into naps/screen-off until
+        it dies. The watchdog relaunches it via here if its /camalive heartbeat goes stale. */
     void startCameraMonitor() {
         try {
-            Intent ci = new Intent();
-            ci.setComponent(new ComponentName("com.kidstv.cameramon", "com.kidstv.cameramon.CaptureService"));
-            startForegroundService(ci);
+            mLastCamKick = SystemClock.elapsedRealtime();
+            Intent i = new Intent();
+            i.setComponent(new ComponentName("com.kidstv.cameramon", "com.kidstv.cameramon.MainActivity"));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            i.putExtra("autostart", true);
+            startActivity(i);
         } catch (Throwable t) { Log.w(TAG, "cameramon start: " + t); }
+    }
+
+    /** Recover the child-monitor camera if its /camalive heartbeat has gone stale. Only while the
+        screen is on + not napping (a camera FGS can't be relaunched without a brief foreground, which
+        would wake a sleeping screen) and rate-limited so we don't bounce it repeatedly. Once running it
+        survives into naps on its own; the common failure it fixes is not-started-at-boot. */
+    void ensureCameraMonitor(long now) {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isInteractive()) return;                       // screen off — don't wake it
+            if (mNapLock != null && mNapLock.isHeld()) return;                   // napping
+            if (mLastCamBeat != 0 && now - mLastCamBeat < CAM_STALE_MS) return;  // heartbeat fresh — alive
+            if (now - mLastCamKick < CAM_KICK_MIN_MS) return;                    // relaunched recently — wait
+            Log.w(TAG, "watchdog: camera monitor "
+                    + (mLastCamBeat == 0 ? "never checked in" : "stale " + ((now - mLastCamBeat) / 1000) + "s")
+                    + " - relaunching");
+            startCameraMonitor();
+        } catch (Throwable t) { Log.w(TAG, "ensureCameraMonitor: " + t); }
     }
 
     // ---- Kodi-GUI watchdog: the tier ABOVE service.py's in-Kodi self-heal ----
@@ -480,6 +502,7 @@ public class BridgeService extends Service {
             if (!running) break;
             try {
                 long now = SystemClock.elapsedRealtime();
+                ensureCameraMonitor(now);   // recover the child-monitor camera if its heartbeat went stale
                 // Guard ONLY the kid experience; stay out of the way otherwise.
                 if (mOverlay == null) { mLastPlaying = now; mWatchFails = 0; continue; }   // escaped / unlocked / maintenance
                 if (mNapLock != null && mNapLock.isHeld()) { mLastPlaying = now; mWatchFails = 0; continue; }  // napping
@@ -678,6 +701,10 @@ public class BridgeService extends Service {
             }
 
             if (method.equalsIgnoreCase("OPTIONS")) { writeResponse(c, ""); c.close(); return; }
+            if (target.startsWith("/camalive")) {                                  // camera monitor's liveness ping
+                mLastCamBeat = SystemClock.elapsedRealtime();
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"OK\"}"); c.close(); return;
+            }
             if (target.startsWith("/uploads")) { handleListUploads(c); return; }   // GET: list uploaded files (check before /upload)
             if (target.startsWith("/upload")) { handleUpload(target, contentLength, in, c); return; }
 

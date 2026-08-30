@@ -13,7 +13,7 @@ public class AdminReceiver extends DeviceAdminReceiver {
         ComponentName admin = new ComponentName(context, AdminReceiver.class);
         if (dpm.isDeviceOwnerApp(context.getPackageName())) {
             try {
-                dpm.setLockTaskPackages(admin, new String[]{context.getPackageName(), "org.xbmc.kodi"});
+                dpm.setLockTaskPackages(admin, new String[]{context.getPackageName(), "org.xbmc.kodi", "com.kidstv.cameramon"});
             } catch (Exception e) {}
             try {
                 // allow the Home button (returns to our launcher where the admin
