@@ -155,6 +155,22 @@ data pipeline + limits.
 - **Admin:** 4 four-finger taps in 3s → PIN → in-kiosk admin menu (playlists, rebuild ShuffleAll,
   import dir, etc.), or a maintenance hatch via the `kiosk_off` global.
 
+## 9. Home-base data sync (camera training data)
+
+The camera monitor logs to a CSV on the tablet. To collect it here for training/finetuning, the
+always-on home server pulls it whenever the tablet is adb-reachable — USB, or **wireless adb** once
+the tablet rejoins the home Wi-Fi (mDNS-discovered). See **`server/`**:
+
+```bash
+# one-off / manual
+server/camsync.sh
+# automatic: every 10 min via cron (picks up trips within ~10 min of coming home)
+*/10 * * * * /home/user/projects/kidodi/server/camsync.sh >/dev/null 2>&1
+```
+
+New rows (line-count watermark) append to `~/kidodi-data/childlog-archive.csv` + a dated per-trip
+snapshot; the on-device CSV is left intact. Wireless adb needs a one-time pairing to the server.
+
 ## Build tooling summary
 
 | App | Build | Device-owner? | Uninstallable? |
