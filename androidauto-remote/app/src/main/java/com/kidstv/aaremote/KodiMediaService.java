@@ -74,6 +74,7 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     private volatile String[][] playlists = null;
     private volatile boolean lastConnected = false;            // edge-detect connect to refresh browse
     private volatile boolean napped = false;                   // last power-toggle direction (label swap)
+    private volatile long lastCamOn = 0;                        // throttle the "AA active" ping to the tablet
 
     private static final long ACTIONS =
             PlaybackStateCompat.ACTION_PLAY
@@ -312,6 +313,13 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
         if (!conn) {
             publishState(PlaybackStateCompat.STATE_CONNECTING, 0, "Connecting to tablet…", null, 0);
             return;
+        }
+
+        // While this service is alive, Android Auto is using our media app (= a drive is on) — ping the
+        // tablet so the kiosk runs the child-monitor camera ONLY now, not 24/7 (the big battery drain).
+        if (System.currentTimeMillis() - lastCamOn > 15000) {
+            lastCamOn = System.currentTimeMillis();
+            io.execute(() -> kodi.bridgePost("/camon", "{}"));
         }
 
         // Shared power/sleep state from the kiosk (drives the power label + a sleep countdown, so AA

@@ -89,6 +89,7 @@ public class BridgeService extends Service {
     static final long WATCH_POLL_MS = 8000;        // how often to verify Kodi is actually playing
     static final long CAM_STALE_MS   = 45000;      // no camera heartbeat this long -> presume it died
     static final long CAM_KICK_MIN_MS = 60000;     // min gap between camera relaunch attempts (anti-spam)
+    static final long CAM_ON_STALE_MS = 45000;     // no /camon ping this long -> Android Auto is gone, camera off
     static final int  WATCH_WEDGE_DEFAULT = 45;    // seconds of no-player -> restart Kodi. Override:
                                                    // settings put global kiosk_watchdog_sec <N>  (0 = off)
 
@@ -120,6 +121,7 @@ public class BridgeService extends Service {
     int mWatchFails = 0;              // watchdog: consecutive failed recoveries (drives escalation)
     volatile long mLastCamBeat = 0;   // last /camalive heartbeat from the camera monitor (0 = never)
     volatile long mLastCamKick = 0;   // last time we relaunched the camera (rate-limit)
+    volatile long mCamOn = 0;         // last /camon ping from the AA app (fresh = Android Auto active)
 
     // Zeroconf/mDNS so Yatse can auto-discover the tablet as "KidsTV" on any
     // network (Wi-Fi or Bluetooth) instead of needing a typed IP. We advertise
@@ -178,7 +180,8 @@ public class BridgeService extends Service {
             Thread sp = new Thread(new Runnable() { public void run() { splashLoop(); } });
             sp.setDaemon(true);
             sp.start();
-            startCameraMonitor();
+            // NB: no camera kick on boot — the camera now starts only when Android Auto is active
+            // (the AA app pings /camon), so it isn't a 24/7 battery drain. See camWanted().
         }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
         // an explicit REMOVE_OVERLAY (admin escape / unlock) takes it down.
@@ -545,8 +548,14 @@ public class BridgeService extends Service {
         screen is on + not napping (a camera FGS can't be relaunched without a brief foreground, which
         would wake a sleeping screen) and rate-limited so we don't bounce it repeatedly. Once running it
         survives into naps on its own; the common failure it fixes is not-started-at-boot. */
+    /** Should the child-monitor camera be capturing right now? Only while Android Auto is active (the
+        AA app pings /camon). This is the fix for the camera being ~87% of the battery drain: it used to
+        run 24/7 (incl. overnight on the desk); now it's off unless a drive is in progress. */
+    boolean camWanted() { return mCamOn != 0 && SystemClock.elapsedRealtime() - mCamOn < CAM_ON_STALE_MS; }
+
     void ensureCameraMonitor(long now) {
         try {
+            if (!camWanted()) return;                                            // Android Auto not active — leave it off
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             if (pm != null && !pm.isInteractive()) return;                       // screen off — don't wake it
             if (mNapLock != null && mNapLock.isHeld()) return;                   // napping
@@ -775,9 +784,15 @@ public class BridgeService extends Service {
             }
 
             if (method.equalsIgnoreCase("OPTIONS")) { writeResponse(c, ""); c.close(); return; }
-            if (target.startsWith("/camalive")) {                                  // camera monitor's liveness ping
-                mLastCamBeat = SystemClock.elapsedRealtime();
+            if (target.startsWith("/camon")) {   // AA app: "Android Auto is active" -> the camera should capture
+                boolean was = camWanted();
+                mCamOn = SystemClock.elapsedRealtime();
+                if (!was) startCameraMonitor();   // just became active -> kick the camera to life
                 writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"OK\"}"); c.close(); return;
+            }
+            if (target.startsWith("/camalive")) {   // camera's liveness ping; we answer whether it should capture
+                mLastCamBeat = SystemClock.elapsedRealtime();
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capture\":" + camWanted() + "}}"); c.close(); return;
             }
             if (target.startsWith("/state")) {                                     // shared power/sleep state for the remotes
                 boolean sleeping = mSleepThread != null;
