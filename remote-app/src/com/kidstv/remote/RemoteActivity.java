@@ -51,6 +51,8 @@ public class RemoteActivity extends Activity {
     TextView statusDot, nowTitle, timeLabel, upNext, volLabel;
     SeekBar seek;
     IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
+    LinearLayout sleepRow; IconView zzIcon; TextView zzLabel;   // the "Go to sleep" toggle button
+    volatile boolean mSleeping = false;                        // a sleep fade is running (from /state)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     int mGridCols = 2;                       // columns the current grid render is using (avatar/text scale)
     // Playlist tile layout (pref "pl_cols"): PL_LIST = full-width rows, else 2/3/4 = grid columns.
@@ -733,22 +735,22 @@ public class RemoteActivity extends Activity {
 
         // Go to sleep: zZ button — ramps volume + tablet brightness down, then turns it off (configured
         // in Settings → Sleep timer). A full-width card with the drawn Zz glyph + label.
-        LinearLayout sleepRow = new LinearLayout(this);
+        sleepRow = new LinearLayout(this);
         sleepRow.setOrientation(LinearLayout.HORIZONTAL);
         sleepRow.setGravity(Gravity.CENTER);
         sleepRow.setClickable(true);
         sleepRow.setBackground(pressBg(BTN, withAlpha(0xFFFFFFFF, 0x1A), dp(12)));
         sleepRow.setPadding(dp(10), dp(8), dp(10), dp(8));
         sleepRow.setOnClickListener(v -> goToSleep());
-        IconView zicon = new IconView(this, IconView.SLEEP, BTN, TXT);
-        zicon.setClickable(false);
-        sleepRow.addView(zicon, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        TextView zlbl = new TextView(this);
-        zlbl.setText("Go to sleep");
-        zlbl.setTextColor(TXT); zlbl.setTextSize(16);
+        zzIcon = new IconView(this, IconView.SLEEP, BTN, TXT);
+        zzIcon.setClickable(false);
+        sleepRow.addView(zzIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        zzLabel = new TextView(this);
+        zzLabel.setText("Go to sleep");
+        zzLabel.setTextColor(TXT); zzLabel.setTextSize(16);
         LinearLayout.LayoutParams zlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         zlp.leftMargin = dp(8);
-        sleepRow.addView(zlbl, zlp);
+        sleepRow.addView(zzLabel, zlp);
         LinearLayout.LayoutParams srp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         srp.setMargins(0, dp(14), 0, 0);
         col.addView(sleepRow, srp);
@@ -1103,10 +1105,24 @@ public class RemoteActivity extends Activity {
     /** zZ "Go to sleep": optionally start the configured playlist, then tell the tablet to ramp its
         volume + screen brightness down over N minutes and turn off (the ramp runs on the tablet). */
     void goToSleep() {
+        // On/off toggle: if a fade is already running, this press cancels it (stops all sleep timers).
+        if (mSleeping) {
+            mSleeping = false;
+            setSleepBtn(false, 0);
+            Toast.makeText(this, "Sleep cancelled", Toast.LENGTH_SHORT).show();
+            bg(() -> {
+                boolean ok = kodi.bridgePost("/sleep", "{\"minutes\":0}") != null;
+                if (!ok) ui.post(() -> Toast.makeText(this, "Couldn't reach the tablet", Toast.LENGTH_SHORT).show());
+                ui.postDelayed(this::poll, 300);
+            });
+            return;
+        }
         final int mins = prefs.getInt("sleep_minutes", 20);
         final String plFile = prefs.getString("sleep_playlist", "");        // "" = keep whatever's playing
         final String plLabel = prefs.getString("sleep_playlist_label", "");
         Toast.makeText(this, "Sleep: fading out over " + mins + " min…", Toast.LENGTH_LONG).show();
+        mSleeping = true;
+        setSleepBtn(true, mins * 60);
         bg(() -> {
             if (plFile.length() > 0) {
                 String l = plLabel.toLowerCase();
@@ -1120,8 +1136,23 @@ public class RemoteActivity extends Activity {
                 kodi.rpc("GUI.SetFullscreen", "{\"fullscreen\":true}");
             }
             boolean ok = kodi.bridgePost("/sleep", "{\"minutes\":" + mins + "}") != null;
-            if (!ok) ui.post(() -> Toast.makeText(this, "Couldn't reach the tablet", Toast.LENGTH_SHORT).show());
+            if (!ok) { mSleeping = false; ui.post(() -> { setSleepBtn(false, 0); Toast.makeText(this, "Couldn't reach the tablet", Toast.LENGTH_SHORT).show(); }); }
+            ui.postDelayed(this::poll, 300);
         });
+    }
+
+    /** Reflect the sleep-timer state on the Controls-tab button: amber "Cancel sleep · m:ss" when active. */
+    void setSleepBtn(boolean sleeping, int remSecs) {
+        if (zzLabel == null || zzIcon == null) return;
+        if (sleeping) {
+            zzLabel.setText(remSecs > 0 ? "Cancel sleep · " + mmss(remSecs) : "Cancel sleep");
+            zzLabel.setTextColor(WARN);
+            zzIcon.setColors(withAlpha(WARN, 0x33), WARN);
+        } else {
+            zzLabel.setText("Go to sleep");
+            zzLabel.setTextColor(TXT);
+            zzIcon.setColors(BTN, TXT);
+        }
     }
 
     void togglePower() {
@@ -1226,22 +1257,25 @@ public class RemoteActivity extends Activity {
 
         curVol = vol; muted = mut;
         // Shared power/sleep state from the kiosk (so ALL remotes agree, not a local guess).
-        boolean napped = napping; int sleepRem = 0;
+        boolean napped = napping; int sleepRem = 0; boolean sleeping = false;
         if (conn) {
             try {
                 JSONObject st = new JSONObject(kodi.bridgeGet("/state")).getJSONObject("result");
                 napped = st.optBoolean("napped", false);
+                sleeping = st.optBoolean("sleeping", false);
                 sleepRem = st.optInt("sleep_remaining", 0);
             } catch (Exception e) {}
         }
         napping = napped;
+        mSleeping = sleeping;
         final boolean hotOn = kodi.isHotspotOn();   // the phone's own AP that the tablet joins
         final String fTitle = title, fTime = time, fNext = next;
         final int fProg = prog, fVol = vol, fSleepRem = sleepRem;
-        final boolean fMut = mut, fPlaying = playing, fNapped = napped;
+        final boolean fMut = mut, fPlaying = playing, fNapped = napped, fSleeping = sleeping;
         ui.post(() -> {
             hotspotChip.setColors(hotOn ? GOOD : WARN, TXT);   // green = on, red = off
             powerBtn.setColors(BTN, fNapped ? WARN : GOOD);    // real nap state drives the colour
+            setSleepBtn(fSleeping, fSleepRem);                 // toggle button reflects the shared timer
             if (fSleepRem > 0) { statusDot.setText("● Sleep " + mmss(fSleepRem)); statusDot.setTextColor(WARN); }
             else { statusDot.setText("● " + (conn ? label : "offline")); statusDot.setTextColor(conn ? GOOD : WARN); }
             nowTitle.setText(fTitle);

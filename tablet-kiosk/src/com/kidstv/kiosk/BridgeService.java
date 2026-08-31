@@ -794,12 +794,14 @@ public class BridgeService extends Service {
                 mLastCamBeat = SystemClock.elapsedRealtime();
                 writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capture\":" + camWanted() + "}}"); c.close(); return;
             }
-            if (target.startsWith("/state")) {                                     // shared power/sleep state for the remotes
+            if (target.startsWith("/state")) {                                     // shared power/sleep/camera state
                 boolean sleeping = mSleepThread != null;
                 long rem = (sleeping && mSleepEndsAt > 0)
                         ? Math.max(0, (mSleepEndsAt - SystemClock.elapsedRealtime()) / 1000) : 0;
+                boolean camera = mLastCamBeat != 0 && SystemClock.elapsedRealtime() - mLastCamBeat < CAM_STALE_MS;
                 writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"napped\":" + mNapped
-                        + ",\"sleeping\":" + sleeping + ",\"sleep_remaining\":" + rem + "}}");
+                        + ",\"sleeping\":" + sleeping + ",\"sleep_remaining\":" + rem
+                        + ",\"camera\":" + camera + "}}");
                 c.close(); return;
             }
             if (target.startsWith("/uploads")) { handleListUploads(c); return; }   // GET: list uploaded files (check before /upload)

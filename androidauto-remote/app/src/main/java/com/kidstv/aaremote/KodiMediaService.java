@@ -74,6 +74,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     private volatile String[][] playlists = null;
     private volatile boolean lastConnected = false;            // edge-detect connect to refresh browse
     private volatile boolean napped = false;                   // last power-toggle direction (label swap)
+    private volatile boolean sleeping = false;                  // a sleep fade is running (toggle + label)
+    private volatile boolean cameraOn = false;                  // child-monitor camera is capturing
     private volatile long lastCamOn = 0;                        // throttle the "AA active" ping to the tablet
 
     private static final long ACTIONS =
@@ -241,8 +243,11 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                 io.execute(() -> changeVolume(+VOL_STEP));
             } else if (ACT_VOLDOWN.equals(action)) {
                 io.execute(() -> changeVolume(-VOL_STEP));
-            } else if (ACT_SLEEP.equals(action)) {
-                io.execute(() -> { napped = true; kodi.bridgePost("/sleep", SLEEP_JSON); });  // fade vol+brightness, then off
+            } else if (ACT_SLEEP.equals(action)) {                 // toggle: cancel a running fade, else start one
+                io.execute(() -> {
+                    kodi.bridgePost("/sleep", sleeping ? "{\"minutes\":0}" : SLEEP_JSON);
+                    main.postDelayed(KodiMediaService.this::pollOnce, 400);   // republish -> swap the label
+                });
             }
         }
     }
@@ -328,7 +333,9 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
         try {
             JSONObject st = new JSONObject(kodi.bridgeGet("/state")).getJSONObject("result");
             napped = st.optBoolean("napped", false);
+            sleeping = st.optBoolean("sleeping", false);
             sleepRem = st.optInt("sleep_remaining", 0);
+            cameraOn = st.optBoolean("camera", false);
         } catch (Exception e) {}
 
         int pid = activePlayerId();
@@ -388,7 +395,7 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_VOLUP, "Volume up", R.drawable.ic_volup).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
-                    ACT_SLEEP, "Go to sleep", R.drawable.ic_sleep).build());
+                    ACT_SLEEP, sleeping ? "Cancel sleep" : "Go to sleep", R.drawable.ic_sleep).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_POWER, napped ? "Wake tablet" : "Turn off tablet", R.drawable.ic_power).build());
             session.setPlaybackState(ps.build());
@@ -401,8 +408,36 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                 md.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, subtitle);
             }
             if (durationMs > 0) md.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs);
+            // Camera indicator: while the child monitor is capturing, show a green camera in the art slot.
+            if (cameraOn) md.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, cameraBitmap());
             session.setMetadata(md.build());
         });
+    }
+
+    private android.graphics.Bitmap mCamBmp;   // cached "camera recording" art
+
+    /** A green camera-with-REC-dot icon shown as the AA album art while the child monitor is capturing. */
+    private android.graphics.Bitmap cameraBitmap() {
+        if (mCamBmp != null) return mCamBmp;
+        int s = 320;
+        android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas cv = new android.graphics.Canvas(bm);
+        cv.drawColor(0xFF10151C);
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        float bx = s * 0.16f, by = s * 0.36f, bw = s * 0.68f, bh = s * 0.40f, r = s * 0.06f;
+        p.setColor(0xFF33C05B);
+        cv.drawRoundRect(new android.graphics.RectF(bx + bw * 0.16f, by - s * 0.07f, bx + bw * 0.46f, by + s * 0.02f), r * 0.6f, r * 0.6f, p);  // viewfinder bump
+        cv.drawRoundRect(new android.graphics.RectF(bx, by, bx + bw, by + bh), r, r, p);                                                        // body
+        float cx = bx + bw * 0.5f, cy = by + bh * 0.55f, lr = s * 0.115f;
+        p.setColor(0xFF10151C); cv.drawCircle(cx, cy, lr, p);                                                                                   // lens hole
+        p.setColor(0xFF33C05B); p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeWidth(s * 0.03f);
+        cv.drawCircle(cx, cy, lr, p); p.setStyle(android.graphics.Paint.Style.FILL);                                                            // lens ring
+        p.setColor(0xFFE0653D); cv.drawCircle(bx + bw * 0.82f, by + bh * 0.22f, s * 0.03f, p);                                                  // red REC dot
+        android.graphics.Paint t = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        t.setColor(0xFF9DB0C6); t.setTextAlign(android.graphics.Paint.Align.CENTER); t.setTextSize(s * 0.075f);
+        cv.drawText("monitoring", s / 2f, by + bh + s * 0.14f, t);
+        mCamBmp = bm;
+        return bm;
     }
 
     // ---------------- helpers (ported from the phone remote) ----------------
