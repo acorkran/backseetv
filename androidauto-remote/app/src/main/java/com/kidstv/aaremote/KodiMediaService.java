@@ -314,6 +314,15 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             return;
         }
 
+        // Shared power/sleep state from the kiosk (drives the power label + a sleep countdown, so AA
+        // agrees with the phone app + widget instead of a local toggle).
+        int sleepRem = 0;
+        try {
+            JSONObject st = new JSONObject(kodi.bridgeGet("/state")).getJSONObject("result");
+            napped = st.optBoolean("napped", false);
+            sleepRem = st.optInt("sleep_remaining", 0);
+        } catch (Exception e) {}
+
         int pid = activePlayerId();
         if (pid < 0) {   // connected, nothing playing
             publishState(PlaybackStateCompat.STATE_STOPPED, 0, "Not playing", null, 0);
@@ -340,6 +349,7 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             durationMs = ms(pr.optJSONObject("totaltime"));
         } catch (Exception e) {}
 
+        if (sleepRem > 0) subtitle = "Sleeping " + (sleepRem / 60) + ":" + String.format("%02d", sleepRem % 60);
         int state = speed == 0 ? PlaybackStateCompat.STATE_PAUSED : PlaybackStateCompat.STATE_PLAYING;
         publishState(state, positionMs, title, subtitle, durationMs);
     }

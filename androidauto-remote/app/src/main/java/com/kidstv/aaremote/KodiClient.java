@@ -213,6 +213,26 @@ class KodiClient {
         }
     }
 
+    /** GET a bridge (8080) path (e.g. /state) and return the response body, or null. */
+    String bridgeGet(String path) {
+        String host = activeHost;
+        if (host == null) { if (!findHost()) return null; host = activeHost; }
+        java.net.HttpURLConnection con = null;
+        try {
+            con = (java.net.HttpURLConnection) new java.net.URL("http://" + host + ":" + BRIDGE_PORT + path).openConnection();
+            con.setConnectTimeout(2500); con.setReadTimeout(4000);
+            java.io.InputStream in = con.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[4096]; int n;
+            while ((n = in.read(b)) >= 0) bo.write(b, 0, n);
+            return new String(bo.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (con != null) try { con.disconnect(); } catch (Exception e) {}
+        }
+    }
+
     /** POST a JSON body to an arbitrary bridge (8080) path (e.g. /sleep). Returns true on HTTP 200. */
     boolean bridgePost(String path, String json) {
         String host = activeHost;

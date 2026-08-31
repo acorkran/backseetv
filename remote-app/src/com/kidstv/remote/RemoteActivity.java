@@ -1141,6 +1141,8 @@ public class RemoteActivity extends Activity {
 
     void updatePowerBtn() { ui.post(() -> powerBtn.setColors(BTN, napping ? WARN : GOOD)); }
 
+    static String mmss(int sec) { return String.format("%d:%02d", sec / 60, sec % 60); }
+
     void volDelta(final int d) {
         final int next = Math.max(0, Math.min(100, curVol + d));
         curVol = next;
@@ -1223,13 +1225,25 @@ public class RemoteActivity extends Activity {
         }
 
         curVol = vol; muted = mut;
+        // Shared power/sleep state from the kiosk (so ALL remotes agree, not a local guess).
+        boolean napped = napping; int sleepRem = 0;
+        if (conn) {
+            try {
+                JSONObject st = new JSONObject(kodi.bridgeGet("/state")).getJSONObject("result");
+                napped = st.optBoolean("napped", false);
+                sleepRem = st.optInt("sleep_remaining", 0);
+            } catch (Exception e) {}
+        }
+        napping = napped;
         final boolean hotOn = kodi.isHotspotOn();   // the phone's own AP that the tablet joins
         final String fTitle = title, fTime = time, fNext = next;
-        final int fProg = prog, fVol = vol; final boolean fMut = mut, fPlaying = playing;
+        final int fProg = prog, fVol = vol, fSleepRem = sleepRem;
+        final boolean fMut = mut, fPlaying = playing, fNapped = napped;
         ui.post(() -> {
             hotspotChip.setColors(hotOn ? GOOD : WARN, TXT);   // green = on, red = off
-            statusDot.setText("● " + (conn ? label : "offline"));
-            statusDot.setTextColor(conn ? GOOD : WARN);
+            powerBtn.setColors(BTN, fNapped ? WARN : GOOD);    // real nap state drives the colour
+            if (fSleepRem > 0) { statusDot.setText("● Sleep " + mmss(fSleepRem)); statusDot.setTextColor(WARN); }
+            else { statusDot.setText("● " + (conn ? label : "offline")); statusDot.setTextColor(conn ? GOOD : WARN); }
             nowTitle.setText(fTitle);
             timeLabel.setText(fTime);
             if (!seeking) seek.setProgress(fProg);

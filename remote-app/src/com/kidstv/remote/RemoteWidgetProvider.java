@@ -165,6 +165,13 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
                 int v = res.optInt("volume", -1);
                 vol = muted ? "Muted" : (v >= 0 ? v + "%" : "VOL");
             } catch (Exception e) {}
+            try {   // shared power/sleep state (agrees with the app + AA)
+                JSONObject st = new JSONObject(k.bridgeGet("/state")).getJSONObject("result");
+                nap = st.optBoolean("napped", false);
+                p.edit().putBoolean("w_nap", nap).apply();   // keep the cheap-state chrome in sync
+                int rem = st.optInt("sleep_remaining", 0);
+                if (rem > 0) status = "Sleep " + rem / 60 + ":" + String.format("%02d", rem % 60);
+            } catch (Exception e) {}
         }
 
         for (int id : ids) {
@@ -196,8 +203,10 @@ public class RemoteWidgetProvider extends AppWidgetProvider {
 
     static void doPower(Context ctx) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        boolean toNap = !p.getBoolean("w_nap", false);
         KodiClient k = client(ctx);
+        boolean napped = p.getBoolean("w_nap", false);   // start from the REAL state, not a local guess
+        try { napped = new JSONObject(k.bridgeGet("/state")).getJSONObject("result").optBoolean("napped", napped); } catch (Exception e) {}
+        boolean toNap = !napped;
         String m = toNap ? "System.Shutdown" : "System.Reboot";   // bridge intercepts -> nap / wake
         if (k.bridge("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + m + "\"}")) {
             saveLast(ctx, k);

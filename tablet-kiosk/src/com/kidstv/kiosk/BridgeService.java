@@ -109,6 +109,8 @@ public class BridgeService extends Service {
 
     PowerManager.WakeLock mNapLock;   // keeps CPU/socket alive with the screen off during a nap
     volatile Thread mSleepThread;     // the "go to sleep" volume+brightness ramp (null = not sleeping)
+    volatile boolean mNapped = false; // true = tablet is napped (screen off/locked) — the shared power state
+    volatile long mSleepEndsAt = 0;   // elapsedRealtime when the sleep ramp finishes (0 = not sleeping)
     WifiManager.WifiLock mWifiLock;   // keeps Wi-Fi associated with the screen off (remote reachability)
     BroadcastReceiver mScreen;        // screen-on clears a nap
     volatile BluetoothProfile mPanProxy;   // BluetoothPan proxy for auto-joining a phone's BT tether
@@ -398,6 +400,7 @@ public class BridgeService extends Service {
     // playback and light while the kid sleeps, and bring it back with one tap.
 
     void nap() {
+        mNapped = true;                // shared power state — flips instantly so remotes reflect it
         new Thread(new Runnable() { public void run() {
             // 1) tell the autoplay addon to STOP self-healing (so playback stays stopped)
             try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.NotifyAll\",\"params\":{\"sender\":\"kidstv\",\"message\":\"kidstvsleep\"}}"); } catch (Exception e) {}
@@ -418,6 +421,7 @@ public class BridgeService extends Service {
     /** End a nap: release the lock + tell the addon to resume self-healing. Called by an
         explicit Yatse "Reboot" AND by any screen-on (registerScreen) so it never sticks. */
     void clearNap() {
+        mNapped = false;               // shared power state
         cancelSleep();                 // waking/any screen-on aborts a sleep ramp + restores brightness
         releaseNapLock();
         try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.NotifyAll\",\"params\":{\"sender\":\"kidstv\",\"message\":\"kidstvwake\"}}"); } catch (Exception e) {}
@@ -447,6 +451,8 @@ public class BridgeService extends Service {
     void startSleep(final double minutes) {
         cancelSleep();                       // supersede any ramp in progress
         final double mins = minutes <= 0 ? 20 : minutes;
+        final long totalMs = (long) (mins * 60_000);
+        mSleepEndsAt = SystemClock.elapsedRealtime() + totalMs;   // for the remotes' countdown
         acquireNapLock();                    // keep the CPU alive through the (screen-dimming) ramp
         Thread t = new Thread(new Runnable() { public void run() {
             try {
@@ -461,7 +467,6 @@ public class BridgeService extends Service {
                     startBr = Math.max(0.06f, Math.min(1f, b / 255f));
                 } catch (Exception e) { startBr = 0.7f; }
 
-                long totalMs = (long) (mins * 60_000);
                 long stepMs = 15_000;                          // adjust ~every 15s
                 int steps = (int) Math.max(1, totalMs / stepMs);
                 for (int i = 1; i <= steps; i++) {
@@ -471,7 +476,7 @@ public class BridgeService extends Service {
                     setOverlayBrightness(Math.max(0f, startBr * frac));
                     try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.SetVolume\",\"params\":{\"volume\":" + vol + "}}"); } catch (Exception e) {}
                 }
-                mSleepThread = null;
+                mSleepThread = null; mSleepEndsAt = 0;
                 nap();                                         // lights out: stop + screen off + lock
             } catch (InterruptedException ie) {
                 // cancelled (woken / superseded) - cancelSleep() already restored brightness
@@ -487,6 +492,7 @@ public class BridgeService extends Service {
     void cancelSleep() {
         Thread t = mSleepThread;
         mSleepThread = null;
+        mSleepEndsAt = 0;
         if (t != null) t.interrupt();
         setOverlayBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE);   // -1 = use system
     }
@@ -772,6 +778,14 @@ public class BridgeService extends Service {
             if (target.startsWith("/camalive")) {                                  // camera monitor's liveness ping
                 mLastCamBeat = SystemClock.elapsedRealtime();
                 writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"OK\"}"); c.close(); return;
+            }
+            if (target.startsWith("/state")) {                                     // shared power/sleep state for the remotes
+                boolean sleeping = mSleepThread != null;
+                long rem = (sleeping && mSleepEndsAt > 0)
+                        ? Math.max(0, (mSleepEndsAt - SystemClock.elapsedRealtime()) / 1000) : 0;
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"napped\":" + mNapped
+                        + ",\"sleeping\":" + sleeping + ",\"sleep_remaining\":" + rem + "}}");
+                c.close(); return;
             }
             if (target.startsWith("/uploads")) { handleListUploads(c); return; }   // GET: list uploaded files (check before /upload)
             if (target.startsWith("/upload")) { handleUpload(target, contentLength, in, c); return; }
