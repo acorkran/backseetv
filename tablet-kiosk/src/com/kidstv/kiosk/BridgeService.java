@@ -112,6 +112,7 @@ public class BridgeService extends Service {
     volatile Thread mSleepThread;     // the "go to sleep" volume+brightness ramp (null = not sleeping)
     volatile boolean mNapped = false; // true = tablet is napped (screen off/locked) — the shared power state
     volatile long mSleepEndsAt = 0;   // elapsedRealtime when the sleep ramp finishes (0 = not sleeping)
+    volatile int mPreQuietVol = -1;   // Kodi volume before a nap/sleep dropped it to 0, restored on wake (-1 = none)
     WifiManager.WifiLock mWifiLock;   // keeps Wi-Fi associated with the screen off (remote reachability)
     BroadcastReceiver mScreen;        // screen-on clears a nap
     volatile BluetoothProfile mPanProxy;   // BluetoothPan proxy for auto-joining a phone's BT tether
@@ -403,12 +404,22 @@ public class BridgeService extends Service {
     // playback and light while the kid sleeps, and bring it back with one tap.
 
     void nap() {
+        stopRamp();                    // a manual power-off ALSO cancels any running sleep timer (keep the
+                                       // pre-sleep volume in mPreQuietVol for wake; don't restore it now)
         mNapped = true;                // shared power state — flips instantly so remotes reflect it
         new Thread(new Runnable() { public void run() {
+            // 0) remember the volume so wake() can restore it (unless the sleep ramp already saved the
+            //    pre-ramp level; then mPreQuietVol is set and we must not overwrite it with ~0)
+            if (mPreQuietVol < 0) {
+                try {
+                    String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.GetProperties\",\"params\":{\"properties\":[\"volume\"]}}");
+                    int v = new JSONObject(r).getJSONObject("result").getInt("volume");
+                    if (v > 0) mPreQuietVol = v;
+                } catch (Exception e) {}
+            }
             // 1) tell the autoplay addon to STOP self-healing (so playback stays stopped)
             try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.NotifyAll\",\"params\":{\"sender\":\"kidstv\",\"message\":\"kidstvsleep\"}}"); } catch (Exception e) {}
-            // 2) stop playback + drop volume to 0 so a later resume is SILENT (a glance/
-            //    power-press that wakes the tablet must never blast audio at a sleeping kid)
+            // 2) stop playback + drop volume to 0 so the napped tablet is silent (wake() restores it)
             try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.Stop\",\"params\":{\"playerid\":1}}"); } catch (Exception e) {}
             try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.SetVolume\",\"params\":{\"volume\":0}}"); } catch (Exception e) {}
             // 3) keep CPU/socket alive with the screen off so the wake command still lands
@@ -425,9 +436,23 @@ public class BridgeService extends Service {
         explicit Yatse "Reboot" AND by any screen-on (registerScreen) so it never sticks. */
     void clearNap() {
         mNapped = false;               // shared power state
-        cancelSleep();                 // waking/any screen-on aborts a sleep ramp + restores brightness
+        cancelSleep();                 // waking/screen-on aborts a ramp + restores brightness AND volume to pre-sleep
         releaseNapLock();
+        // wake = play: addon resumes self-healing (restarts a STOPPED player)
         try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"JSONRPC.NotifyAll\",\"params\":{\"sender\":\"kidstv\",\"message\":\"kidstvwake\"}}"); } catch (Exception e) {}
+        ensurePlayingResume();         // and un-stick a merely-PAUSED player so wake never lands on a frozen frame
+    }
+
+    /** Wake = play: if a player is currently PAUSED (speed 0), resume it. A STOPPED player is left to the
+        autoplay addon (kidstvwake) which restarts the shuffle; here we only un-stick a pause so a wake
+        never lands on a frozen paused frame. */
+    void ensurePlayingResume() {
+        try {
+            String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.GetProperties\",\"params\":{\"playerid\":1,\"properties\":[\"speed\"]}}");
+            int speed = new JSONObject(r).getJSONObject("result").getInt("speed");
+            if (speed == 0)
+                forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.PlayPause\",\"params\":{\"playerid\":1,\"play\":true}}");
+        } catch (Exception e) { /* no active player -> the addon starts one */ }
     }
 
     void wake() {
@@ -464,6 +489,7 @@ public class BridgeService extends Service {
                     String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.GetProperties\",\"params\":{\"properties\":[\"volume\"]}}");
                     startVol = new JSONObject(r).getJSONObject("result").getInt("volume");
                 } catch (Exception e) {}
+                if (startVol > 0) mPreQuietVol = startVol;   // remember pre-sleep level so wake/cancel restores it
                 float startBr;
                 try {
                     int b = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
@@ -492,12 +518,26 @@ public class BridgeService extends Service {
     }
 
     /** Stop a running ramp (if any) and drop the overlay's brightness override back to system default. */
-    void cancelSleep() {
+    /** Just end the ramp thread + clear the countdown state (no brightness/volume restore). Used by nap(),
+        which is about to blank the screen and zero the volume anyway — restoring them first would flash
+        the screen bright and blip the audio right before lights-out. */
+    void stopRamp() {
         Thread t = mSleepThread;
         mSleepThread = null;
         mSleepEndsAt = 0;
         if (t != null) t.interrupt();
+    }
+
+    /** Cancel a running ramp AND put things back to normal: brightness to system/adaptive and volume
+        to the pre-sleep level. This is the "wake / cancel the timer" path — it fully undoes the ramp,
+        not just the dimming. (The dropped volume is remembered in mPreQuietVol.) */
+    void cancelSleep() {
+        stopRamp();
         setOverlayBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE);   // -1 = use system
+        if (mPreQuietVol > 0) {
+            final int v = mPreQuietVol; mPreQuietVol = -1;
+            try { forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Application.SetVolume\",\"params\":{\"volume\":" + v + "}}"); } catch (Exception e) {}
+        }
     }
 
     /** Override the actual screen brightness via the always-on overlay window (0..1, or -1 = none). */
