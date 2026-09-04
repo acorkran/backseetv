@@ -1057,6 +1057,10 @@ public class BridgeService extends Service {
         try {
             double minutes = 20;
             try { if (body != null && body.length() > 0) minutes = new JSONObject(body).optDouble("minutes", 20); } catch (Exception e) {}
+            // TEMP OVERRIDE: force a 10-min nap fade for now. The AA app still hardcodes 20 (SLEEP_JSON)
+            // and the phone isn't connected to rebuild it, so cap here. Revert to startSleep(minutes)
+            // once the AA/remote defaults are updated to 10.
+            if (minutes > 0) minutes = Math.min(minutes, 10);
             if (minutes <= 0) cancelSleep(); else startSleep(minutes);
             writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"minutes\":" + minutes + "}}");
         } catch (Exception e) {
