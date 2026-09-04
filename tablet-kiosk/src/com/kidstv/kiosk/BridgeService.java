@@ -311,6 +311,7 @@ public class BridgeService extends Service {
         Kodi's menu / its own splash / a wedge. Transparent while the show plays. */
     class SplashOverlay extends View {
         volatile boolean splash = false;
+        volatile boolean flash = false;   // full-white "screen as a flashlight" to light the kid at night
         private Paint bg, shape, text;
 
         SplashOverlay(Context c) {
@@ -341,8 +342,10 @@ public class BridgeService extends Service {
         }
 
         void setSplash(boolean b) { if (splash != b) { splash = b; postInvalidate(); } }
+        void setFlash(boolean b) { if (flash != b) { flash = b; postInvalidate(); } }
 
         @Override protected void onDraw(Canvas cv) {
+            if (flash) { cv.drawColor(0xFFFFFFFF); return; }   // full white — screen-as-flashlight
             if (!splash) return;   // transparent -> the video shows through
             int w = getWidth(), h = getHeight();
             if (bg == null) { bg = new Paint(); shape = new Paint(Paint.ANTI_ALIAS_FLAG); text = new Paint(Paint.ANTI_ALIAS_FLAG); }
@@ -561,6 +564,29 @@ public class BridgeService extends Service {
                 lp.screenBrightness = f;
                 mWm.updateViewLayout(mOverlay, lp);
             } catch (Exception e) { Log.w(TAG, "setOverlayBrightness: " + e); }
+        }});
+    }
+
+    /** Screen-as-flashlight: full-white + full-brightness for `ms`, then restore the overlay's prior
+        brightness. Lights the child's face in the dark so the driver can glance back AND the camera
+        (already capturing during AA drives) grabs a lit frame. */
+    void doFlash(final int ms) {
+        if (mOverlayView == null || mWm == null) return;
+        final SplashOverlay ov = mOverlayView;
+        mMain.post(new Runnable() { public void run() {
+            try {
+                WindowManager.LayoutParams lp = (WindowManager.LayoutParams) ov.getLayoutParams();
+                final float prevBr = (lp != null) ? lp.screenBrightness : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+                ov.setFlash(true);
+                if (lp != null) { lp.screenBrightness = 1.0f; try { mWm.updateViewLayout(ov, lp); } catch (Exception e) {} }
+                mMain.postDelayed(new Runnable() { public void run() {
+                    try {
+                        ov.setFlash(false);
+                        WindowManager.LayoutParams lp2 = (WindowManager.LayoutParams) ov.getLayoutParams();
+                        if (lp2 != null) { lp2.screenBrightness = prevBr; mWm.updateViewLayout(ov, lp2); }
+                    } catch (Exception e) { Log.w(TAG, "flash off: " + e); }
+                }}, ms);
+            } catch (Exception e) { Log.w(TAG, "doFlash: " + e); }
         }});
     }
 
@@ -904,6 +930,13 @@ public class BridgeService extends Service {
             // Build/import featureset endpoints (need the body read, so handled after it):
             if (target.startsWith("/importdir"))   { handleImportDir(method, json, c); return; }
             if (target.startsWith("/saveplaylist")) { handleSavePlaylist(json, c); return; }
+            if (target.startsWith("/flash")) {   // screen-as-flashlight: light the kid in the dark for a capture/glance
+                int ms = 1500;
+                try { if (json != null && json.length() > 0) ms = new JSONObject(json).optInt("ms", 1500); } catch (Exception e) {}
+                ms = Math.max(200, Math.min(4000, ms));
+                doFlash(ms);
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"ms\":" + ms + "}}"); c.close(); return;
+            }
             if (target.startsWith("/setsleep"))     { handleSetSleep(json, c); return; }  // set the stored fade duration
             if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
             if (target.startsWith("/addwifi"))      { handleAddWifi(json, c); return; }

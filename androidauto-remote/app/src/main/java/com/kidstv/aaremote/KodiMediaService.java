@@ -59,6 +59,7 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
     static final String ACT_VOLUP   = "com.kidstv.aaremote.VOLUP";     // custom action: tablet volume +
     static final String ACT_VOLDOWN = "com.kidstv.aaremote.VOLDOWN";   // custom action: tablet volume -
     static final String ACT_SLEEP   = "com.kidstv.aaremote.SLEEP";     // custom action: go-to-sleep fade
+    static final String ACT_FLASH   = "com.kidstv.aaremote.FLASH";     // custom action: white-screen flash to light the kid at night
     static final String SLEEP_JSON  = "{\"minutes\":20}";              // 20-min volume+brightness fade
     // 8080-bridge payloads the kiosk intercepts: Shutdown -> nap (off), Reboot -> wake (on).
     static final String NAP_JSON  = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"System.Shutdown\"}";
@@ -248,6 +249,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                     kodi.bridgePost("/sleep", sleeping ? "{\"minutes\":0}" : SLEEP_JSON);
                     main.postDelayed(KodiMediaService.this::pollOnce, 400);   // republish -> swap the label
                 });
+            } else if (ACT_FLASH.equals(action)) {                 // flash the tablet white to light the kid in the dark
+                io.execute(() -> kodi.bridgePost("/flash", "{\"ms\":1500}"));
             }
         }
     }
@@ -396,6 +399,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                     ACT_VOLUP, "Volume up", R.drawable.ic_volup).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_SLEEP, sleeping ? "Cancel sleep" : "Go to sleep", R.drawable.ic_sleep).build());
+            ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
+                    ACT_FLASH, "Light up (flash)", R.drawable.ic_flash).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_POWER, napped ? "Wake tablet" : "Turn off tablet", R.drawable.ic_power).build());
             session.setPlaybackState(ps.build());
