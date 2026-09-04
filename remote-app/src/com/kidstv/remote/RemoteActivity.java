@@ -53,6 +53,7 @@ public class RemoteActivity extends Activity {
     IconView powerBtn, hotspotChip, playPause;   // Canvas-drawn — always render (glyphs tofu on-device)
     LinearLayout sleepRow; IconView zzIcon; TextView zzLabel;   // the "Go to sleep" toggle button
     volatile boolean mSleeping = false;                        // a sleep fade is running (from /state)
+    volatile int mKioskSleepMin = 10;                          // kiosk-owned fade duration (from /state.sleep_minutes)
     LinearLayout playlistGrid;              // dynamic playlist tiles live here (rebuilt on fetch)
     int mGridCols = 2;                       // columns the current grid render is using (avatar/text scale)
     // Playlist tile layout (pref "pl_cols"): PL_LIST = full-width rows, else 2/3/4 = grid columns.
@@ -1117,7 +1118,7 @@ public class RemoteActivity extends Activity {
             });
             return;
         }
-        final int mins = prefs.getInt("sleep_minutes", 20);
+        final int mins = mKioskSleepMin;   // kiosk owns the duration; this is just for the toast + initial countdown
         final String plFile = prefs.getString("sleep_playlist", "");        // "" = keep whatever's playing
         final String plLabel = prefs.getString("sleep_playlist_label", "");
         Toast.makeText(this, "Sleep: fading out over " + mins + " min…", Toast.LENGTH_LONG).show();
@@ -1264,6 +1265,7 @@ public class RemoteActivity extends Activity {
                 napped = st.optBoolean("napped", false);
                 sleeping = st.optBoolean("sleeping", false);
                 sleepRem = st.optInt("sleep_remaining", 0);
+                mKioskSleepMin = st.optInt("sleep_minutes", mKioskSleepMin);   // kiosk owns the duration
             } catch (Exception e) {}
         }
         napping = napped;
@@ -1569,14 +1571,20 @@ public class RemoteActivity extends Activity {
         box.addView(sleepPlBtn, lpspl);
         TextView dlab = new TextView(this); dlab.setText("Fade duration (minutes)"); dlab.setTextColor(TXT); dlab.setPadding(0, dp(8), 0, 0); box.addView(dlab);
         LinearLayout drow = new LinearLayout(this); drow.setOrientation(LinearLayout.HORIZONTAL);
-        final int[] mins = {15, 20, 30, 45};
-        final int curMin = prefs.getInt("sleep_minutes", 20);
+        final int[] mins = {5, 10, 15, 20, 30};                 // match the kiosk admin picker
+        final int curMin = mKioskSleepMin;                     // the kiosk owns it; reflect its value
         final Button[] minBtns = new Button[mins.length];
         for (int i = 0; i < mins.length; i++) {
             final int mm = mins[i];
             Button mb = cardBtn(String.valueOf(mm), null);
             mb.setBackgroundColor(mm == curMin ? ACCENT : BTN);
-            mb.setOnClickListener(v -> { prefs.edit().putInt("sleep_minutes", mm).apply(); for (int j = 0; j < mins.length; j++) minBtns[j].setBackgroundColor(mins[j] == mm ? ACCENT : BTN); });
+            // Write the kiosk-owned setting (source of truth); keep a local copy for the toast/countdown.
+            mb.setOnClickListener(v -> {
+                mKioskSleepMin = mm;
+                prefs.edit().putInt("sleep_minutes", mm).apply();
+                for (int j = 0; j < mins.length; j++) minBtns[j].setBackgroundColor(mins[j] == mm ? ACCENT : BTN);
+                bg(() -> kodi.bridgePost("/setsleep", "{\"minutes\":" + mm + "}"));
+            });
             minBtns[i] = mb;
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f); lp.setMargins(dp(4), dp(6), dp(4), dp(6));
             drow.addView(mb, lp);
