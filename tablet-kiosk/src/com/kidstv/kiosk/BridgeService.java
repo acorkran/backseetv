@@ -123,6 +123,7 @@ public class BridgeService extends Service {
 
     volatile long mLastPlaying = 0;   // watchdog: last time Kodi had an active player
     int mWatchFails = 0;              // watchdog: consecutive failed recoveries (drives escalation)
+    int mEofStuck = 0;               // watchdog: consecutive polls a player was frozen at end-of-file
     volatile long mLastCamBeat = 0;   // last /camalive heartbeat from the camera monitor (0 = never)
     volatile long mLastCamKick = 0;   // last time we relaunched the camera (rate-limit)
     volatile long mCamOn = 0;         // last /camon ping from the AA app (fresh = Android Auto active)
@@ -628,6 +629,16 @@ public class BridgeService extends Service {
     // Kodi's own Application.Quit; because this app is the device-owner HOME, Kodi quitting drops to
     // KioskActivity, which relaunches Kodi fresh (on .Main, not the wedged .Splash) and the addon
     // resumes playback. Verified: Quit -> new Kodi pid on .Main -> playing, fully hands-free.
+    /** True if the current player is "playing" but pinned at the very end of the file — the frozen-at-EOF
+        state some files get into instead of advancing (speed!=0 and percentage ~100). */
+    boolean isStuckAtEof() {
+        try {
+            String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.GetProperties\",\"params\":{\"playerid\":1,\"properties\":[\"percentage\",\"speed\"]}}");
+            org.json.JSONObject res = new org.json.JSONObject(r).getJSONObject("result");
+            return res.optInt("speed", 0) != 0 && res.optDouble("percentage", 0) >= 99.5;
+        } catch (Exception e) { return false; }
+    }
+
     void watchdog() {
         mLastPlaying = SystemClock.elapsedRealtime();   // grace: let Kodi boot before judging it
         while (running) {
@@ -648,7 +659,25 @@ public class BridgeService extends Service {
                 // A paused player is still "active" (returns a playerid), so a long remote-paused
                 // spell never trips this - only a genuinely STOPPED player (no active player) does.
                 String r = forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.GetActivePlayers\"}");
-                if (r != null && r.contains("\"playerid\"")) { mLastPlaying = now; mWatchFails = 0; continue; }
+                if (r != null && r.contains("\"playerid\"")) {
+                    // Active player — but some files play PAST their end without advancing the playlist
+                    // (percentage pinned at 100, speed 1, frozen last frame). The no-player check can't
+                    // see that, so detect it and nudge the playlist forward; escalate to a Kodi restart
+                    // if GoTo-next doesn't clear it. Needs ~2 polls (~16s) so a normal clip ending — which
+                    // advances within one poll — never trips it.
+                    if (isStuckAtEof()) {
+                        mEofStuck++;
+                        if (mEofStuck == 2 || mEofStuck == 3) {
+                            Log.w(TAG, "watchdog: player stuck at end-of-file (" + mEofStuck + " polls) -> GoTo next");
+                            forward("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Player.GoTo\",\"params\":{\"playerid\":1,\"to\":\"next\"}}");
+                        } else if (mEofStuck >= 4) {
+                            Log.w(TAG, "watchdog: stuck at EOF persists -> restart Kodi");
+                            recoverKodi();
+                            mEofStuck = 0;
+                        }
+                    } else { mEofStuck = 0; }
+                    mLastPlaying = now; mWatchFails = 0; continue;
+                }
 
                 int wedgeSec = WATCH_WEDGE_DEFAULT;
                 try { wedgeSec = android.provider.Settings.Global.getInt(getContentResolver(), "kiosk_watchdog_sec", WATCH_WEDGE_DEFAULT); } catch (Exception e) {}
