@@ -654,6 +654,45 @@ public class KioskActivity extends Activity {
         catch (Exception e) { android.widget.Toast.makeText(this, "Can't save — grant WRITE_SECURE_SETTINGS via adb", android.widget.Toast.LENGTH_LONG).show(); }
     }
 
+    /** Current Wi-Fi SSID for the admin display, or "" if unknown/not connected. */
+    String currentSsidLocal() {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            android.net.wifi.WifiInfo wi = wm.getConnectionInfo();
+            if (wi == null) return "";
+            String s = wi.getSSID();
+            if (s == null || s.contains("unknown") || s.equals("<unknown ssid>")) return "";
+            return s.replaceAll("^\"|\"$", "");
+        } catch (Exception e) { return ""; }
+    }
+
+    /** Add a Wi-Fi network from the admin (device owner can, adb can't). Hands SSID+password to the
+        bridge (ACTION_ADD_WIFI) which does the WifiManager.addNetwork + join. */
+    void showAddWifiDialog() {
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(12), dp(20), 0);
+        final android.widget.EditText ss = new android.widget.EditText(this);
+        ss.setHint("Wi-Fi name (SSID)"); ss.setTextColor(TXT); ss.setHintTextColor(SUB);
+        final android.widget.EditText pw = new android.widget.EditText(this);
+        pw.setHint("Password (blank = open)"); pw.setTextColor(TXT); pw.setHintTextColor(SUB);
+        pw.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        box.addView(ss); box.addView(pw);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Add Wi-Fi")
+            .setView(box)
+            .setPositiveButton("Add", (d, w) -> {
+                String s = ss.getText().toString().trim(), p = pw.getText().toString();
+                if (s.length() == 0) return;
+                Intent i = new Intent(this, BridgeService.class);
+                i.setAction(BridgeService.ACTION_ADD_WIFI);
+                i.putExtra("ssid", s); i.putExtra("pass", p);
+                try { startService(i); } catch (Exception e) {}
+                android.widget.Toast.makeText(this, "Adding " + s + "…", android.widget.Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
     /** Import destination = where phone->tablet imports land. Shared (Settings.Global) with the bridge,
         the remote (via /importdir), and adb. Default: Download. */
     String importDir() {
@@ -704,6 +743,7 @@ public class KioskActivity extends Activity {
         col.addView(ctl);
         LinearLayout vol = row();
         vol.addView(iconBtn(IconView.VOLDOWN, BTN, TXT, v -> volDelta(-6)), eqp());
+        vol.addView(cardBtn("Mute", v -> input("Application.SetMute", "{\"mute\":\"toggle\"}")), eqp());
         vol.addView(iconBtn(IconView.VOLUP, BTN, TXT, v -> volDelta(6)), eqp());
         col.addView(vol);
 
@@ -791,6 +831,23 @@ public class KioskActivity extends Activity {
             idrow.addView(vb, eqp());
         }
         col.addView(idrow);
+
+        section(col, "Network");
+        final TextView wifiL = new TextView(this);
+        wifiL.setTextColor(TXT); wifiL.setPadding(dp(4), dp(2), 0, dp(4));
+        String ssid = currentSsidLocal();
+        wifiL.setText("Wi-Fi: " + (ssid.length() > 0 ? ssid : "not connected / hidden"));
+        col.addView(wifiL);
+        Button addWifi = cardBtn("+  Add Wi-Fi network", v -> showAddWifiDialog());
+        addWifi.setTextSize(14);
+        col.addView(addWifi, wide());
+
+        section(col, "Power");
+        Button napNow = cardBtn("😴  Sleep tablet now", v -> {
+            bridge(BridgeService.ACTION_NAP);
+            android.widget.Toast.makeText(this, "Sleeping the tablet — press power to wake.", android.widget.Toast.LENGTH_SHORT).show();
+        });
+        col.addView(napNow, wide());
 
         Button restart = cardBtn("↻  Restart Kodi", v -> {
             android.widget.Toast.makeText(this, "Restarting Kodi…", android.widget.Toast.LENGTH_SHORT).show();

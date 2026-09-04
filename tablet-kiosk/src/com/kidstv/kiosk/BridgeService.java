@@ -76,6 +76,8 @@ public class BridgeService extends Service {
     static final int NOTIF_ID = 42;
     static final String ACTION_REMOVE_OVERLAY = "com.kidstv.kiosk.REMOVE_OVERLAY";
     static final String ACTION_SLEEP_NOW = "com.kidstv.kiosk.SLEEP_NOW";   // admin menu: start the fade now
+    static final String ACTION_NAP = "com.kidstv.kiosk.NAP";               // admin menu: sleep the tablet now
+    static final String ACTION_ADD_WIFI = "com.kidstv.kiosk.ADD_WIFI";     // admin menu: add a wifi network (extras ssid/pass)
     // Hidden admin gesture: ESC_TAPS taps, each with >= ESC_FINGERS fingers, within
     // ESC_WINDOW_MS -> pop the PIN. 4x four-finger taps is trivial for an adult but
     // very unlikely from a toddler slapping the screen.
@@ -186,6 +188,12 @@ public class BridgeService extends Service {
             // (the AA app pings /camon), so it isn't a 24/7 battery drain. See camWanted().
         }
         if (i != null && ACTION_SLEEP_NOW.equals(i.getAction())) { startSleep(sleepMinutes()); return START_STICKY; }
+        if (i != null && ACTION_NAP.equals(i.getAction())) { nap(); return START_STICKY; }
+        if (i != null && ACTION_ADD_WIFI.equals(i.getAction())) {
+            final String ss = i.getStringExtra("ssid"), pw = i.getStringExtra("pass");
+            new Thread(() -> addWifiNetwork(ss, pw)).start();
+            return START_STICKY;
+        }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
         // an explicit REMOVE_OVERLAY (admin escape / unlock) takes it down.
         if (i != null && ACTION_REMOVE_OVERLAY.equals(i.getAction())) removeOverlay();
@@ -1036,21 +1044,42 @@ public class BridgeService extends Service {
         boolean ok = false;
         try {
             org.json.JSONObject o = new org.json.JSONObject(body == null ? "{}" : body);
-            String ssid = o.optString("ssid", ""), psk = o.optString("psk", "");
-            if (ssid.length() > 0) {
-                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
-                        getApplicationContext().getSystemService(WIFI_SERVICE);
-                android.net.wifi.WifiConfiguration cfg = new android.net.wifi.WifiConfiguration();
-                cfg.SSID = "\"" + ssid + "\"";
-                if (psk.length() > 0) cfg.preSharedKey = "\"" + psk + "\"";
-                else cfg.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
-                int id = wm.addNetwork(cfg);                 // allowed for the device owner
-                if (id >= 0) { wm.enableNetwork(id, true); wm.reconnect(); ok = true; }
-                Log.i(TAG, "addwifi '" + ssid + "' -> netId " + id);
-            }
+            ok = addWifiNetwork(o.optString("ssid", ""), o.optString("psk", ""));
         } catch (Exception e) { Log.w(TAG, "addwifi: " + e); }
         try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":" + ok + "}}"); } catch (Exception e) {}
         try { c.close(); } catch (Exception e) {}
+    }
+
+    /** Device-owner Wi-Fi add+join (adb uid can't). Shared by /addwifi and the admin menu. Empty psk =
+        open network. Keeps other saved networks (so the tablet still joins the car hotspot + home). */
+    boolean addWifiNetwork(String ssid, String psk) {
+        try {
+            if (ssid == null || ssid.length() == 0) return false;
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                    getApplicationContext().getSystemService(WIFI_SERVICE);
+            android.net.wifi.WifiConfiguration cfg = new android.net.wifi.WifiConfiguration();
+            cfg.SSID = "\"" + ssid + "\"";
+            if (psk != null && psk.length() > 0) cfg.preSharedKey = "\"" + psk + "\"";
+            else cfg.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+            int id = wm.addNetwork(cfg);
+            boolean ok = false;
+            if (id >= 0) { wm.enableNetwork(id, true); wm.reconnect(); ok = true; }
+            Log.i(TAG, "addwifi '" + ssid + "' -> netId " + id);
+            return ok;
+        } catch (Exception e) { Log.w(TAG, "addWifiNetwork: " + e); return false; }
+    }
+
+    /** Current Wi-Fi SSID for the admin display, or "" if unknown/not connected. */
+    String currentSsid() {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                    getApplicationContext().getSystemService(WIFI_SERVICE);
+            android.net.wifi.WifiInfo wi = wm.getConnectionInfo();
+            if (wi == null) return "";
+            String s = wi.getSSID();
+            if (s == null || s.contains("unknown") || s.equals("<unknown ssid>")) return "";
+            return s.replaceAll("^\"|\"$", "");
+        } catch (Exception e) { return ""; }
     }
 
     /** POST /sleep {"minutes":20} -> start the volume+brightness ramp then nap. minutes<=0 cancels a
