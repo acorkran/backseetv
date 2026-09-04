@@ -644,6 +644,16 @@ public class KioskActivity extends Activity {
         }
     }
 
+    /** Sleep-timer fade duration (minutes, 1..60) — the kiosk-owned setting the bridge + every remote's
+        zZ resolve to. Shared with the bridge via Settings.Global (key kidodi_sleep_min). */
+    int sleepMin() {
+        try { return Math.max(1, Math.min(60, Settings.Global.getInt(getContentResolver(), "kidodi_sleep_min", 10))); } catch (Exception e) { return 10; }
+    }
+    void setSleepMin(int m) {
+        try { Settings.Global.putInt(getContentResolver(), "kidodi_sleep_min", Math.max(1, Math.min(60, m))); }
+        catch (Exception e) { android.widget.Toast.makeText(this, "Can't save — grant WRITE_SECURE_SETTINGS via adb", android.widget.Toast.LENGTH_LONG).show(); }
+    }
+
     /** Import destination = where phone->tablet imports land. Shared (Settings.Global) with the bridge,
         the remote (via /importdir), and adb. Default: Download. */
     String importDir() {
@@ -732,6 +742,36 @@ public class KioskActivity extends Activity {
             wrow.addView(b, eqp());
         }
         col.addView(wrow);
+
+        // Sleep-timer fade duration — kiosk-owned; the bridge + every remote's zZ resolve to this.
+        final TextView sl = new TextView(this);
+        sl.setTextColor(TXT); sl.setPadding(dp(4), dp(10), 0, dp(4));
+        sl.setText("Sleep-timer fade: " + sleepMin() + " min");
+        col.addView(sl);
+        LinearLayout srow = row();
+        final int[] smins = {5, 10, 15, 20, 30};
+        final Button[] sbtns = new Button[smins.length];
+        for (int i = 0; i < smins.length; i++) {
+            final int val = smins[i];
+            Button b = cardBtn(val + "m", null);
+            b.setTextSize(14);
+            b.setBackgroundColor(val == sleepMin() ? ACCENT : BTN);
+            b.setOnClickListener(v -> {
+                setSleepMin(val);
+                sl.setText("Sleep-timer fade: " + val + " min");
+                for (int j = 0; j < smins.length; j++) sbtns[j].setBackgroundColor(smins[j] == val ? ACCENT : BTN);
+            });
+            sbtns[i] = b;
+            srow.addView(b, eqp());
+        }
+        col.addView(srow);
+        Button sleepNow = cardBtn("🌙  Start sleep fade now", v -> {
+            bridge(BridgeService.ACTION_SLEEP_NOW);
+            android.widget.Toast.makeText(this, "Sleeping over " + sleepMin() + " min…", android.widget.Toast.LENGTH_SHORT).show();
+            reLock();
+        });
+        sleepNow.setTextSize(14);
+        col.addView(sleepNow, wide());
 
         // Import destination — where phone->tablet imports land (shared with the remote + adb)
         final TextView idl = new TextView(this);

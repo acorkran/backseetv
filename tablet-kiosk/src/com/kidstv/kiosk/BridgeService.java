@@ -75,6 +75,7 @@ public class BridgeService extends Service {
     static final String CHAN = "kidstv_kiosk";
     static final int NOTIF_ID = 42;
     static final String ACTION_REMOVE_OVERLAY = "com.kidstv.kiosk.REMOVE_OVERLAY";
+    static final String ACTION_SLEEP_NOW = "com.kidstv.kiosk.SLEEP_NOW";   // admin menu: start the fade now
     // Hidden admin gesture: ESC_TAPS taps, each with >= ESC_FINGERS fingers, within
     // ESC_WINDOW_MS -> pop the PIN. 4x four-finger taps is trivial for an adult but
     // very unlikely from a toddler slapping the screen.
@@ -184,6 +185,7 @@ public class BridgeService extends Service {
             // NB: no camera kick on boot — the camera now starts only when Android Auto is active
             // (the AA app pings /camon), so it isn't a 24/7 battery drain. See camWanted().
         }
+        if (i != null && ACTION_SLEEP_NOW.equals(i.getAction())) { startSleep(sleepMinutes()); return START_STICKY; }
         // Overlay: default (incl. a null-intent START_STICKY restart) ensures it's up;
         // an explicit REMOVE_OVERLAY (admin escape / unlock) takes it down.
         if (i != null && ACTION_REMOVE_OVERLAY.equals(i.getAction())) removeOverlay();
@@ -841,7 +843,7 @@ public class BridgeService extends Service {
                 boolean camera = mLastCamBeat != 0 && SystemClock.elapsedRealtime() - mLastCamBeat < CAM_STALE_MS;
                 writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"napped\":" + mNapped
                         + ",\"sleeping\":" + sleeping + ",\"sleep_remaining\":" + rem
-                        + ",\"camera\":" + camera + "}}");
+                        + ",\"camera\":" + camera + ",\"sleep_minutes\":" + sleepMinutes() + "}}");
                 c.close(); return;
             }
             if (target.startsWith("/uploads")) { handleListUploads(c); return; }   // GET: list uploaded files (check before /upload)
@@ -865,6 +867,7 @@ public class BridgeService extends Service {
             // Build/import featureset endpoints (need the body read, so handled after it):
             if (target.startsWith("/importdir"))   { handleImportDir(method, json, c); return; }
             if (target.startsWith("/saveplaylist")) { handleSavePlaylist(json, c); return; }
+            if (target.startsWith("/setsleep"))     { handleSetSleep(json, c); return; }  // set the stored fade duration
             if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
             if (target.startsWith("/addwifi"))      { handleAddWifi(json, c); return; }
 
@@ -1053,19 +1056,40 @@ public class BridgeService extends Service {
     /** POST /sleep {"minutes":20} -> start the volume+brightness ramp then nap. minutes<=0 cancels a
         running ramp. (The remote starts any chosen sleep playlist itself over 9090 before calling this;
         with none chosen, whatever is already playing keeps going as it fades.) */
+    /** The tablet is the source of truth for the fade DURATION: a remote's /sleep just signals start
+        (any positive minutes) or cancel (<=0); the length is always the kiosk's stored setting. So the
+        AA app's hardcoded 20 (and any other remote value) is irrelevant — set it once here or via
+        /setsleep, and every remote's zZ obeys it. */
     void handleSleep(String body, Socket c) {
         try {
-            double minutes = 20;
-            try { if (body != null && body.length() > 0) minutes = new JSONObject(body).optDouble("minutes", 20); } catch (Exception e) {}
-            // TEMP OVERRIDE: force a 10-min nap fade for now. The AA app still hardcodes 20 (SLEEP_JSON)
-            // and the phone isn't connected to rebuild it, so cap here. Revert to startSleep(minutes)
-            // once the AA/remote defaults are updated to 10.
-            if (minutes > 0) minutes = Math.min(minutes, 10);
-            if (minutes <= 0) cancelSleep(); else startSleep(minutes);
-            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"minutes\":" + minutes + "}}");
+            double minutes = 1;
+            try { if (body != null && body.length() > 0) minutes = new JSONObject(body).optDouble("minutes", 1); } catch (Exception e) {}
+            int used = sleepMinutes();
+            if (minutes <= 0) cancelSleep(); else startSleep(used);
+            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"minutes\":" + (minutes <= 0 ? 0 : used) + "}}");
         } catch (Exception e) {
             try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32004,\"message\":\"sleep failed\"}}"); } catch (Exception e2) {}
         } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** POST /setsleep {"minutes":N} — persist the fade duration (the kiosk-owned setting, 1..60 min). */
+    void handleSetSleep(String body, Socket c) {
+        try {
+            int m = 10;
+            try { if (body != null && body.length() > 0) m = new JSONObject(body).optInt("minutes", 10); } catch (Exception e) {}
+            m = Math.max(1, Math.min(60, m));
+            try { android.provider.Settings.Global.putInt(getContentResolver(), "kidodi_sleep_min", m); } catch (Exception e) {}
+            writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"minutes\":" + m + "}}");
+        } catch (Exception e) {
+            try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32004,\"message\":\"setsleep failed\"}}"); } catch (Exception e2) {}
+        } finally { try { c.close(); } catch (Exception e) {} }
+    }
+
+    /** The kiosk-owned sleep-fade duration in minutes (1..60), default 10. Shared via Settings.Global
+        so the admin menu and the bridge agree; every remote's zZ resolves to this. */
+    int sleepMinutes() {
+        try { return Math.max(1, Math.min(60, android.provider.Settings.Global.getInt(getContentResolver(), "kidodi_sleep_min", 10))); }
+        catch (Exception e) { return 10; }
     }
 
     /** POST /saveplaylist {"name":"...","items":["<tablet file path>",...]} -> build an .m3u and hand it
