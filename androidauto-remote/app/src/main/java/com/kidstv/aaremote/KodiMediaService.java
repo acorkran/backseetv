@@ -249,8 +249,8 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
                     kodi.bridgePost("/sleep", sleeping ? "{\"minutes\":0}" : SLEEP_JSON);
                     main.postDelayed(KodiMediaService.this::pollOnce, 400);   // republish -> swap the label
                 });
-            } else if (ACT_FLASH.equals(action)) {                 // flash the tablet white to light the kid in the dark
-                io.execute(() -> kodi.bridgePost("/flash", "{\"ms\":1500}"));
+            } else if (ACT_FLASH.equals(action)) {                 // flash the tablet white ~3s to light the kid so the
+                io.execute(() -> kodi.bridgePost("/flash", "{\"ms\":3000}"));  // driver has time for a safe mirror/shoulder check
             }
         }
     }
