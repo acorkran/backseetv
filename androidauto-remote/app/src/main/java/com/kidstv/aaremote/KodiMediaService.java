@@ -400,7 +400,7 @@ public class KodiMediaService extends MediaBrowserServiceCompat {
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_SLEEP, sleeping ? "Cancel sleep" : "Go to sleep", R.drawable.ic_sleep).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
-                    ACT_FLASH, "Light up (flash)", R.drawable.ic_flash).build());
+                    ACT_FLASH, "Light up", R.drawable.ic_flash).build());
             ps.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     ACT_POWER, napped ? "Wake tablet" : "Turn off tablet", R.drawable.ic_power).build());
             session.setPlaybackState(ps.build());
