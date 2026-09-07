@@ -677,7 +677,8 @@ public class BridgeService extends Service {
                 if (mOverlay == null) { mLastPlaying = now; mWatchFails = 0; continue; }   // escaped / unlocked / maintenance
                 if (mNapLock != null && mNapLock.isHeld()) { mLastPlaying = now; mWatchFails = 0; continue; }  // napping
                 PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-                if (pm != null && !pm.isInteractive()) { mLastPlaying = now; continue; }   // screen off (can't start video anyway)
+                boolean screenOn = pm == null || pm.isInteractive();   // NB: the stuck-EOF check below runs even
+                                                                       // screen-off; only the no-player restart is gated
                 int off = 0;
                 try { off = android.provider.Settings.Global.getInt(getContentResolver(), "kiosk_off", 0); } catch (Exception e) {}
                 if (off != 0) { mLastPlaying = now; mWatchFails = 0; continue; }            // admin / maintenance hatch active
@@ -705,6 +706,10 @@ public class BridgeService extends Service {
                     mLastPlaying = now; mWatchFails = 0; continue;
                 }
 
+                // No active player. A stuck-at-EOF (above) is caught regardless of screen; but a genuinely
+                // STOPPED player is only recovered with the screen ON — idle-screen-off is left to the addon's
+                // self-heal (avoids restarting Kodi / waking audio in an empty room).
+                if (!screenOn) { mLastPlaying = now; continue; }
                 int wedgeSec = WATCH_WEDGE_DEFAULT;
                 try { wedgeSec = android.provider.Settings.Global.getInt(getContentResolver(), "kiosk_watchdog_sec", WATCH_WEDGE_DEFAULT); } catch (Exception e) {}
                 if (wedgeSec <= 0) { mLastPlaying = now; continue; }   // 0 = watchdog disabled
