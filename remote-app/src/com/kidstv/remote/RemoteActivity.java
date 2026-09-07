@@ -756,6 +756,12 @@ public class RemoteActivity extends Activity {
         srp.setMargins(0, dp(14), 0, 0);
         col.addView(sleepRow, srp);
 
+        // Light up: flash the tablet white ~3s to see the kid in the dark (mirrors the AA "Light up")
+        Button lightBtn = cardBtn("Light up", v -> lightUp());
+        LinearLayout.LayoutParams lbp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        lbp.setMargins(0, dp(10), 0, 0);
+        col.addView(lightBtn, lbp);
+
         upNext = new TextView(this);
         upNext.setText("Up next: —");
         upNext.setTextColor(SUB);
@@ -1105,6 +1111,12 @@ public class RemoteActivity extends Activity {
 
     /** zZ "Go to sleep": optionally start the configured playlist, then tell the tablet to ramp its
         volume + screen brightness down over N minutes and turn off (the ramp runs on the tablet). */
+    /** Flash the tablet screen white ~3s to see the kid in the dark (front cam has no IR). */
+    void lightUp() {
+        Toast.makeText(this, "Lighting up…", Toast.LENGTH_SHORT).show();
+        bg(() -> kodi.bridgePost("/flash", "{\"ms\":3000}"));
+    }
+
     void goToSleep() {
         // On/off toggle: if a fade is already running, this press cancels it (stops all sleep timers).
         if (mSleeping) {
