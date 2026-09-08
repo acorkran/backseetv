@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.kidstv.player"
+    android:versionCode="1" android:versionName="0.1">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>
+
+    <!-- in-process control HTTP server + (folded-in) Wi-Fi Direct anchor -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"/>
+    <!-- read the local library off the SD card (grant via appops MANAGE_EXTERNAL_STORAGE allow) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <!-- keep the control server + playback process alive with the screen off (sleep timer) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+
+    <application android:label="@string/app_name" android:icon="@android:drawable/ic_media_play"
+        android:allowBackup="false" android:hardwareAccelerated="true">
+        <!-- The player IS the home screen (prototype: plain LAUNCHER so it doesn't steal HOME
+             from the shipping kiosk during testing; production makes it the device-owner HOME). -->
+        <activity android:name=".PlayerActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- in-process control (play/pause, next, volume, sleep, flash, /state) on :8090.
+             No JSON-RPC, no 9090; it calls the player engine directly. -->
+        <service android:name=".ControlService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Kidodi in-process player control server"/>
+        </service>
+
+        <!-- folded-in Wi-Fi Direct "tablet is the anchor" group (same as the kiosk spike) -->
+        <service android:name=".P2pAnchorService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Kidodi Wi-Fi Direct anchor"/>
+        </service>
+    </application>
+</manifest>
