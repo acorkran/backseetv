@@ -35,12 +35,19 @@ public class ControlService extends Service {
     private volatile boolean mRun = false;
     private PlayerEngine mEngine;
 
+    // pull-model remote: poll the phone's bulletin (tablet->phone is the firewall-allowed
+    // direction), execute new commands, report our state back in the same request.
+    private volatile String mRemote;       // "host:port" of the phone CmdServer, or null
+    private volatile int mLastSeq = -1;
+    private volatile boolean mPollRun = false;
+
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(51, note());
         mEngine = PlayerEngine.get(this);
         if (!mRun) { mRun = true; new Thread(new Runnable(){ public void run(){ serve(); } }).start(); }
+        if (!mPollRun) { mPollRun = true; new Thread(new Runnable(){ public void run(){ pollLoop(); } }).start(); }
         return START_STICKY;
     }
 
@@ -80,6 +87,11 @@ public class ControlService extends Service {
             String body;
             if (path.equals("/state")) {
                 body = mEngine.stateJson();
+            } else if (path.equals("/remote")) {   // set the phone bulletin to poll: /remote?host=192.168.49.88:8091
+                String h = param(query, "host");
+                mRemote = (h == null || h.length() == 0) ? null : h;
+                mLastSeq = -1;
+                body = "{\"ok\":true,\"remote\":\"" + (mRemote == null ? "" : mRemote) + "\"}";
             } else if (path.equals("/diag"))      { body = mEngine.diagJson();
             } else if (path.equals("/boot"))      { mEngine.startHeadless(); body = ok();
             } else if (path.equals("/seeknear"))  { mEngine.seekNearEnd();   body = ok();
@@ -115,6 +127,53 @@ public class ControlService extends Service {
         } finally {
             try { c.close(); } catch (Exception ignored) {}
         }
+    }
+
+    // --- pull-model poller: our only outbound is tablet->phone (firewall-allowed) ---
+    private void pollLoop() {
+        while (mRun) {
+            try {
+                String r = mRemote;
+                if (r != null) {
+                    String st = java.net.URLEncoder.encode(mEngine.stateJson(), "UTF-8");
+                    String resp = httpGet("http://" + r + "/sync?state=" + st);
+                    if (resp != null) {
+                        org.json.JSONObject o = new org.json.JSONObject(resp);
+                        int seq = o.optInt("seq", -1);
+                        String cmd = o.optString("cmd", "");
+                        if (seq != mLastSeq) { mLastSeq = seq; if (cmd.length() > 0) execute(cmd); }
+                    }
+                }
+            } catch (Exception ignored) {}
+            try { Thread.sleep(300); } catch (InterruptedException e) { break; }
+        }
+    }
+
+    private void execute(String cmd) {
+        Log.i(TAG, "remote cmd: " + cmd);
+        if (cmd.equals("play")) mEngine.play();
+        else if (cmd.equals("pause")) mEngine.pause();
+        else if (cmd.equals("playpause")) mEngine.togglePlay();
+        else if (cmd.equals("next")) mEngine.next();
+        else if (cmd.equals("prev")) mEngine.prev();
+        else if (cmd.equals("volup")) mEngine.nudgeVolume(0.1f);
+        else if (cmd.equals("voldown")) mEngine.nudgeVolume(-0.1f);
+        else if (cmd.equals("mute")) mEngine.setVolume(0f);
+        else if (cmd.equals("sleep10")) mEngine.startSleep(10);
+        else if (cmd.equals("wake")) mEngine.cancelSleep();
+        else if (cmd.equals("flash")) PlayerActivity.flash(3000);
+    }
+
+    private String httpGet(String url) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(2500); c.setReadTimeout(2500);
+            java.io.InputStream in = c.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[1024]; int n; while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            return bo.toString("UTF-8");
+        } catch (Exception e) { return null; } finally { if (c != null) c.disconnect(); }
     }
 
     private static String ok() { return "{\"ok\":true}"; }
