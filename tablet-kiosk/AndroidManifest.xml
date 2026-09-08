@@ -26,6 +26,10 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <!-- device-owner Wi-Fi config (addNetwork) so the appliance can be taught the home network -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <!-- v2 prototype: create a Wi-Fi Direct group (tablet-as-anchor). API 33 gates P2P group
+         create/advertise behind NEARBY_WIFI_DEVICES; neverForLocation = we don't derive location. -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"/>
     <!-- auto-join a paired phone's Bluetooth tether (PANU->NAP) so the driver never has to
          flip "Internet access" by hand -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
@@ -74,6 +78,13 @@
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local JSON-RPC bridge and kid-proof kiosk touch overlay"/>
+        </service>
+        <!-- v2 prototype: Wi-Fi Direct "tablet is the anchor" group owner + _kidodi._tcp advert.
+             Started on demand via the bridge /p2p endpoint; not part of the shipping boot path. -->
+        <service android:name=".P2pAnchorService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="v2 Wi-Fi Direct anchor prototype"/>
         </service>
     </application>
 </manifest>

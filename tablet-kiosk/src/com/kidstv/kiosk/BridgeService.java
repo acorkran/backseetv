@@ -945,6 +945,14 @@ public class BridgeService extends Service {
             if (target.startsWith("/setsleep"))     { handleSetSleep(json, c); return; }  // set the stored fade duration
             if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
             if (target.startsWith("/addwifi"))      { handleAddWifi(json, c); return; }
+            if (target.startsWith("/p2p")) {   // v2 prototype: toggle the Wi-Fi Direct tablet-as-anchor group
+                boolean on = true;
+                try { if (json != null && json.length() > 0) on = new JSONObject(json).optBoolean("on", true); } catch (Exception e) {}
+                Intent pi = new Intent(this, P2pAnchorService.class);
+                pi.setAction(on ? P2pAnchorService.ACTION_START : P2pAnchorService.ACTION_STOP);
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(pi); else startService(pi);
+                writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true,\"p2p\":" + on + "}}"); c.close(); return;
+            }
 
             String reply;
             if (json == null || json.trim().length() == 0) {
