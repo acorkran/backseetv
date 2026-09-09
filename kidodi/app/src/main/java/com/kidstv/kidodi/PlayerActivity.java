@@ -76,19 +76,12 @@ public class PlayerActivity extends Activity {
         player = new ExoPlayer.Builder(this).build();
         player.setVideoSurfaceView(surface);
         player.setVolume(0f);   // MUTED by default
-
-        List<MediaItem> items = Library.scan(this);
-        player.setMediaItems(items);
-        player.setShuffleModeEnabled(true);
-        player.setRepeatMode(Player.REPEAT_MODE_ALL);
         player.addListener(new Player.Listener() {
             @Override public void onPlaybackStateChanged(int s) { if (s == Player.STATE_READY) Log.i(TAG, "STATE_READY (playing muted)"); }
         });
-        player.prepare();
-        player.play();
-        Log.i(TAG, "player started: items=" + items.size() + " muted=true shuffle=true repeatAll=true");
 
         PlayerController.get().attach(player);
+        PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
         server = new ControlServer(this, PlayerController.get());
         server.start();
         ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)

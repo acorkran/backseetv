@@ -78,6 +78,8 @@ public class ControlServer {
                 }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
+                case "/playlists": body = ctrl.playlistsJson(); break;
+                case "/playlist": { String n = param(q, "name"); if (n != null) ctrl.selectPlaylist(urlDecode(n)); body = ok(); break; }
                 default: body = "{\"ok\":false,\"error\":\"unknown path\"}";
             }
             write(c, body);
@@ -91,6 +93,7 @@ public class ControlServer {
         return null;
     }
     private static float pf(String s, float dflt) { if (s == null) return dflt; try { return Float.parseFloat(s.trim()); } catch (Exception e) { return dflt; } }
+    private static String urlDecode(String s) { try { return java.net.URLDecoder.decode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
     private void write(Socket c, String body) throws Exception {
         byte[] data = body.getBytes("UTF-8");

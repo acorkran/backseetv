@@ -34,7 +34,20 @@ public class RemoteService extends Service {
     private BleClient ble;
     private WifiClient wifi;
     private volatile String lastState = "{}", lastStatus = "starting…", transport = "—";
+    private volatile java.util.List<String> playlistNames = new java.util.ArrayList<>();
     private Listener ui;
+
+    private static boolean isPlaylists(String json) { return json != null && json.contains("\"type\":\"playlists\""); }
+    private void cachePlaylists(String json) {
+        try {
+            org.json.JSONArray a = new org.json.JSONObject(json).optJSONArray("names");
+            java.util.List<String> out = new java.util.ArrayList<>();
+            if (a != null) for (int i = 0; i < a.length(); i++) out.add(a.optString(i));
+            playlistNames = out;
+        } catch (Exception ignored) {}
+    }
+    public java.util.List<String> playlistNames() { return playlistNames; }
+    public void requestPlaylists() { send("list"); }
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -44,7 +57,10 @@ public class RemoteService extends Service {
         startForeground(72, note());
         ble = new BleClient(this, new BleClient.Listener() {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
-            public void onState(String json) { lastState = json; transport = "BLE"; if (ui != null) ui.onState(json); }
+            public void onState(String json) {
+                if (isPlaylists(json)) { cachePlaylists(json); return; }
+                lastState = json; transport = "BLE"; if (ui != null) ui.onState(json);
+            }
         });
         ble.start();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
@@ -57,7 +73,10 @@ public class RemoteService extends Service {
         if (wifi != null) return;
         wifi = new WifiClient(this, new WifiClient.Listener() {
             public void onStatus(String s) { if (!bleUp()) { lastStatus = s; if (ui != null) ui.onStatus(s); } }
-            public void onState(String json) { if (!bleUp()) { lastState = json; transport = "Wi-Fi"; if (ui != null) ui.onState(json); } }
+            public void onState(String json) {
+                if (isPlaylists(json)) { cachePlaylists(json); return; }
+                if (!bleUp()) { lastState = json; transport = "Wi-Fi"; if (ui != null) ui.onState(json); }
+            }
         });
         wifi.start();
     }

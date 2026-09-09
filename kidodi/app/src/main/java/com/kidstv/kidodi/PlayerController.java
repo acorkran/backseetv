@@ -8,6 +8,8 @@ package com.kidstv.kidodi;
 //  the main thread. Volume starts at 0 (muted) to match the player default.
 // ============================================================================
 
+import android.content.Context;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -15,7 +17,14 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 public class PlayerController {
     private static PlayerController I;
@@ -30,8 +39,57 @@ public class PlayerController {
     private volatile float vol = 0f;   // muted default
     private volatile String title = "";
     private volatile boolean napped = false;   // "powered off" = paused + TV blacked
+    private final LinkedHashMap<String, List<MediaItem>> playlists = new LinkedHashMap<>();
+    private volatile String currentPl = "Shuffle All";
 
     public void setNapped(boolean n) { napped = n; }
+
+    /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
+    public void loadLibrary(final Context ctx) {
+        new Thread(() -> {
+            LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
+            final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
+            final List<MediaItem> all = new ArrayList<>();
+            for (Map.Entry<String, List<File>> e : shows.entrySet()) {
+                List<MediaItem> items = new ArrayList<>();
+                for (File f : e.getValue()) { MediaItem mi = MediaItem.fromUri(Uri.fromFile(f)); items.add(mi); all.add(mi); }
+                built.put(e.getKey(), items);
+            }
+            on(() -> {
+                playlists.clear();
+                playlists.put("Shuffle All", all);
+                playlists.putAll(built);
+                selectPlaylist("Shuffle All");
+            });
+        }).start();
+    }
+
+    /** Switch to a playlist by name: Shuffle All -> shuffled; a show -> in episode order. */
+    public void selectPlaylist(final String name) {
+        on(() -> {
+            List<MediaItem> items = playlists.get(name);
+            if (items == null || items.isEmpty() || p == null) return;
+            currentPl = name;
+            boolean shuffle = "Shuffle All".equals(name);
+            p.setShuffleModeEnabled(shuffle);
+            p.setRepeatMode(Player.REPEAT_MODE_ALL);
+            p.setMediaItems(items);
+            p.prepare();
+            p.play();
+        });
+    }
+
+    /** Playlist names as a one-shot payload (BLE "list" / HTTP /playlists). */
+    public String playlistsJson() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("type", "playlists");
+            JSONArray a = new JSONArray();
+            for (String n : playlists.keySet()) a.put(n);
+            o.put("names", a);
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
 
     // sleep timer
     private volatile boolean sleeping;
@@ -105,6 +163,7 @@ public class PlayerController {
         JSONObject o = new JSONObject();
         try {
             o.put("engine", "ExoPlayer");
+            o.put("playlist", currentPl);
             o.put("count", count);
             o.put("index", idx);
             o.put("title", title);

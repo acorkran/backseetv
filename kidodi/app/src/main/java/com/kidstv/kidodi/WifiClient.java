@@ -79,12 +79,17 @@ public class WifiClient {
 
     public void send(String cmd) {
         if (host == null) return;
+        if (cmd.equals("list")) {   // deliver playlist names back via onState (uniform with BLE)
+            new Thread(() -> { String r = http("/playlists"); if (r != null) main.post(() -> l.onState(r)); }).start();
+            return;
+        }
         final String path = toHttp(cmd);
         new Thread(() -> http(path)).start();
     }
 
     private static String toHttp(String cmd) {
         if (cmd.startsWith("sleep:")) return "/sleep?min=" + cmd.substring(6);
+        if (cmd.startsWith("play:")) return "/playlist?name=" + enc(cmd.substring(5));
         switch (cmd) {
             case "volup": return "/vol?d=0.1";
             case "voldown": return "/vol?d=-0.1";
@@ -93,6 +98,7 @@ public class WifiClient {
             default: return "/" + cmd;   // play, pause, playpause, next, prev, flash, power
         }
     }
+    private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
     private String http(String path) {
         java.net.HttpURLConnection c = null;

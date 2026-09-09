@@ -122,6 +122,9 @@ public class BleServer {
             try { ctrl.startSleep(Integer.parseInt(cmd.substring(6).trim())); } catch (Exception ignored) {}
             return;
         }
+        if (cmd.startsWith("play:")) { ctrl.selectPlaylist(cmd.substring(5)); return; }   // switch playlist
+        if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
+
         switch (cmd) {
             case "play": ctrl.play(); break;
             case "pause": ctrl.pause(); break;
@@ -141,6 +144,12 @@ public class BleServer {
     private void pushState() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
         stateChar.setValue(ctrl.stateJson().getBytes());
+        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+    }
+
+    private void pushPlaylists() {
+        if (gatt == null || stateChar == null || subs.isEmpty()) return;
+        stateChar.setValue(ctrl.playlistsJson().getBytes());
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 

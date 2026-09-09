@@ -20,11 +20,16 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import org.json.JSONObject;
+
+import java.util.List;
 
 public class RemoteActivity extends Activity {
     // v1 palette
@@ -33,9 +38,12 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private View dot;
-    private TextView linkLabel, title, subtitle, timeText, sleepText;
+    private TextView linkLabel, title, subtitle, timeText, sleepText, plChip;
     private ProgressBar progress;
     private IconView playPause;
+    private FrameLayout frame;
+    private View picker;
+    private String currentPl = "Shuffle All";
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -96,7 +104,14 @@ public class RemoteActivity extends Activity {
         card.addView(timeText);
         root.addView(card);
 
-        root.addView(spacer(dp(16)));
+        // playlist chip -> opens the picker
+        plChip = new TextView(this);
+        plChip.setText("Playlist:  Shuffle All  ▾"); plChip.setTextColor(SUB); plChip.setTextSize(13);
+        plChip.setPadding(dp(6), dp(10), dp(6), dp(2)); plChip.setClickable(true);
+        plChip.setOnClickListener(v -> openPicker());
+        root.addView(plChip);
+
+        root.addView(spacer(dp(12)));
 
         // --- transport: prev | play/pause | next ---
         LinearLayout tr = new LinearLayout(this);
@@ -134,7 +149,9 @@ public class RemoteActivity extends Activity {
         sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(12), 0, 0);
         root.addView(sleepText);
 
-        setContentView(root);
+        frame = new FrameLayout(this);
+        frame.addView(root);
+        setContentView(frame);
 
         RemoteService.ensure(this);
         attach();
@@ -174,8 +191,55 @@ public class RemoteActivity extends Activity {
             } else if (o.optBoolean("napped", false)) {
                 sleepText.setText("TV is off");
             } else sleepText.setText("");
+            currentPl = o.optString("playlist", "Shuffle All");
+            plChip.setText("Playlist:  " + currentPl + "  ▾");
         } catch (Exception ignored) {}
     }
+
+    // --- playlist picker overlay --------------------------------------------
+    private void openPicker() {
+        if (picker != null) return;
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.requestPlaylists();   // ask the player for the list
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(16), dp(20), dp(16), dp(16));
+        TextView h = new TextView(this);
+        h.setText("Choose a playlist"); h.setTextColor(TXT); h.setTextSize(22);
+        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
+        col.addView(h);
+        sv.addView(col);
+        picker = sv;
+        frame.addView(picker);
+        populatePicker(col, 0);
+    }
+    private void populatePicker(final LinearLayout col, final int attempt) {
+        RemoteService svc = RemoteService.get();
+        List<String> names = svc != null ? svc.playlistNames() : null;
+        // keep the header (index 0), rebuild the rows
+        while (col.getChildCount() > 1) col.removeViewAt(1);
+        if (names != null && !names.isEmpty()) {
+            for (final String name : names) {
+                Button row = new Button(this);
+                row.setAllCaps(false); row.setText(name);
+                row.setTextColor(name.equals(currentPl) ? 0xFF8FD694 : TXT); row.setTextSize(16); row.setGravity(Gravity.CENTER_VERTICAL);
+                GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(14));
+                row.setBackground(g);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+                lp.setMargins(0, dp(4), 0, dp(4)); row.setLayoutParams(lp);
+                row.setOnClickListener(v -> { send("play:" + name); closePicker(); });
+                col.addView(row);
+            }
+        } else if (attempt < 8) {
+            TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0);
+            col.addView(t);
+            main.postDelayed(() -> { if (picker != null) populatePicker(col, attempt + 1); }, 400);   // list arrives async
+        }
+    }
+    private void closePicker() { if (picker != null) { frame.removeView(picker); picker = null; } }
+    @Override public void onBackPressed() { if (picker != null) closePicker(); else super.onBackPressed(); }
 
     private static String mmss(int ms) { int s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
 

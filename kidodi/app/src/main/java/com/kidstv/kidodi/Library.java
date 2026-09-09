@@ -34,6 +34,29 @@ public final class Library {
         return out;
     }
 
+    /** Group the library by SHOW (the top-level folder under KidsTV) -> each show is a natural
+     *  playlist. Files within a show are sorted (episode order). Ordered map, shows A→Z. */
+    public static java.util.LinkedHashMap<String, List<File>> scanShows(Context ctx) {
+        java.util.TreeMap<String, List<File>> sorted = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (File root : roots(ctx)) {
+            if (!root.isDirectory()) continue;
+            File[] dirs = root.listFiles();
+            if (dirs == null) continue;
+            for (File show : dirs) {
+                if (!show.isDirectory()) continue;
+                List<File> files = new ArrayList<>();
+                collect(show, files);
+                if (files.isEmpty()) continue;
+                Collections.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                List<File> cur = sorted.get(show.getName());
+                if (cur == null) sorted.put(show.getName(), files); else cur.addAll(files);
+            }
+        }
+        int n = 0; for (List<File> v : sorted.values()) n += v.size();
+        Log.i(TAG, "library: " + sorted.size() + " shows, " + n + " files");
+        return new java.util.LinkedHashMap<>(sorted);
+    }
+
     /** Candidate "KidsTV" roots across primary + removable volumes (portable, no hardcoded UUID). */
     private static List<File> roots(Context ctx) {
         LinkedHashSet<File> roots = new LinkedHashSet<>();
