@@ -88,8 +88,21 @@ public class RemoteService extends Service {
         else if (wifi != null) wifi.send(cmd);
     }
     public String state() { return lastState; }
-    /** For Wi-Fi file import: ensure mDNS discovery is running and return the player's host:port (or null). */
-    public String playerHttpHost() { startWifi(); return wifi != null ? wifi.hostPort() : null; }
+    /** For Wi-Fi file import: a ONE-SHOT mDNS discovery of the player's host:port that does NOT
+     *  leave a polling transport running (that redundant poller alongside BLE caused lag). Blocking,
+     *  off-main; up to ~5s. Returns null if not found (not on the same network). */
+    public String playerHttpHost() {
+        WifiClient tmp = new WifiClient(this, new WifiClient.Listener() { public void onStatus(String s) {} public void onState(String s) {} });
+        tmp.start();
+        try {
+            for (int i = 0; i < 50; i++) {
+                String h = tmp.hostPort();
+                if (h != null) return h;
+                try { Thread.sleep(100); } catch (InterruptedException e) { break; }
+            }
+            return tmp.hostPort();
+        } finally { tmp.stop(); }   // don't leave it polling
+    }
     public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? "Wi-Fi" : transport); }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
