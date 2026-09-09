@@ -29,6 +29,9 @@ public class PlayerController {
     private volatile boolean playing;
     private volatile float vol = 0f;   // muted default
     private volatile String title = "";
+    private volatile boolean napped = false;   // "powered off" = paused + TV blacked
+
+    public void setNapped(boolean n) { napped = n; }
 
     // sleep timer
     private volatile boolean sleeping;
@@ -106,6 +109,7 @@ public class PlayerController {
             o.put("index", idx);
             o.put("title", title);
             o.put("playing", playing);
+            o.put("napped", napped);
             o.put("position_ms", posMs);
             o.put("duration_ms", durMs);
             o.put("volume", Math.round(vol * 100) / 100.0);

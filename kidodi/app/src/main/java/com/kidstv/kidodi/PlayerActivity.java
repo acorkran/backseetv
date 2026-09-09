@@ -109,6 +109,7 @@ public class PlayerActivity extends Activity {
     }
     private void doPower() {
         napped = !napped;
+        PlayerController.get().setNapped(napped);
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         if (napped) {
             PlayerController.get().pause();
