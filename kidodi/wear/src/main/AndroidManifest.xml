@@ -33,5 +33,17 @@
         <service android:name=".BleService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
+
+        <!-- glanceable Tile -->
+        <service android:name=".KidodiTileService"
+            android:label="Kidodi"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER"/>
+            </intent-filter>
+            <meta-data android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@android:drawable/ic_media_play"/>
+        </service>
     </application>
 </manifest>

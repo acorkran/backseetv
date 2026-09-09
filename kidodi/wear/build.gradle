@@ -22,7 +22,10 @@ android {
     lint { abortOnError false }
 }
 
-// Standalone Wear remote: talks BLE directly to the tablet-player (reuses the
-// proven BleClient). No wear/tiles/protolayout deps needed for the button UI, so
-// this builds fully offline. (A glanceable Tile is the follow-up polish.)
-dependencies { }
+dependencies {
+    // Glanceable Tile (needs a one-time ONLINE fetch; offline after).
+    implementation 'androidx.wear.tiles:tiles:1.4.1'
+    implementation 'androidx.wear.protolayout:protolayout:1.2.1'
+    implementation 'androidx.wear.protolayout:protolayout-material:1.2.1'
+    implementation 'com.google.guava:guava:33.2.1-android'
+}
