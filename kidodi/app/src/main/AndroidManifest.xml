@@ -29,9 +29,10 @@
         android:allowBackup="false"
         android:hardwareAccelerated="true">
 
-        <!-- Android Auto: declare this as a media app -->
+        <!-- Android Auto: a template (car) app, not a media app -->
         <meta-data android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc"/>
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="1"/>
 
         <!-- Launcher: one APK, two roles. Routes to player or remote (first-run chooser). -->
         <activity
@@ -74,11 +75,12 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
 
-        <!-- Android Auto media surface -->
-        <service android:name=".CarMediaService"
+        <!-- Android Auto car app (IOT category -> app launcher, not media slot) -->
+        <service android:name=".KidodiCarAppService"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService"/>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="androidx.car.app.category.IOT"/>
             </intent-filter>
         </service>
     </application>

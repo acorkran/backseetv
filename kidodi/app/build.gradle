@@ -38,6 +38,6 @@ dependencies {
     // occur. media3-common (MediaItem/Player) comes transitively; we render into a plain
     // SurfaceView so no media3-ui/theme dependency is needed.
     implementation 'androidx.media3:media3-exoplayer:1.4.1'
-    // Android Auto media surface (MediaBrowserServiceCompat + MediaSessionCompat)
-    implementation 'androidx.media:media:1.7.0'
+    // Android Auto as a CAR APP (launcher/IOT category) -> doesn't compete for the media slot
+    implementation 'androidx.car.app:app:1.4.0'
 }
