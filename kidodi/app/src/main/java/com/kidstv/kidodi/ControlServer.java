@@ -57,6 +57,8 @@ public class ControlServer {
             String path = target, q = "";
             int i = target.indexOf('?'); if (i >= 0) { path = target.substring(0, i); q = target.substring(i + 1); }
 
+            if (path.equals("/upload")) { handleUpload(param(q, "name"), h.toString(), in, c); return; }   // wifi file import
+
             String body;
             switch (path) {
                 case "/state":     body = ctrl.stateJson(); break;
@@ -85,6 +87,27 @@ public class ControlServer {
             write(c, body);
         } catch (Exception e) { Log.e(TAG, "handle err", e); }
         finally { try { c.close(); } catch (Exception ignored) {} }
+    }
+
+    // Phone -> tablet file import (Wi-Fi): POST /upload?name=<file> with the raw bytes as the body.
+    private void handleUpload(String name, String headers, InputStream in, Socket c) {
+        try {
+            if (name == null || name.isEmpty()) name = "upload_" + System.currentTimeMillis() + ".mp4";
+            name = urlDecode(name).replaceAll("[\\\\/]", "_");
+            int len = 0;
+            for (String line : headers.split("\r\n"))
+                if (line.toLowerCase().startsWith("content-length:")) { try { len = Integer.parseInt(line.substring(15).trim()); } catch (Exception ignored) {} }
+            java.io.File dir = Library.importDir(ctx);
+            if (dir == null) { write(c, "{\"ok\":false,\"error\":\"no library dir\"}"); return; }
+            java.io.File out = new java.io.File(dir, name);
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+            byte[] buf = new byte[8192]; int remaining = len, n;
+            while (remaining > 0 && (n = in.read(buf, 0, Math.min(buf.length, remaining))) != -1) { fos.write(buf, 0, n); remaining -= n; }
+            fos.close();
+            Log.i(TAG, "imported " + out.getName() + " (" + (len - remaining) + " bytes)");
+            PlayerController.get().rescan(ctx);   // new file shows up in the Imports playlist
+            write(c, "{\"ok\":true,\"saved\":\"" + out.getName() + "\",\"bytes\":" + (len - remaining) + "}");
+        } catch (Exception e) { Log.e(TAG, "upload err", e); try { write(c, "{\"ok\":false}"); } catch (Exception ignored) {} }
     }
 
     private static String ok() { return "{\"ok\":true}"; }

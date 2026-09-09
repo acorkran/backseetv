@@ -57,6 +57,13 @@ public final class Library {
         return new java.util.LinkedHashMap<>(sorted);
     }
 
+    /** Where phone->tablet uploads land: <KidsTV>/Imports (created). Becomes an "Imports" playlist. */
+    public static File importDir(Context ctx) {
+        for (File root : roots(ctx)) if (root.isDirectory()) { File imp = new File(root, "Imports"); imp.mkdirs(); if (imp.isDirectory()) return imp; }
+        for (File root : roots(ctx)) { File imp = new File(root, "Imports"); if (imp.mkdirs() || imp.isDirectory()) return imp; }
+        return null;
+    }
+
     /** Candidate "KidsTV" roots across primary + removable volumes (portable, no hardcoded UUID). */
     private static List<File> roots(Context ctx) {
         LinkedHashSet<File> roots = new LinkedHashSet<>();

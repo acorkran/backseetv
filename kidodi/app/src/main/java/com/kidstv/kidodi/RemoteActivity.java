@@ -9,6 +9,11 @@ package com.kidstv.kidodi;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
+import android.widget.Toast;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -149,6 +154,13 @@ public class RemoteActivity extends Activity {
         sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(12), 0, 0);
         root.addView(sleepText);
 
+        TextView importBtn = new TextView(this);
+        importBtn.setText("＋  Import a video from this phone");
+        importBtn.setTextColor(ACCENT); importBtn.setTextSize(13); importBtn.setGravity(Gravity.CENTER);
+        importBtn.setPadding(0, dp(16), 0, 0); importBtn.setClickable(true);
+        importBtn.setOnClickListener(v -> pickImport());
+        root.addView(importBtn);
+
         frame = new FrameLayout(this);
         frame.addView(root);
         setContentView(frame);
@@ -242,6 +254,62 @@ public class RemoteActivity extends Activity {
     @Override public void onBackPressed() { if (picker != null) closePicker(); else super.onBackPressed(); }
 
     private static String mmss(int ms) { int s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
+
+    // --- Wi-Fi file import (phone -> tablet) --------------------------------
+    private void pickImport() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("video/*");
+            startActivityForResult(i, 42);
+        } catch (Exception e) { Toast.makeText(this, "No file picker", Toast.LENGTH_SHORT).show(); }
+    }
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == 42 && res == RESULT_OK && data != null && data.getData() != null) {
+            final Uri uri = data.getData();
+            RemoteService svc = RemoteService.get();
+            final String host = svc != null ? svc.playerHttpHost() : null;
+            if (host == null) { Toast.makeText(this, "Join the same Wi-Fi as the TV to import", Toast.LENGTH_LONG).show(); return; }
+            Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show();
+            new Thread(() -> uploadFile(uri, host)).start();
+        }
+    }
+    private void uploadFile(Uri uri, String host) {
+        java.net.HttpURLConnection c = null;
+        try {
+            String name = queryName(uri); long size = querySize(uri);
+            byte[] data = null;
+            if (size <= 0) {   // buffer to learn the length (server needs Content-Length)
+                java.io.InputStream in = getContentResolver().openInputStream(uri);
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                byte[] b = new byte[8192]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n); in.close();
+                data = bo.toByteArray(); size = data.length;
+            }
+            java.net.URL url = new java.net.URL("http://" + host + "/upload?name=" + java.net.URLEncoder.encode(name, "UTF-8"));
+            c = (java.net.HttpURLConnection) url.openConnection();
+            c.setDoOutput(true); c.setRequestMethod("POST"); c.setConnectTimeout(5000);
+            c.setFixedLengthStreamingMode(size);
+            java.io.OutputStream out = c.getOutputStream();
+            if (data != null) out.write(data);
+            else { java.io.InputStream in = getContentResolver().openInputStream(uri); byte[] b = new byte[8192]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); in.close(); }
+            out.flush();
+            final int code = c.getResponseCode(); final String nm = name;
+            main.post(() -> Toast.makeText(this, code == 200 ? "Imported " + nm : "Import failed (" + code + ")", Toast.LENGTH_LONG).show());
+        } catch (Exception e) { main.post(() -> Toast.makeText(this, "Import failed", Toast.LENGTH_LONG).show()); }
+        finally { if (c != null) c.disconnect(); }
+    }
+    private String queryName(Uri uri) {
+        try (Cursor cu = getContentResolver().query(uri, null, null, null, null)) {
+            if (cu != null && cu.moveToFirst()) { int i = cu.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) return cu.getString(i); }
+        } catch (Exception ignored) {}
+        return "import_" + System.currentTimeMillis() + ".mp4";
+    }
+    private long querySize(Uri uri) {
+        try (Cursor cu = getContentResolver().query(uri, null, null, null, null)) {
+            if (cu != null && cu.moveToFirst()) { int i = cu.getColumnIndex(OpenableColumns.SIZE); if (i >= 0 && !cu.isNull(i)) return cu.getLong(i); }
+        } catch (Exception ignored) {}
+        return -1;
+    }
 
     @Override protected void onResume() { super.onResume(); attach(); }
     @Override protected void onPause() { RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null); super.onPause(); }

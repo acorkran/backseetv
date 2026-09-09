@@ -88,6 +88,8 @@ public class RemoteService extends Service {
         else if (wifi != null) wifi.send(cmd);
     }
     public String state() { return lastState; }
+    /** For Wi-Fi file import: ensure mDNS discovery is running and return the player's host:port (or null). */
+    public String playerHttpHost() { startWifi(); return wifi != null ? wifi.hostPort() : null; }
     public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? "Wi-Fi" : transport); }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 

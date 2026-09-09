@@ -45,7 +45,10 @@ public class PlayerController {
     public void setNapped(boolean n) { napped = n; }
 
     /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
-    public void loadLibrary(final Context ctx) {
+    public void loadLibrary(Context ctx) { loadLibrary(ctx, true); }
+    /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
+    public void rescan(Context ctx) { loadLibrary(ctx, false); }
+    private void loadLibrary(final Context ctx, final boolean autoStart) {
         new Thread(() -> {
             LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
             final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
@@ -59,7 +62,7 @@ public class PlayerController {
                 playlists.clear();
                 playlists.put("Shuffle All", all);
                 playlists.putAll(built);
-                selectPlaylist("Shuffle All");
+                if (autoStart) selectPlaylist("Shuffle All");
             });
         }).start();
     }

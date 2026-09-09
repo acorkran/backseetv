@@ -31,6 +31,7 @@ public class WifiClient {
 
     public WifiClient(Context c, Listener l) { this.ctx = c.getApplicationContext(); this.l = l; }
     public boolean isConnected() { return connected; }
+    public String hostPort() { return host != null ? host + ":" + port : null; }
 
     public void start() {
         stopped = false;
