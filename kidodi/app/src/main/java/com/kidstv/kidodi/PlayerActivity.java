@@ -9,11 +9,17 @@ package com.kidstv.kidodi;
 // ============================================================================
 
 import android.app.Activity;
+import android.app.admin.DevicePolicyManager;
+import android.content.ComponentName;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
@@ -57,6 +63,14 @@ public class PlayerActivity extends Activity {
         flash.setBackgroundColor(Color.WHITE);
         flash.setVisibility(View.GONE);
         root.addView(flash, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // admin escape: 4 taps in the top-left corner within 2s -> leave kiosk
+        View escape = new View(this);
+        escape.setOnClickListener(v -> onEscapeTap());
+        FrameLayout.LayoutParams elp = new FrameLayout.LayoutParams(dp(72), dp(72));
+        elp.gravity = Gravity.TOP | Gravity.START;
+        root.addView(escape, elp);
+
         setContentView(root);
 
         player = new ExoPlayer.Builder(this).build();
@@ -123,6 +137,53 @@ public class PlayerActivity extends Activity {
             lp.screenBrightness = prev; getWindow().setAttributes(lp);
         }, Math.max(200, Math.min(4000, ms)));
     }
+
+    @Override protected void onResume() { super.onResume(); enterKiosk(); }
+
+    // --- kid-proof shell: screen-pinning (normal) / inescapable lock (device owner) ---
+    private long escFirst = 0; private int escCount = 0;
+    private void onEscapeTap() {
+        long now = System.currentTimeMillis();
+        if (now - escFirst > 2000) { escFirst = now; escCount = 1; }
+        else if (++escCount >= 4) { escCount = 0; exitKiosk(); }
+    }
+    private void enterKiosk() {
+        int on = 0;
+        try { on = Settings.Global.getInt(getContentResolver(), "kidodi_kiosk", 0); } catch (Exception e) {}
+        if (on != 1) return;   // gated so dev builds aren't trapped; `settings put global kidodi_kiosk 1` to lock
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
+                ComponentName admin = new ComponentName(this, AdminReceiver.class);
+                try { dpm.setLockTaskPackages(admin, new String[]{getPackageName()}); } catch (Exception e) {}
+                try { dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE); } catch (Exception e) {}
+                try { dpm.setStatusBarDisabled(admin, true); } catch (Exception e) {}
+            }
+            startLockTask();
+        } catch (Exception e) {}
+    }
+    private void exitKiosk() {
+        try { stopLockTask(); } catch (Exception e) {}
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName()))
+                dpm.setStatusBarDisabled(new ComponentName(this, AdminReceiver.class), false);
+        } catch (Exception e) {}
+        try { startActivity(new Intent(this, RouterActivity.class)); } catch (Exception e) {}
+        finish();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent e) {
+        int k = e.getKeyCode();
+        if (k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN)
+                PlayerController.get().nudge(k == KeyEvent.KEYCODE_VOLUME_UP ? 0.1f : -0.1f);
+            return true;   // consume -> no system volume slider (kid-proof)
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
         if (ble != null) { ble.stop(); ble = null; }
