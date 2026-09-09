@@ -31,8 +31,6 @@ import org.json.JSONObject;
 
 public class WearRemoteActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
-    private BleClient ble;
-
     private FrameLayout content;    // holds player or settings
     private View playerView, settingsView;
     private TextView status, title, subtitle;
@@ -61,12 +59,20 @@ public class WearRemoteActivity extends Activity {
         root.addView(buildVolOverlay());
         setContentView(root);
 
-        ble = new BleClient(this, new BleClient.Listener() {
-            public void onStatus(String s) { status.setText(s.startsWith("ready") ? "" : s); }
-            public void onState(String json) { render(json); }
-        });
-        ble.start();
+        BleService.ensure(this);   // BLE lives in a foreground service; survives screen-off / backgrounding
+        attach();
     }
+
+    private final BleService.Listener svcListener = new BleService.Listener() {
+        public void onStatus(String s) { status.setText(s.startsWith("ready") ? "" : s); }
+        public void onState(String json) { render(json); }
+    };
+    private void attach() {
+        BleService svc = BleService.get();
+        if (svc != null) svc.setListener(svcListener);
+        else main.postDelayed(this::attach, 300);   // service still starting up
+    }
+    private void send(String cmd) { BleService svc = BleService.get(); if (svc != null) svc.send(cmd); }
 
     private void show(View v) { content.removeAllViews(); content.addView(v); }
 
@@ -185,7 +191,7 @@ public class WearRemoteActivity extends Activity {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
             lp.setMargins(0, pad(4), 0, pad(4)); row.setLayoutParams(lp);
             row.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
-                ble.send(m == 0 ? "wake" : "sleep:" + m); show(playerView);
+                send(m == 0 ? "wake" : "sleep:" + m); show(playerView);
             }});
             col.addView(row);
         }
@@ -194,7 +200,7 @@ public class WearRemoteActivity extends Activity {
 
     private void onCmd(String cmd) {
         if ("settings".equals(cmd)) { show(settingsView); return; }
-        if (ble != null) ble.send(cmd);
+        send(cmd);
     }
 
     private void render(String json) {
@@ -217,9 +223,9 @@ public class WearRemoteActivity extends Activity {
         if (ev.getAction() == MotionEvent.ACTION_SCROLL
                 && (ev.getSource() & InputDevice.SOURCE_ROTARY_ENCODER) != 0) {
             float d = ev.getAxisValue(MotionEvent.AXIS_SCROLL);
-            if (ble != null && d != 0) {
+            if (d != 0) {
                 boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder
-                ble.send(up ? "volup" : "voldown");
+                send(up ? "volup" : "voldown");
                 volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
                 showVol();
             }
@@ -262,7 +268,10 @@ public class WearRemoteActivity extends Activity {
     }
 
     @Override public void onBackPressed() { show(playerView); }
-    @Override protected void onResume() { super.onResume(); if (ble != null && !ble.isConnected()) ble.start(); }
-    @Override protected void onDestroy() { if (ble != null) ble.stop(); super.onDestroy(); }
+    @Override protected void onResume() { super.onResume(); attach(); }
+    @Override protected void onPause() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
+    // NOTE: we deliberately do NOT stop BleService on destroy — it stays alive so the
+    // connection (and a Tile) persist. It stops itself when the app is fully removed.
+    @Override protected void onDestroy() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onDestroy(); }
     private int pad(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }
 }
