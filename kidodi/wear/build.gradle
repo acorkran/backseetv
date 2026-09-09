@@ -1,0 +1,28 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.kidstv.kidodi.wear'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.kidstv.kidodi.wear'
+        minSdk 30            // Wear OS 3+
+        targetSdk 34
+        versionCode 1
+        versionName '0.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint { abortOnError false }
+}
+
+// Standalone Wear remote: talks BLE directly to the tablet-player (reuses the
+// proven BleClient). No wear/tiles/protolayout deps needed for the button UI, so
+// this builds fully offline. (A glanceable Tile is the follow-up polish.)
+dependencies { }
