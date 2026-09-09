@@ -21,7 +21,6 @@ import org.json.JSONObject;
 public class RemoteActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private TextView link, now;
-    private BleClient ble;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -49,15 +48,23 @@ public class RemoteActivity extends Activity {
 
         setContentView(root);
 
-        ble = new BleClient(this, new BleClient.Listener() {
-            public void onStatus(String s) {
-                link.setText(s);
-                link.setTextColor(s.startsWith("ready") || s.startsWith("connected") ? 0xFF8FD694 : 0xFFC9A227);
-            }
-            public void onState(String json) { showState(json); }
-        });
-        ble.start();
+        RemoteService.ensure(this);   // BLE-primary/wifi-fallback link lives in a service (shared with Android Auto)
+        attach();
     }
+
+    private final RemoteService.Listener svcListener = new RemoteService.Listener() {
+        public void onStatus(String s) {
+            link.setText(s);
+            link.setTextColor(s.startsWith("ready") ? 0xFF8FD694 : 0xFFC9A227);
+        }
+        public void onState(String json) { showState(json); }
+    };
+    private void attach() {
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.setListener(svcListener);
+        else main.postDelayed(this::attach, 300);
+    }
+    private void send(String cmd) { RemoteService svc = RemoteService.get(); if (svc != null) svc.send(cmd); }
 
     private LinearLayout rowOf(Object... p) {
         LinearLayout r = new LinearLayout(this);
@@ -68,7 +75,7 @@ public class RemoteActivity extends Activity {
             Button btn = new Button(this);
             btn.setText(label);
             btn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
-                if (cmd.length() > 0) ble.send(cmd); else { ble.stop(); ble.start(); }
+                if (cmd.length() > 0) send(cmd); else attach();
             }});
             r.addView(btn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         }
@@ -86,6 +93,8 @@ public class RemoteActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    @Override protected void onDestroy() { if (ble != null) ble.stop(); super.onDestroy(); }
+    @Override protected void onResume() { super.onResume(); attach(); }
+    @Override protected void onPause() { RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
+    @Override protected void onDestroy() { RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null); super.onDestroy(); }
     private int pad(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }
 }
