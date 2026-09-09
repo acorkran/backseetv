@@ -122,15 +122,15 @@ public class BleServer {
             try { ctrl.startSleep(Integer.parseInt(cmd.substring(6).trim())); } catch (Exception ignored) {}
             return;
         }
-        if (cmd.startsWith("play:")) { ctrl.selectPlaylist(cmd.substring(5)); return; }   // switch playlist
+        if (cmd.startsWith("play:")) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(cmd.substring(5)); return; }
         if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
 
         switch (cmd) {
-            case "play": ctrl.play(); break;
+            case "play": PlayerActivity.wakeScreen(); ctrl.play(); break;
             case "pause": ctrl.pause(); break;
-            case "playpause": ctrl.toggle(); break;
-            case "next": ctrl.next(); break;
-            case "prev": ctrl.prev(); break;
+            case "playpause": PlayerActivity.wakeScreen(); ctrl.toggle(); break;
+            case "next": PlayerActivity.wakeScreen(); ctrl.next(); break;
+            case "prev": PlayerActivity.wakeScreen(); ctrl.prev(); break;
             case "volup": ctrl.nudge(0.1f); break;
             case "voldown": ctrl.nudge(-0.1f); break;
             case "mute": ctrl.setVolume(0f); break;

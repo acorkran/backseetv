@@ -62,11 +62,11 @@ public class ControlServer {
             String body;
             switch (path) {
                 case "/state":     body = ctrl.stateJson(); break;
-                case "/play":      ctrl.play();  body = ok(); break;
+                case "/play":      PlayerActivity.wakeScreen(); ctrl.play();  body = ok(); break;
                 case "/pause":     ctrl.pause(); body = ok(); break;
-                case "/playpause": ctrl.toggle(); body = ok(); break;
-                case "/next":      ctrl.next();  body = ok(); break;
-                case "/prev":      ctrl.prev();  body = ok(); break;
+                case "/playpause": PlayerActivity.wakeScreen(); ctrl.toggle(); body = ok(); break;
+                case "/next":      PlayerActivity.wakeScreen(); ctrl.next();  body = ok(); break;
+                case "/prev":      PlayerActivity.wakeScreen(); ctrl.prev();  body = ok(); break;
                 case "/seeknear":  ctrl.seekNearEnd(); body = ok(); break;
                 case "/vol": {
                     String v = param(q, "v"), d = param(q, "d");
@@ -81,7 +81,7 @@ public class ControlServer {
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 case "/playlists": body = ctrl.playlistsJson(); break;
-                case "/playlist": { String n = param(q, "name"); if (n != null) ctrl.selectPlaylist(urlDecode(n)); body = ok(); break; }
+                case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }
                 default: body = "{\"ok\":false,\"error\":\"unknown path\"}";
             }
             write(c, body);

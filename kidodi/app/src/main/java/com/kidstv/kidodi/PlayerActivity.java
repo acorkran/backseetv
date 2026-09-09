@@ -95,25 +95,27 @@ public class PlayerActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
     }
 
-    // power on/off (like the v1 remote): toggle nap = pause + black the TV / wake = play.
+    // power on/off (like the v1 remote): OFF = pause + black the TV; ON = play + screen back.
     public static void power() {
         final PlayerActivity a = sRef.get();
         if (a != null) a.main.post(a::doPower);
     }
+    /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
+    public static void wakeScreen() {
+        final PlayerActivity a = sRef.get();
+        if (a != null) a.main.post(() -> { if (a.napped) a.setNapScreen(false); });
+    }
     private void doPower() {
-        napped = !napped;
-        PlayerController.get().setNapped(napped);
+        if (!napped) { setNapScreen(true); PlayerController.get().pause(); }
+        else { setNapScreen(false); PlayerController.get().play(); }
+    }
+    private void setNapScreen(boolean nap) {
+        napped = nap;
+        PlayerController.get().setNapped(nap);
         WindowManager.LayoutParams lp = getWindow().getAttributes();
-        if (napped) {
-            PlayerController.get().pause();
-            napOverlay.setVisibility(View.VISIBLE);
-            preNapBrightness = lp.screenBrightness;
-            lp.screenBrightness = 0.01f; getWindow().setAttributes(lp);
-        } else {
-            napOverlay.setVisibility(View.GONE);
-            lp.screenBrightness = preNapBrightness; getWindow().setAttributes(lp);
-            PlayerController.get().play();
-        }
+        napOverlay.setVisibility(nap ? View.VISIBLE : View.GONE);
+        lp.screenBrightness = nap ? 0.02f : -1.0f;   // -1 = system default -> reliably ON again
+        getWindow().setAttributes(lp);
     }
 
     // screen-as-flashlight, called by ControlServer /flash
@@ -123,12 +125,15 @@ public class PlayerActivity extends Activity {
     }
     private void doFlash(int ms) {
         final WindowManager.LayoutParams lp = getWindow().getAttributes();
-        final float prev = lp.screenBrightness;
         lp.screenBrightness = 1.0f; getWindow().setAttributes(lp);
         flash.setVisibility(View.VISIBLE);
         main.postDelayed(() -> {
             flash.setVisibility(View.GONE);
-            lp.screenBrightness = prev; getWindow().setAttributes(lp);
+            // re-derive from the CURRENT nap state (not a stale snapshot) so a wake during
+            // the flash isn't dragged back to black when the flash ends.
+            WindowManager.LayoutParams p = getWindow().getAttributes();
+            p.screenBrightness = napped ? 0.02f : -1.0f;
+            getWindow().setAttributes(p);
         }, Math.max(200, Math.min(4000, ms)));
     }
 
