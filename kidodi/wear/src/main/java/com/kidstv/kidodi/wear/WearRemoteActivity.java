@@ -218,7 +218,7 @@ public class WearRemoteActivity extends Activity {
                 && (ev.getSource() & InputDevice.SOURCE_ROTARY_ENCODER) != 0) {
             float d = ev.getAxisValue(MotionEvent.AXIS_SCROLL);
             if (ble != null && d != 0) {
-                boolean up = d > 0;
+                boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder
                 ble.send(up ? "volup" : "voldown");
                 volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
                 showVol();
@@ -262,6 +262,7 @@ public class WearRemoteActivity extends Activity {
     }
 
     @Override public void onBackPressed() { show(playerView); }
+    @Override protected void onResume() { super.onResume(); if (ble != null && !ble.isConnected()) ble.start(); }
     @Override protected void onDestroy() { if (ble != null) ble.stop(); super.onDestroy(); }
     private int pad(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }
 }
