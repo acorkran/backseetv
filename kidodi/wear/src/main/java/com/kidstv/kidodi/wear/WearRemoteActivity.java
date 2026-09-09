@@ -17,6 +17,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.GestureDetector;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
@@ -27,12 +28,16 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class WearRemoteActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
-    private FrameLayout content;    // holds player or settings
-    private View playerView, settingsView;
+    private FrameLayout content;    // holds player or settings/playlists
+    private View playerView, settingsView, playlistView, current;
+    private LinearLayout plHolder;  // playlist rows (repopulated from the tablet)
+    private TextView plStatus;
+    private GestureDetector gd;
     private TextView status, title, subtitle;
     private Button playPause;
 
@@ -51,7 +56,20 @@ public class WearRemoteActivity extends Activity {
         content = new FrameLayout(this);
         playerView = buildPlayer();
         settingsView = buildSettings();
+        playlistView = buildPlaylists();
         content.addView(playerView);
+        current = playerView;
+
+        // swipe UP on the player screen -> playlist library (Samsung-media style)
+        gd = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
+                if (e1 == null || e2 == null) return false;
+                float dy = e1.getY() - e2.getY();
+                if (current == playerView && dy > pad(40) && Math.abs(vy) > 200 && Math.abs(dy) > Math.abs(e1.getX() - e2.getX()))
+                    { openPlaylists(); return true; }
+                return false;
+            }
+        });
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -65,7 +83,10 @@ public class WearRemoteActivity extends Activity {
 
     private final BleService.Listener svcListener = new BleService.Listener() {
         public void onStatus(String s) { status.setText(s.startsWith("ready") ? "" : s); }
-        public void onState(String json) { render(json); }
+        public void onState(String json) {
+            if (json != null && json.contains("\"type\":\"playlists\"")) populatePlaylists(json);
+            else render(json);
+        }
     };
     private void attach() {
         BleService svc = BleService.get();
@@ -74,7 +95,68 @@ public class WearRemoteActivity extends Activity {
     }
     private void send(String cmd) { BleService svc = BleService.get(); if (svc != null) svc.send(cmd); }
 
-    private void show(View v) { content.removeAllViews(); content.addView(v); }
+    private void show(View v) { content.removeAllViews(); content.addView(v); current = v; }
+
+    // feed every touch to the gesture detector so swipe-up works over the player's buttons
+    @Override public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (gd != null) gd.onTouchEvent(ev);
+        return super.dispatchTouchEvent(ev);
+    }
+
+    // --- playlist library: a swipe-up page of the tablet's playlists ---------
+    private void openPlaylists() {
+        show(playlistView);
+        BleService svc = BleService.get();
+        String cached = svc != null ? svc.playlists() : null;
+        if (cached != null) populatePlaylists(cached); else if (plStatus != null) plStatus.setText("loading…");
+        send("list");   // ask the tablet to (re)push its playlist names
+    }
+    private View buildPlaylists() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(pad(20), pad(44), pad(20), pad(44));
+        sv.addView(col);
+
+        TextView h = new TextView(this);
+        h.setText("Playlists"); h.setTextColor(Color.WHITE); h.setTextSize(17);
+        h.setTypeface(Typeface.DEFAULT_BOLD); h.setGravity(Gravity.CENTER); h.setPadding(0, 0, 0, pad(6));
+        col.addView(h);
+
+        plStatus = new TextView(this);
+        plStatus.setText("loading…"); plStatus.setTextColor(0xFF9AA0A6); plStatus.setTextSize(11);
+        plStatus.setGravity(Gravity.CENTER); plStatus.setPadding(0, 0, 0, pad(8));
+        col.addView(plStatus);
+
+        plHolder = new LinearLayout(this);
+        plHolder.setOrientation(LinearLayout.VERTICAL);
+        col.addView(plHolder);
+        return sv;
+    }
+    private void populatePlaylists(String json) {
+        if (plHolder == null) return;
+        try {
+            JSONArray names = new JSONObject(json).optJSONArray("names");
+            plHolder.removeAllViews();
+            if (names == null || names.length() == 0) { if (plStatus != null) plStatus.setText("no playlists"); return; }
+            if (plStatus != null) plStatus.setText("");
+            for (int i = 0; i < names.length(); i++) {
+                final String name = names.optString(i);
+                Button row = new Button(this);
+                row.setAllCaps(false); row.setText(name);
+                row.setTextColor(Color.WHITE); row.setTextSize(15);
+                row.setMaxLines(1); row.setEllipsize(TextUtils.TruncateAt.END);
+                GradientDrawable g = new GradientDrawable(); g.setColor(0xFF202225); g.setCornerRadius(pad(14));
+                row.setBackground(g);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
+                lp.setMargins(0, pad(4), 0, pad(4)); row.setLayoutParams(lp);
+                row.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+                    send("play:" + name); show(playerView);
+                }});
+                plHolder.addView(row);
+            }
+        } catch (Exception ignored) {}
+    }
 
     // --- player screen (centered + compact to fit the round face) -----------
     private View buildPlayer() {
@@ -118,6 +200,14 @@ public class WearRemoteActivity extends Activity {
         bottom.addView(chip("Power", "power", 0xFF5A2A2A));
         bottom.addView(chip("Setup", "settings", 0xFF33363B));
         col.addView(bottom);
+
+        TextView hint = new TextView(this);   // swipe up (or tap) for the playlist library
+        hint.setText("▲ Playlists"); hint.setTextColor(0xFF6B7075); hint.setTextSize(11);
+        hint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hlp.topMargin = pad(6); hint.setLayoutParams(hlp);
+        hint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openPlaylists(); } });
+        col.addView(hint);
         return col;
     }
 

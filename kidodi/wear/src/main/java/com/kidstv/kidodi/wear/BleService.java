@@ -32,8 +32,11 @@ public class BleService extends Service {
 
     private BleClient ble;
     private volatile String lastState = "{}";
+    private volatile String lastPlaylists = null;   // the one-shot {"type":"playlists",...} payload
     private volatile String lastStatus = "starting…";
     private Listener ui;
+
+    private static boolean isPlaylists(String j) { return j != null && j.contains("\"type\":\"playlists\""); }
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -43,7 +46,10 @@ public class BleService extends Service {
         startForeground(71, note());
         ble = new BleClient(this, new BleClient.Listener() {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
-            public void onState(String json) { lastState = json; if (ui != null) ui.onState(json); }
+            public void onState(String json) {
+                if (isPlaylists(json)) lastPlaylists = json; else lastState = json;
+                if (ui != null) ui.onState(json);
+            }
         });
         ble.start();
     }
@@ -52,10 +58,15 @@ public class BleService extends Service {
 
     public void setListener(Listener l) {
         ui = l;
-        if (l != null) { l.onStatus(lastStatus); l.onState(lastState); }   // immediate paint
+        if (l != null) {   // immediate paint from cache
+            l.onStatus(lastStatus);
+            l.onState(lastState);
+            if (lastPlaylists != null) l.onState(lastPlaylists);
+        }
     }
     public void send(String cmd) { if (ble != null) ble.send(cmd); }
     public String state() { return lastState; }
+    public String playlists() { return lastPlaylists; }
 
     @Override public void onDestroy() {
         if (ble != null) { ble.stop(); ble = null; }
