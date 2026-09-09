@@ -49,10 +49,19 @@ public class BleServer {
 
     public BleServer(Context c, PlayerController ctrl) { this.ctx = c.getApplicationContext(); this.ctrl = ctrl; }
 
-    public void start() {
+    public void start() { start(0); }
+    private void start(final int attempt) {
         BluetoothManager bm = (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
         BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
-        if (ad == null || !ad.isEnabled()) { Log.e(TAG, "BLE: adapter off/absent"); return; }
+        if (ad == null || !ad.isEnabled()) {
+            // Boot race: the BT adapter can take tens of seconds to come up after boot, so an
+            // early start finds it off. Retry until it's enabled (~90s) instead of giving up.
+            if (attempt < 30) {
+                Log.i(TAG, "BLE: adapter not ready (attempt " + attempt + "), retry in 3s");
+                main.postDelayed(() -> start(attempt + 1), 3000);
+            } else Log.e(TAG, "BLE: adapter off/absent (gave up)");
+            return;
+        }
 
         gatt = bm.openGattServer(ctx, serverCb);
         if (gatt == null) { Log.e(TAG, "BLE: openGattServer null"); return; }
