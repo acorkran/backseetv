@@ -33,6 +33,7 @@ public class PlayerActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
     private ControlServer server;
+    private BleServer ble;
     private View flash;
 
     @Override protected void onCreate(Bundle b) {
@@ -69,6 +70,8 @@ public class PlayerActivity extends Activity {
         PlayerController.get().attach(player);
         server = new ControlServer(this, PlayerController.get());
         server.start();
+        ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
+        ble.start();
     }
 
     private void immersive() {
@@ -95,6 +98,7 @@ public class PlayerActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (ble != null) { ble.stop(); ble = null; }
         if (server != null) { server.stop(); server = null; }
         PlayerController.get().detach();
         if (player != null) { player.release(); player = null; }

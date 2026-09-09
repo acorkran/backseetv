@@ -9,25 +9,46 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
+    <!-- BLE control tier: player = peripheral (advertise), remote = central (scan); both connect -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+    <!-- pre-31 BLE -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+
     <application
         android:label="Kidodi"
         android:icon="@android:drawable/ic_media_play"
         android:allowBackup="false"
         android:hardwareAccelerated="true">
 
-        <!-- The show is the home screen: fullscreen, landscape, singleInstance. Kid-proof shell
-             (screen-pinning / device-owner tiers) layers on later; this is the player core. -->
+        <!-- Launcher: one APK, two roles. Routes to player or remote (first-run chooser). -->
+        <activity
+            android:name=".RouterActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Black.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Player role: the show is the home screen (fullscreen, landscape). -->
         <activity
             android:name=".PlayerActivity"
             android:exported="true"
             android:launchMode="singleInstance"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
+
+        <!-- Remote role: control UI. -->
+        <activity
+            android:name=".RemoteActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
     </application>
 </manifest>
