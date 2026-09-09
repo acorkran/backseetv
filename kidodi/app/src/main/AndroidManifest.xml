@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- read the local library off the SD card (grant via appops MANAGE_EXTERNAL_STORAGE allow) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+
+    <application
+        android:label="Kidodi"
+        android:icon="@android:drawable/ic_media_play"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true">
+
+        <!-- The show is the home screen: fullscreen, landscape, singleInstance. Kid-proof shell
+             (screen-pinning / device-owner tiers) layers on later; this is the player core. -->
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.kidstv.kidodi'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.kidstv.kidodi'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        // Media3 marks some APIs @UnstableApi (lint-error by default); we accept them.
+        disable 'UnsafeOptInUsageError'
+    }
+
+    buildTypes {
+        debug {
+            // default debug signing -> app-debug.apk
+        }
+    }
+}
+
+dependencies {
+    // Own media engine. ExoPlayer's playlist (setMediaItems + shuffle + REPEAT_MODE_ALL) gives
+    // shuffle-all + deterministic auto-advance natively -> the Kodi "stuck past EOF" wedge cannot
+    // occur. media3-common (MediaItem/Player) comes transitively; we render into a plain
+    // SurfaceView so no media3-ui/theme dependency is needed.
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+}
