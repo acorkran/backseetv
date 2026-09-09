@@ -45,10 +45,10 @@ public class PlayerController {
     public void setNapped(boolean n) { napped = n; }
 
     /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
-    public void loadLibrary(Context ctx) { loadLibrary(ctx, true); }
+    public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
     /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
-    public void rescan(Context ctx) { loadLibrary(ctx, false); }
-    private void loadLibrary(final Context ctx, final boolean autoStart) {
+    public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
+    private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         new Thread(() -> {
             LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
             final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
@@ -57,6 +57,13 @@ public class PlayerController {
                 List<MediaItem> items = new ArrayList<>();
                 for (File f : e.getValue()) { MediaItem mi = MediaItem.fromUri(Uri.fromFile(f)); items.add(mi); all.add(mi); }
                 built.put(e.getKey(), items);
+            }
+            // Boot race: the portable SD card can take tens of seconds to mount after boot, so a
+            // scan on launch may find nothing. Retry until content appears (~90s) before giving up.
+            if (all.isEmpty() && autoStart && attempt < 30) {
+                android.util.Log.i("Kidodi", "library empty (attempt " + attempt + "); SD may still be mounting, retry in 3s");
+                main.postDelayed(() -> loadLibrary(ctx, true, attempt + 1), 3000);
+                return;
             }
             on(() -> {
                 playlists.clear();

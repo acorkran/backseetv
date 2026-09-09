@@ -157,6 +157,14 @@ public class PlayerActivity extends Activity {
                 try { dpm.setLockTaskPackages(admin, new String[]{getPackageName()}); } catch (Exception e) {}
                 try { dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE); } catch (Exception e) {}
                 try { dpm.setStatusBarDisabled(admin, true); } catch (Exception e) {}
+                try { dpm.setKeyguardDisabled(admin, true); } catch (Exception e) {}   // no lock screen blocking boot
+                // the SHOW is the home screen: pin US as the preferred HOME so boot/Home land here (beats v1)
+                try {
+                    android.content.IntentFilter home = new android.content.IntentFilter(Intent.ACTION_MAIN);
+                    home.addCategory(Intent.CATEGORY_HOME);
+                    home.addCategory(Intent.CATEGORY_DEFAULT);
+                    dpm.addPersistentPreferredActivity(admin, home, new ComponentName(this, RouterActivity.class));
+                } catch (Exception e) {}
             }
             startLockTask();
         } catch (Exception e) {}

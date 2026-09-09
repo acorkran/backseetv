@@ -76,6 +76,11 @@ public final class Library {
         } catch (Exception ignored) {}
         try { roots.add(new File(Environment.getExternalStorageDirectory(), "KidsTV")); } catch (Exception ignored) {}
         try { File[] vs = new File("/storage").listFiles(); if (vs != null) for (File v : vs) roots.add(new File(v, "KidsTV")); } catch (Exception ignored) {}
+        boolean afm = false;
+        try { if (android.os.Build.VERSION.SDK_INT >= 30) afm = Environment.isExternalStorageManager(); } catch (Exception ignored) {}
+        StringBuilder sb = new StringBuilder("roots(allFilesAccess=" + afm + "):");
+        for (File r : roots) sb.append(" [").append(r.getAbsolutePath()).append(" dir=").append(r.isDirectory()).append(" read=").append(r.canRead()).append("]");
+        Log.i(TAG, sb.toString());
         return new ArrayList<>(roots);
     }
 

@@ -945,6 +945,7 @@ public class BridgeService extends Service {
             if (target.startsWith("/setsleep"))     { handleSetSleep(json, c); return; }  // set the stored fade duration
             if (target.startsWith("/sleep"))        { handleSleep(json, c); return; }
             if (target.startsWith("/addwifi"))      { handleAddWifi(json, c); return; }
+            if (target.startsWith("/transferowner")) { handleTransferOwner(json, c); return; }  // hand device-owner to v2 (reversible)
             if (target.startsWith("/p2p")) {   // v2 prototype: toggle the Wi-Fi Direct tablet-as-anchor group
                 boolean on = true;
                 try { if (json != null && json.length() > 0) on = new JSONObject(json).optBoolean("on", true); } catch (Exception e) {}
@@ -1115,6 +1116,28 @@ public class BridgeService extends Service {
         configure Wi-Fi via WifiManager.addNetwork, which adb (uid 2000) can't. Used once to teach the
         appliance the home network so it auto-joins at home (for the data sync); it keeps the hotspot
         save too, so it still joins that in the car. Empty psk = open network. */
+    /** POST /transferowner {"pkg":..,"cls":..} — hand device-owner to another app (default v2 kidodi).
+        Reversible: the target gets a matching endpoint to hand it back. Only works while WE are owner. */
+    void handleTransferOwner(String body, Socket c) {
+        boolean ok = false; String msg = "";
+        try {
+            String pkg = "com.kidstv.kidodi", cls = "com.kidstv.kidodi.AdminReceiver";
+            if (body != null && body.length() > 0) {
+                org.json.JSONObject o = new org.json.JSONObject(body);
+                pkg = o.optString("pkg", pkg); cls = o.optString("cls", cls);
+            }
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName me = new ComponentName(this, AdminReceiver.class);
+            ComponentName targetAdmin = new ComponentName(pkg, cls);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
+                dpm.transferOwnership(me, targetAdmin, null);
+                ok = true; msg = "transferred to " + pkg;
+            } else { msg = "not device owner"; }
+        } catch (Exception e) { msg = String.valueOf(e); Log.w(TAG, "transferowner: " + e); }
+        try { writeResponse(c, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":" + ok + ",\"msg\":\"" + msg.replace("\"", "'") + "\"}}"); } catch (Exception e) {}
+        try { c.close(); } catch (Exception e) {}
+    }
+
     void handleAddWifi(String body, Socket c) {
         boolean ok = false;
         try {

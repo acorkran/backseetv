@@ -80,6 +80,7 @@ public class ControlServer {
                 }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
+                case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }
                 default: body = "{\"ok\":false,\"error\":\"unknown path\"}";
@@ -108,6 +109,23 @@ public class ControlServer {
             PlayerController.get().rescan(ctx);   // new file shows up in the Imports playlist
             write(c, "{\"ok\":true,\"saved\":\"" + out.getName() + "\",\"bytes\":" + (len - remaining) + "}");
         } catch (Exception e) { Log.e(TAG, "upload err", e); try { write(c, "{\"ok\":false}"); } catch (Exception ignored) {} }
+    }
+
+    /** Hand device-owner to another app (default: back to v1 kiosk). Only works while WE are owner. */
+    private String transferOwner(String pkg, String cls) {
+        try {
+            if (pkg == null || pkg.isEmpty()) pkg = "com.kidstv.kiosk";
+            if (cls == null || cls.isEmpty()) cls = "com.kidstv.kiosk.AdminReceiver";
+            android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager) ctx.getSystemService(Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName me = new android.content.ComponentName(ctx, AdminReceiver.class);
+            android.content.ComponentName target = new android.content.ComponentName(pkg, cls);
+            if (dpm != null && dpm.isDeviceOwnerApp(ctx.getPackageName())) {
+                dpm.transferOwnership(me, target, null);
+                return "{\"ok\":true,\"transferred\":\"" + pkg + "\"}";
+            }
+            return "{\"ok\":false,\"error\":\"not device owner\"}";
+        } catch (Exception e) { return "{\"ok\":false,\"error\":\"" + String.valueOf(e).replace("\"", "'") + "\"}"; }
     }
 
     private static String ok() { return "{\"ok\":true}"; }

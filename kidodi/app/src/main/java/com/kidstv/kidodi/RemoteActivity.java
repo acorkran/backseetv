@@ -267,11 +267,14 @@ public class RemoteActivity extends Activity {
         super.onActivityResult(req, res, data);
         if (req == 42 && res == RESULT_OK && data != null && data.getData() != null) {
             final Uri uri = data.getData();
-            RemoteService svc = RemoteService.get();
-            final String host = svc != null ? svc.playerHttpHost() : null;
-            if (host == null) { Toast.makeText(this, "Join the same Wi-Fi as the TV to import", Toast.LENGTH_LONG).show(); return; }
-            Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show();
-            new Thread(() -> uploadFile(uri, host)).start();
+            Toast.makeText(this, "Finding the TV…", Toast.LENGTH_SHORT).show();
+            new Thread(() -> {
+                RemoteService svc = RemoteService.get();
+                final String host = svc != null ? svc.playerHttpHost() : null;   // blocks (off-main) for mDNS
+                if (host == null) { main.post(() -> Toast.makeText(this, "Join the same Wi-Fi as the TV to import", Toast.LENGTH_LONG).show()); return; }
+                main.post(() -> Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show());
+                uploadFile(uri, host);
+            }).start();
         }
     }
     private void uploadFile(Uri uri, String host) {
