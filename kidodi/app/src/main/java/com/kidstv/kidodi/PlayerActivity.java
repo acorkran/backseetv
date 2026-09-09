@@ -35,6 +35,9 @@ public class PlayerActivity extends Activity {
     private ControlServer server;
     private BleServer ble;
     private View flash;
+    private View napOverlay;
+    private boolean napped = false;
+    private float preNapBrightness = -1f;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -46,6 +49,10 @@ public class PlayerActivity extends Activity {
         root.setBackgroundColor(Color.BLACK);
         SurfaceView surface = new SurfaceView(this);
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        napOverlay = new View(this);   // "power off" = pause + black the TV
+        napOverlay.setBackgroundColor(Color.BLACK);
+        napOverlay.setVisibility(View.GONE);
+        root.addView(napOverlay, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         flash = new View(this);
         flash.setBackgroundColor(Color.WHITE);
         flash.setVisibility(View.GONE);
@@ -79,6 +86,26 @@ public class PlayerActivity extends Activity {
                 View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                         | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
+
+    // power on/off (like the v1 remote): toggle nap = pause + black the TV / wake = play.
+    public static void power() {
+        final PlayerActivity a = sRef.get();
+        if (a != null) a.main.post(a::doPower);
+    }
+    private void doPower() {
+        napped = !napped;
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (napped) {
+            PlayerController.get().pause();
+            napOverlay.setVisibility(View.VISIBLE);
+            preNapBrightness = lp.screenBrightness;
+            lp.screenBrightness = 0.01f; getWindow().setAttributes(lp);
+        } else {
+            napOverlay.setVisibility(View.GONE);
+            lp.screenBrightness = preNapBrightness; getWindow().setAttributes(lp);
+            PlayerController.get().play();
+        }
     }
 
     // screen-as-flashlight, called by ControlServer /flash

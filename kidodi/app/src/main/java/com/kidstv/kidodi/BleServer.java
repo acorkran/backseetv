@@ -118,6 +118,10 @@ public class BleServer {
     };
 
     private void exec(String cmd) {
+        if (cmd.startsWith("sleep:")) {   // variable sleep timer: "sleep:15"
+            try { ctrl.startSleep(Integer.parseInt(cmd.substring(6).trim())); } catch (Exception ignored) {}
+            return;
+        }
         switch (cmd) {
             case "play": ctrl.play(); break;
             case "pause": ctrl.pause(); break;
@@ -127,7 +131,8 @@ public class BleServer {
             case "volup": ctrl.nudge(0.1f); break;
             case "voldown": ctrl.nudge(-0.1f); break;
             case "mute": ctrl.setVolume(0f); break;
-            case "sleep10": ctrl.startSleep(10); break;
+            case "power": PlayerActivity.power(); break;        // on/off like the v1 remote
+            case "sleep10": ctrl.startSleep(10); break;         // back-compat
             case "wake": ctrl.cancelSleep(); break;
             case "flash": PlayerActivity.flash(3000); break;
         }

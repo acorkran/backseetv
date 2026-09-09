@@ -77,6 +77,7 @@ public class ControlServer {
                     body = ok(); break;
                 }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
+                case "/power": PlayerActivity.power(); body = ok(); break;
                 default: body = "{\"ok\":false,\"error\":\"unknown path\"}";
             }
             write(c, body);
