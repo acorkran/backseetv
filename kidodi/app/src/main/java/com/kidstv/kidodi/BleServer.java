@@ -144,6 +144,7 @@ public class BleServer {
         if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
         if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
         if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
+        if (cmd.startsWith("hotspot:")) { if ("on".equals(cmd.substring(8).trim())) HotspotService.start(ctx); else HotspotService.stop(ctx); return; }  // host hotspot + show QR
         if (cmd.startsWith("camble:")) { setCamble("on".equals(cmd.substring(7).trim())); return; }  // reduced-res stills over BLE
 
         switch (cmd) {

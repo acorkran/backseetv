@@ -180,6 +180,13 @@ public class RemoteActivity extends Activity {
         stillBtn.setOnClickListener(v -> openStill());
         root.addView(stillBtn);
 
+        TextView scanBtn = new TextView(this);
+        scanBtn.setText("⧉  Scan a QR to connect / join Wi-Fi");
+        scanBtn.setTextColor(ACCENT); scanBtn.setTextSize(13); scanBtn.setGravity(Gravity.CENTER);
+        scanBtn.setPadding(0, dp(12), 0, dp(4)); scanBtn.setClickable(true);
+        scanBtn.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
+        root.addView(scanBtn);
+
         frame = new FrameLayout(this);
         frame.addView(root);
         setContentView(frame);
@@ -481,6 +488,13 @@ public class RemoteActivity extends Activity {
                 main.post(() -> Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show());
                 uploadFile(uri, host);
             }).start();
+        }
+        if (req == 43 && res == RESULT_OK && data != null) {   // QR scan result
+            String ip = data.getStringExtra(QrScanActivity.RESULT_KIDODI_IP);
+            String ssid = data.getStringExtra(QrScanActivity.RESULT_JOINED_SSID);
+            if (ip != null && !ip.isEmpty()) { tabletIp = ip; Toast.makeText(this, "TV at " + ip, Toast.LENGTH_SHORT).show(); }
+            else if (ssid != null && !ssid.isEmpty()) Toast.makeText(this, "Joining " + ssid + "…", Toast.LENGTH_LONG).show();
+            else Toast.makeText(this, "Scanned", Toast.LENGTH_SHORT).show();
         }
     }
     private void uploadFile(Uri uri, String host) {

@@ -83,6 +83,10 @@ public class ControlServer {
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 case "/snap": SnapshotService.set(ctx, "1".equals(param(q, "on")) || "true".equals(param(q, "on"))); body = ok(); break;
+                case "/hotspot": {   // host a LocalOnlyHotspot (random creds) + show its WIFI QR for a remote to scan+join
+                    if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) HotspotService.start(ctx); else HotspotService.stop(ctx);
+                    body = ok(); break;
+                }
                 case "/playmode": {   // toddler play mode; optional &vol=0..1 sets the (default-muted) audio gain
                     if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) {
                         String vol = param(q, "vol"); if (vol != null) PlayModeActivity.setGain(pf(vol, 0f));
