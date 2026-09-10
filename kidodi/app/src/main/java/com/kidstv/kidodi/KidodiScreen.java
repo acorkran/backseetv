@@ -2,9 +2,8 @@ package com.kidstv.kidodi;
 
 // ============================================================================
 //  The Android Auto screen (Car App template). Shows now-playing + a status/
-//  countdown line (runtime / sleep timer) + an image area (placeholder now, the
-//  future child-state camera frame), and controls (Play/Pause · Next · Light in
-//  the action strip; Sleep · Power as pane actions). Drives the tablet via
+//  countdown line (runtime / sleep timer) and controls (Play/Pause · Next · Light
+//  in the action strip; Sleep · Power as pane actions). Drives the tablet via
 //  RemoteService (BLE primary, Wi-Fi fallback). Not a media app -> no media-slot
 //  competition with Spotify/Samsung Music.
 // ============================================================================
@@ -14,12 +13,10 @@ import androidx.car.app.CarContext;
 import androidx.car.app.Screen;
 import androidx.car.app.model.Action;
 import androidx.car.app.model.ActionStrip;
-import androidx.car.app.model.CarIcon;
 import androidx.car.app.model.Pane;
 import androidx.car.app.model.PaneTemplate;
 import androidx.car.app.model.Row;
 import androidx.car.app.model.Template;
-import androidx.core.graphics.drawable.IconCompat;
 
 import org.json.JSONObject;
 
@@ -59,8 +56,6 @@ public class KidodiScreen extends Screen {
         Pane pane = new Pane.Builder()
                 .addRow(new Row.Builder().setTitle(show).addText(ep.isEmpty() ? " " : ep).build())
                 .addRow(new Row.Builder().setTitle(status).build())
-                // image slot -> placeholder now; the future child-state camera frame goes here
-                .setImage(new CarIcon.Builder(IconCompat.createWithResource(getCarContext(), android.R.drawable.ic_media_play)).build())
                 .addAction(new Action.Builder().setTitle("Sleep 15m")
                         .setOnClickListener(() -> { send("sleep:15"); invalidate(); }).build())
                 .addAction(new Action.Builder().setTitle("Power")
