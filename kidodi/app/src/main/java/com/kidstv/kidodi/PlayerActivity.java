@@ -327,6 +327,10 @@ public class PlayerActivity extends Activity {
         finish();
     }
 
+    /** Kiosk: Back never leaves the show. (Lock-task blocks Home/Recents but delivers Back; finishing
+        here would bounce through the launcher-router and leave a focus-stealing permission activity.) */
+    @Override public void onBackPressed() { }
+
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
         int k = e.getKeyCode();
         if (k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN) {

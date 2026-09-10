@@ -60,13 +60,16 @@ public class RouterActivity extends Activity {
 
     private void route(Class<?> c) { startActivity(new Intent(this, c)); finish(); }
 
+    /** Only ask for what's missing. Asking for already-granted permissions still spawns a
+        GrantPermissionsActivity, and because we route+finish immediately its result never lands —
+        it lingers INVISIBLE with input focus above the kiosk, so touches stop reaching the show. */
     private void requestBlePerms() {
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 31)
-                requestPermissions(new String[]{
-                        "android.permission.BLUETOOTH_SCAN",
-                        "android.permission.BLUETOOTH_CONNECT",
-                        "android.permission.BLUETOOTH_ADVERTISE"}, 1);
+            if (android.os.Build.VERSION.SDK_INT < 31) return;
+            String[] all = {"android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_ADVERTISE"};
+            java.util.List<String> need = new java.util.ArrayList<>();
+            for (String p : all) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) need.add(p);
+            if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), 1);
         } catch (Exception ignored) {}
     }
 
