@@ -24,8 +24,11 @@ public class RemoteService extends Service {
 
     private static RemoteService INSTANCE;
     public static RemoteService get() { return INSTANCE; }
-    public static void ensure(Context ctx) {
-        Intent i = new Intent(ctx.getApplicationContext(), RemoteService.class);
+    public static void ensure(Context ctx) { ensure(ctx, false); }
+    /** The TV's own admin Remote: loopback HTTP to this very player, no BLE. */
+    public static void ensureLocal(Context ctx) { ensure(ctx, true); }
+    private static void ensure(Context ctx, boolean local) {
+        Intent i = new Intent(ctx.getApplicationContext(), RemoteService.class).putExtra("local", local);
         if (Build.VERSION.SDK_INT >= 26) ctx.getApplicationContext().startForegroundService(i);
         else ctx.getApplicationContext().startService(i);
     }
@@ -55,10 +58,29 @@ public class RemoteService extends Service {
 
     @Override public IBinder onBind(Intent i) { return null; }
 
+    private boolean started = false;
+    private volatile boolean local = false;   // TV-side admin Remote: loopback HTTP to ourselves, no BLE
+
     @Override public void onCreate() {
         super.onCreate();
         INSTANCE = this;
         startForeground(72, note());
+    }
+
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (!started) {
+            started = true;
+            // On the TV (role=player) this service can only ever be the local admin remote — even on a
+            // sticky restart with a null intent it must never start scanning BLE for itself.
+            String role = getSharedPreferences("kidodi", MODE_PRIVATE).getString("role", "");
+            local = "player".equals(role) || (intent != null && intent.getBooleanExtra("local", false));
+            if (local) startWifi("127.0.0.1", 8090);
+            else startLinks();
+        }
+        return START_STICKY;
+    }
+
+    private void startLinks() {
         ble = new BleClient(this, new BleClient.Listener() {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
             public void onState(String json) {
@@ -72,21 +94,20 @@ public class RemoteService extends Service {
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         main.postDelayed(new Runnable() { public void run() { WearPusher.refreshStatus(RemoteService.this); main.postDelayed(this, 20000); } }, 20000);
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
-        main.postDelayed(() -> { if (ble == null || !ble.isConnected()) startWifi(); }, 7000);
+        main.postDelayed(() -> { if (ble == null || !ble.isConnected()) startWifi(null, 0); }, 7000);
     }
 
-    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_STICKY; }
-
-    private void startWifi() {
+    private void startWifi(String fixedHost, int fixedPort) {
         if (wifi != null) return;
         wifi = new WifiClient(this, new WifiClient.Listener() {
             public void onStatus(String s) { if (!bleUp()) { lastStatus = s; if (ui != null) ui.onStatus(s); } }
             public void onState(String json) {
                 if (isPlaylists(json)) { cachePlaylists(json); return; }
                 if (isQueue(json)) { lastQueue = json; return; }
-                if (!bleUp()) { lastState = json; transport = "Wi-Fi"; if (ui != null) ui.onState(json); }
+                if (!bleUp()) { lastState = json; transport = local ? "local" : "Wi-Fi"; if (ui != null) ui.onState(json); }
             }
         });
+        if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
         wifi.start();
     }
 
@@ -118,7 +139,7 @@ public class RemoteService extends Service {
             return tmp.hostPort();
         } finally { tmp.stop(); }   // don't leave it polling
     }
-    public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? "Wi-Fi" : transport); }
+    public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? (local ? "local" : "Wi-Fi") : transport); }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
     @Override public void onDestroy() {

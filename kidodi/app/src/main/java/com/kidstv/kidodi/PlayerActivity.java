@@ -178,7 +178,7 @@ public class PlayerActivity extends Activity {
     // --- kid-proof shell: device-owner lock-task + hidden-gesture admin unlock (PIN) ---
     private void enterKiosk() {
         int on = 0;
-        try { on = Settings.Global.getInt(getContentResolver(), "kidodi_kiosk", 0); } catch (Exception e) {}
+        on = Cfg.getInt(this, "kidodi_kiosk", 0);   // Settings screen (prefs) or adb Settings.Global
         if (on != 1) return;   // gated so dev builds aren't trapped; `settings put global kidodi_kiosk 1` to lock
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
@@ -242,7 +242,7 @@ public class PlayerActivity extends Activity {
                     for (int i = 0; i < entered.length(); i++) mask.append("● ");
                     disp.setText(mask.length() > 0 ? mask.toString().trim() : "Enter admin PIN");
                     if (entered.length() >= pin.length()) {
-                        if (entered.toString().equals(pin)) { pinShowing = false; dlg.dismiss(); unlock(); }
+                        if (entered.toString().equals(pin)) { pinShowing = false; dlg.dismiss(); showAdminMenu(restore); }
                         else { entered.setLength(0); disp.setText("Wrong — try again"); }
                     }
                 });
@@ -255,11 +255,45 @@ public class PlayerActivity extends Activity {
         dlg.show();
     }
 
-    private String currentPin() {
-        String p = null;
-        try { p = Settings.Global.getString(getContentResolver(), "kidodi_pin"); } catch (Exception e) {}
-        return (p == null || p.isEmpty()) ? "1234" : p;
+    /** After the PIN: the TV's own admin menu. The kiosk has to be fully usable with no phone or
+        watch around, so "Remote" is the complete remote UI running locally against this player. */
+    private void showAdminMenu(final float restoreBrightness) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
+        col.setPadding(dp(24), dp(16), dp(24), dp(16));
+        TextView h = new TextView(this);
+        h.setText("Kidodi admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
+        h.setGravity(Gravity.CENTER); h.setPadding(0, dp(8), 0, dp(16));
+        col.addView(h);
+        final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
+                .setOnCancelListener(d -> setBrightness(napped ? 0.02f : restoreBrightness)).create();
+        String[][] items = {
+                {"Remote  ·  playlist, up next, controls", "remote"},
+                {"Settings  ·  unlock gesture, PIN, Wi-Fi, camera", "settings"},
+                {"Exit to launcher", "exit"},
+                {"Back to the show", "back"}};
+        for (final String[] it : items) {
+            Button b = new Button(this);
+            b.setText(it[0]); b.setTextSize(18); b.setAllCaps(false);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
+            lp.setMargins(0, dp(4), 0, dp(4));
+            b.setLayoutParams(lp);
+            b.setOnClickListener(v -> {
+                dlg.dismiss();
+                switch (it[1]) {
+                    case "remote":   startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true)); break;
+                    case "settings": startActivity(new Intent(this, SettingsActivity.class)); break;
+                    case "exit":     unlock(); return;
+                    default: break;
+                }
+                setBrightness(napped ? 0.02f : restoreBrightness);
+            });
+            col.addView(b);
+        }
+        dlg.show();
     }
+
+    private String currentPin() { return Cfg.getStr(this, "kidodi_pin", "1234"); }
     private void setBrightness(float b) {
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         lp.screenBrightness = b; getWindow().setAttributes(lp);

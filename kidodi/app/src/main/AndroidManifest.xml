@@ -102,6 +102,10 @@
             </intent-filter>
         </receiver>
 
+        <!-- TV-side admin settings (behind the unlock gesture + PIN) -->
+        <activity android:name=".SettingsActivity" android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"/>
+
         <!-- boot straight into the player (the SHOW is the home screen) -->
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

@@ -60,6 +60,7 @@ public class RemoteActivity extends Activity {
     private Bitmap ptzBmp;   // last frame shown, for the viewport math
     private ScaleGestureDetector ptzScale;
     private volatile String tabletIp;   // the TV's LAN IP, learned from state (BLE) — for /snapshot.jpg
+    private boolean local;              // running ON the TV as its admin remote (loopback, no BLE)
     private String currentPl = "Shuffle All";
 
     @Override protected void onCreate(Bundle b) {
@@ -199,7 +200,9 @@ public class RemoteActivity extends Activity {
         frame.addView(root);
         setContentView(frame);
 
-        RemoteService.ensure(this);
+        local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote
+        if (local) { tabletIp = "127.0.0.1"; RemoteService.ensureLocal(this); }
+        else RemoteService.ensure(this);
         attach();
     }
 
@@ -241,7 +244,7 @@ public class RemoteActivity extends Activity {
             currentPl = o.optString("playlist", "Shuffle All");
             plChip.setText("Playlist:  " + currentPl + "  ▾");
             String ip = o.optString("ip", "");
-            if (!ip.isEmpty()) tabletIp = ip;
+            if (!ip.isEmpty() && !local) tabletIp = ip;   // local stays on loopback
         } catch (Exception ignored) {}
     }
 
@@ -527,6 +530,7 @@ public class RemoteActivity extends Activity {
         app's default network is cellular, which can't reach a 192.168.x host. Falls back to default. */
     private java.net.HttpURLConnection openOnWifi(String urlStr) throws Exception {
         java.net.URL url = new java.net.URL(urlStr);
+        if (local) return (java.net.HttpURLConnection) url.openConnection();   // loopback: never bind to the Wi-Fi network
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
             if (cm != null) for (android.net.Network n : cm.getAllNetworks()) {

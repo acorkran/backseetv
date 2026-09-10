@@ -75,7 +75,11 @@ public class ControlServer {
                     if (v != null) ctrl.setVolume(pf(v, 0)); else ctrl.nudge(pf(d, 0.1f));
                     body = ok(); break;
                 }
-                case "/mute":  ctrl.setMuted("1".equals(param(q, "on")) || "true".equals(param(q, "on"))); body = ok(); break;   // persisted player mute (NOT system volume)
+                case "/mute": {   // persisted player mute (NOT system volume); no ?on= -> toggle (like BLE "mute")
+                    String on = param(q, "on");
+                    ctrl.setMuted(on == null ? !ctrl.isMuted() : ("1".equals(on) || "true".equals(on)));
+                    body = ok(); break;
+                }
                 case "/queue": body = ctrl.queueJson((int) pf(param(q, "center"), -1), (int) pf(param(q, "n"), 0)); break;      // current play order (+index)
                 case "/jump":  ctrl.jumpTo((int) pf(param(q, "i"), -1)); PlayerActivity.wakeScreen(); body = ok(); break;
                 case "/sleep": {

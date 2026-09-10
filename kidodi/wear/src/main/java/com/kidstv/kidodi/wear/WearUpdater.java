@@ -57,10 +57,13 @@ public class WearUpdater {
                 req.getDataMap().putString("id", BuildConfig.BUILD_ID);
                 req.getDataMap().putString("ver", versionName(app));
                 Wearable.getDataClient(app).putDataItem(req.asPutDataRequest().setUrgent());
+                Log.i(TAG, "running " + versionName(app) + " build " + BuildConfig.BUILD_ID.substring(0, 8) + "; status published");
                 Wearable.getDataClient(app).getDataItems().addOnSuccessListener((DataItemBuffer buf) -> {
                     try {
+                        int seen = 0;
                         for (DataItem it : buf)
-                            if (PATH_UPDATE.equals(it.getUri().getPath())) consider(app, DataMapItem.fromDataItem(it));
+                            if (PATH_UPDATE.equals(it.getUri().getPath())) { seen++; consider(app, DataMapItem.fromDataItem(it)); }
+                        Log.i(TAG, "published builds visible: " + seen);
                     } finally { buf.release(); }
                 });
             } catch (Throwable t) { Log.w(TAG, "onAppStart: " + t); }   // no Play services -> just no self-update

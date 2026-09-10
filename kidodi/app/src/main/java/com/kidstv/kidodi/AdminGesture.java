@@ -76,7 +76,8 @@ class AdminGesture implements View.OnTouchListener {
             default:      return dy < -t && Math.abs(dy) > Math.abs(dx);   // up
         }
     }
-    private int gi(String k, int d) { try { return Settings.Global.getInt(ctx.getContentResolver(), k, d); } catch (Exception e) { return d; } }
-    private String gs(String k, String d) { try { String x = Settings.Global.getString(ctx.getContentResolver(), k); return (x == null || x.isEmpty()) ? d : x; } catch (Exception e) { return d; } }
+    // on-device Settings screen (prefs) first, adb Settings.Global as the dev fallback
+    private int gi(String k, int d) { return Cfg.getInt(ctx, k, d); }
+    private String gs(String k, String d) { return Cfg.getStr(ctx, k, d); }
     private int dp(int d) { return Math.round(d * ctx.getResources().getDisplayMetrics().density); }
 }

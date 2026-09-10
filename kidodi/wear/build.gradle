@@ -18,6 +18,7 @@ def wearBuildId = {
 }()
 tasks.register('writeWearBuildId') {
     def out = layout.buildDirectory.file('wear-build-id.txt')
+    inputs.property('wearBuildId', wearBuildId)   // without this Gradle treats an outputs-only task as up-to-date forever
     outputs.file(out)
     doLast { out.get().asFile.text = wearBuildId }
 }

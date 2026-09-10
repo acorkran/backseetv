@@ -26,15 +26,18 @@ public class WifiClient {
     private NsdManager.DiscoveryListener disco;
     private volatile String host;
     private volatile int port = 8090;
-    private volatile boolean stopped = false, connected = false;
+    private volatile boolean stopped = false, connected = false, fixed = false;
     private Runnable poller;
 
     public WifiClient(Context c, Listener l) { this.ctx = c.getApplicationContext(); this.l = l; }
     public boolean isConnected() { return connected; }
     public String hostPort() { return host != null ? host + ":" + port : null; }
+    /** Talk to a known host — the TV's own admin Remote uses 127.0.0.1 — no mDNS discovery. */
+    public void setFixedHost(String h, int p) { host = h; port = p; fixed = true; }
 
     public void start() {
         stopped = false;
+        if (fixed) { status("local"); startPolling(); return; }
         try {
             nsd = (NsdManager) ctx.getSystemService(Context.NSD_SERVICE);
             if (nsd == null) { status("no mDNS"); return; }
@@ -88,17 +91,25 @@ public class WifiClient {
         new Thread(() -> http(path)).start();
     }
 
+    /** BLE command vocabulary -> the player's HTTP endpoints (must stay in step with ControlServer). */
     private static String toHttp(String cmd) {
         if (cmd.startsWith("sleep:")) return "/sleep?min=" + cmd.substring(6);
         if (cmd.startsWith("play:")) return "/playlist?name=" + enc(cmd.substring(5));
+        if (cmd.startsWith("jump:")) return "/jump?i=" + cmd.substring(5);
+        if (cmd.startsWith("snap:")) return "/snap?on=" + onOff(cmd.substring(5));
+        if (cmd.startsWith("hotspot:")) return "/hotspot?on=" + onOff(cmd.substring(8));
+        if (cmd.startsWith("playmode:")) return "/playmode?on=" + onOff(cmd.substring(9));
         switch (cmd) {
             case "volup": return "/vol?d=0.1";
             case "voldown": return "/vol?d=-0.1";
-            case "mute": return "/vol?v=0";
+            case "mute": return "/mute";               // toggle (never "/vol?v=0": that zeroes the real volume)
+            case "unmute": return "/mute?on=0";
             case "wake": return "/sleep?min=0";
-            default: return "/" + cmd;   // play, pause, playpause, next, prev, flash, power
+            case "queue": return "/queue?center=-1&n=4";   // same ±4 window BLE pushes
+            default: return "/" + cmd;   // play, pause, playpause, next, prev, flash, power, queue
         }
     }
+    private static String onOff(String s) { return "on".equals(s.trim()) ? "1" : "0"; }
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
     private String http(String path) {
