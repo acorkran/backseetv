@@ -19,6 +19,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Matrix;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
@@ -26,6 +27,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -52,6 +55,10 @@ public class RemoteActivity extends Activity {
     private FrameLayout frame;
     private View picker;
     private View still; private volatile boolean stillOn;
+    // digital PTZ on the camera view: client-side viewport (zoom 1-4x, pan center as image fractions)
+    private float ptzZoom = 1f, ptzCx = 0.5f, ptzCy = 0.5f;
+    private Bitmap ptzBmp;   // last frame shown, for the viewport math
+    private ScaleGestureDetector ptzScale;
     private volatile String tabletIp;   // the TV's LAN IP, learned from state (BLE) — for /snapshot.jpg
     private String currentPl = "Shuffle All";
 
@@ -288,9 +295,10 @@ public class RemoteActivity extends Activity {
         col.addView(h);
 
         final ImageView img = new ImageView(this);
-        img.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        img.setScaleType(ImageView.ScaleType.MATRIX);   // we drive the viewport (digital PTZ)
         img.setBackgroundColor(0xFF000000);
         col.addView(img, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        setupPtz(img);   // pinch to zoom (1-4x), single-finger drag to pan/tilt
 
         final TextView status = new TextView(this);
         status.setText("finding the TV…"); status.setTextColor(SUB); status.setTextSize(12);
@@ -333,7 +341,7 @@ public class RemoteActivity extends Activity {
                         while (r < len && (k = in.read(jpg, r, len - r)) >= 0) r += k;
                         if (r != len) break;
                         final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, len);
-                        if (bmp != null) main.post(() -> { img.setImageBitmap(bmp); status.setText(""); });
+                        if (bmp != null) main.post(() -> { showFrame(img, bmp); status.setText(""); });
                     }
                 } catch (Exception e) {
                     if (++fails >= 3) {   // give up on live -> fall back to BLE stills
@@ -356,7 +364,7 @@ public class RemoteActivity extends Activity {
                 if (jpg != null && jpg != lastShown) {
                     lastShown = jpg;
                     final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
-                    if (bmp != null) main.post(() -> { img.setImageBitmap(bmp); status.setText(""); });
+                    if (bmp != null) main.post(() -> { showFrame(img, bmp); status.setText(""); });
                 } else if (jpg == null) main.post(() -> status.setText("waiting for a still over Bluetooth…"));
                 try { Thread.sleep(700); } catch (InterruptedException e) { break; }
             }
@@ -371,10 +379,70 @@ public class RemoteActivity extends Activity {
         return b.toString("UTF-8");
     }
 
+    // --- digital PTZ: a client-side viewport over whatever frames arrive (still or live) ------
+    private void setupPtz(final ImageView img) {
+        ptzZoom = 1f; ptzCx = 0.5f; ptzCy = 0.5f; ptzBmp = null;   // reset to 1x centered on open
+        ptzScale = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override public boolean onScale(ScaleGestureDetector d) {
+                ptzZoom = Math.max(1f, Math.min(4f, ptzZoom * d.getScaleFactor()));   // pinch: 1-4x
+                applyViewport(img); return true;
+            }
+        });
+        final float[] last = new float[2]; final boolean[] panning = { false };
+        img.setOnTouchListener((v, ev) -> {
+            ptzScale.onTouchEvent(ev);
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    last[0] = ev.getX(); last[1] = ev.getY(); panning[0] = true; break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    panning[0] = false; break;   // a second finger = pinch, not pan
+                case MotionEvent.ACTION_MOVE:
+                    if (panning[0] && ev.getPointerCount() == 1 && !ptzScale.isInProgress() && ptzBmp != null) {
+                        float base = Math.min((float) v.getWidth() / ptzBmp.getWidth(), (float) v.getHeight() / ptzBmp.getHeight());
+                        float s = base * ptzZoom;
+                        if (s > 0) {   // drag moves the viewport centre the opposite way (drag right -> see left)
+                            ptzCx -= (ev.getX() - last[0]) / (ptzBmp.getWidth() * s);
+                            ptzCy -= (ev.getY() - last[1]) / (ptzBmp.getHeight() * s);
+                        }
+                        last[0] = ev.getX(); last[1] = ev.getY();
+                        applyViewport(img);
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    panning[0] = false; break;
+            }
+            return true;
+        });
+        img.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> applyViewport(img));   // apply once the view is sized
+    }
+    private void showFrame(ImageView img, Bitmap bmp) {
+        ptzBmp = bmp;
+        img.setImageBitmap(bmp);
+        applyViewport(img);   // keep the chosen zoom/pan as frames update
+    }
+    /** Rebuild the image matrix from (zoom, pan-centre), clamped so you can't pan past the frame edges. */
+    private void applyViewport(ImageView img) {
+        Bitmap b = ptzBmp;
+        if (b == null) return;
+        int VW = img.getWidth(), VH = img.getHeight(), BW = b.getWidth(), BH = b.getHeight();
+        if (VW == 0 || VH == 0 || BW == 0 || BH == 0) return;
+        float base = Math.min((float) VW / BW, (float) VH / BH);   // FIT_CENTER baseline at 1x
+        float s = base * ptzZoom;
+        float halfW = (VW / (BW * s)) / 2f, halfH = (VH / (BH * s)) / 2f;   // visible half-extent, in image fractions
+        ptzCx = halfW >= 0.5f ? 0.5f : Math.max(halfW, Math.min(1f - halfW, ptzCx));   // clamp centre so the viewport stays inside the frame
+        ptzCy = halfH >= 0.5f ? 0.5f : Math.max(halfH, Math.min(1f - halfH, ptzCy));
+        Matrix m = new Matrix();
+        m.postScale(s, s);
+        m.postTranslate(VW / 2f - ptzCx * BW * s, VH / 2f - ptzCy * BH * s);
+        img.setImageMatrix(m);
+    }
+
     private void closeStill() {
         stillOn = false;
         send("camble:off"); send("snap:off");   // stop the BLE push + capture
         if (still != null) { frame.removeView(still); still = null; }
+        ptzBmp = null;   // release the frame ref; PTZ resets on next open
     }
     /** Open the URL bound to the Wi-Fi network — the TV is on the LAN, but with mobile data up the
         app's default network is cellular, which can't reach a 192.168.x host. Falls back to default. */
