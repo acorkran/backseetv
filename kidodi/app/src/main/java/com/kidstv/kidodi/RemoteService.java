@@ -38,6 +38,10 @@ public class RemoteService extends Service {
     private Listener ui;
 
     private static boolean isPlaylists(String json) { return json != null && json.contains("\"type\":\"playlists\""); }
+    private static boolean isQueue(String json) { return json != null && json.contains("\"type\":\"queue\""); }
+    private volatile String lastQueue = null;   // the latest one-shot queue payload (BLE window / Wi-Fi list)
+    public String queueJson() { return lastQueue; }
+    public void requestQueue() { lastQueue = null; send("queue"); }
     private void cachePlaylists(String json) {
         try {
             org.json.JSONArray a = new org.json.JSONObject(json).optJSONArray("names");
@@ -59,6 +63,7 @@ public class RemoteService extends Service {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
             public void onState(String json) {
                 if (isPlaylists(json)) { cachePlaylists(json); return; }
+                if (isQueue(json)) { lastQueue = json; return; }
                 lastState = json; transport = "BLE"; if (ui != null) ui.onState(json);
             }
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
@@ -76,6 +81,7 @@ public class RemoteService extends Service {
             public void onStatus(String s) { if (!bleUp()) { lastStatus = s; if (ui != null) ui.onStatus(s); } }
             public void onState(String json) {
                 if (isPlaylists(json)) { cachePlaylists(json); return; }
+                if (isQueue(json)) { lastQueue = json; return; }
                 if (!bleUp()) { lastState = json; transport = "Wi-Fi"; if (ui != null) ui.onState(json); }
             }
         });

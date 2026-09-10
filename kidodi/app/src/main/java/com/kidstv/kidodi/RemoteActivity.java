@@ -49,11 +49,11 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private View dot;
-    private TextView linkLabel, title, subtitle, timeText, sleepText, plChip;
+    private TextView linkLabel, title, subtitle, timeText, sleepText, plChip, queueChip;
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
-    private View picker;
+    private View picker, queueView;
     private View still; private volatile boolean stillOn;
     // digital PTZ on the camera view: client-side viewport (zoom 1-4x, pan center as image fractions)
     private float ptzZoom = 1f, ptzCx = 0.5f, ptzCy = 0.5f;
@@ -126,7 +126,15 @@ public class RemoteActivity extends Activity {
         plChip.setText("Playlist:  Shuffle All  ▾"); plChip.setTextColor(SUB); plChip.setTextSize(13);
         plChip.setPadding(dp(6), dp(10), dp(6), dp(2)); plChip.setClickable(true);
         plChip.setOnClickListener(v -> openPicker());
-        root.addView(plChip);
+        LinearLayout chips = new LinearLayout(this);   // Playlist ▾  |  Up next ▾
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.addView(plChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        queueChip = new TextView(this);
+        queueChip.setText("Up next  ▾"); queueChip.setTextColor(SUB); queueChip.setTextSize(13);
+        queueChip.setPadding(dp(6), dp(10), dp(6), dp(2)); queueChip.setClickable(true); queueChip.setGravity(Gravity.END);
+        queueChip.setOnClickListener(v -> openQueue());
+        chips.addView(queueChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        root.addView(chips);
 
         root.addView(spacer(dp(12)));
 
@@ -279,8 +287,71 @@ public class RemoteActivity extends Activity {
         }
     }
     private void closePicker() { if (picker != null) { frame.removeView(picker); picker = null; } }
+
+    // --- "Up next": the current queue in PLAY order (Shuffle All is pre-shuffled), tap a row to jump ---
+    private void openQueue() {
+        if (queueView != null) return;
+        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
+        final LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(16), dp(20), dp(16), dp(16));
+        TextView h = new TextView(this);
+        h.setText("Up next  ·  " + currentPl); h.setTextColor(TXT); h.setTextSize(20);
+        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
+        col.addView(h);
+        TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
+        sv.addView(col); queueView = sv; frame.addView(queueView);
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.requestQueue();   // BLE: a ±4 window around the current item (always available)
+        if (tabletIp != null && !tabletIp.isEmpty()) {   // Wi-Fi: a wide window (±80) around the current item
+            new Thread(() -> {
+                try {
+                    java.net.HttpURLConnection c = openOnWifi("http://" + tabletIp + ":8090/queue?center=-1&n=80");
+                    c.setConnectTimeout(2000); c.setReadTimeout(4000);
+                    if (c.getResponseCode() == 200) { final String json = readAll(c.getInputStream()); main.post(() -> { if (queueView != null) renderQueue(col, json); }); }
+                    c.disconnect();
+                } catch (Exception ignored) {}   // the BLE window still paints
+            }).start();
+        }
+        populateQueue(col, 0);
+    }
+    private void populateQueue(final LinearLayout col, final int attempt) {
+        RemoteService svc = RemoteService.get();
+        String json = svc != null ? svc.queueJson() : null;
+        if (json != null) { if (col.getChildCount() <= 2) renderQueue(col, json); return; }   // don't clobber a wider Wi-Fi render
+        if (attempt < 12) main.postDelayed(() -> { if (queueView != null) populateQueue(col, attempt + 1); }, 400);
+    }
+    private void renderQueue(LinearLayout col, String json) {
+        try {
+            JSONObject o = new JSONObject(json);
+            int from = o.optInt("from", 0), index = o.optInt("index", -1), total = o.optInt("total", 0);
+            org.json.JSONArray items = o.optJSONArray("items");
+            while (col.getChildCount() > 1) col.removeViewAt(1);
+            ((TextView) col.getChildAt(0)).setText("Up next  ·  " + o.optString("playlist", currentPl) + "   (" + total + ")");
+            if (items == null) return;
+            for (int i = 0; i < items.length(); i++) {
+                final int abs = from + i;
+                String name = items.optString(i).replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/');
+                Button row = new Button(this);
+                row.setAllCaps(false); row.setText((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name);
+                row.setTextColor(abs == index ? 0xFF8FD694 : TXT); row.setTextSize(14); row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setMaxLines(2);
+                GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+                lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+                row.setOnClickListener(v -> { send("jump:" + abs); closeQueue(); });
+                col.addView(row);
+            }
+        } catch (Exception ignored) {}
+    }
+    private void closeQueue() { if (queueView != null) { frame.removeView(queueView); queueView = null; } }
+    private static String readAll(java.io.InputStream in) throws Exception {
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[4096]; int n;
+        while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+        in.close(); return bo.toString("UTF-8");
+    }
     @Override public void onBackPressed() {
         if (still != null) closeStill();
+        else if (queueView != null) closeQueue();
         else if (picker != null) closePicker();
         else super.onBackPressed();
     }
