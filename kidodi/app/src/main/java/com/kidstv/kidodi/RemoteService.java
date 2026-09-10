@@ -61,6 +61,7 @@ public class RemoteService extends Service {
                 if (isPlaylists(json)) { cachePlaylists(json); return; }
                 lastState = json; transport = "BLE"; if (ui != null) ui.onState(json);
             }
+            public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
         });
         ble.start();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
