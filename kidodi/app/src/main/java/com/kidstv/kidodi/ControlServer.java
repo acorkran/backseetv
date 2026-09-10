@@ -82,6 +82,13 @@ public class ControlServer {
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 case "/snap": SnapshotService.set(ctx, "1".equals(param(q, "on")) || "true".equals(param(q, "on"))); body = ok(); break;
+                case "/playmode": {   // toddler play mode; optional &vol=0..1 sets the (default-muted) audio gain
+                    if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) {
+                        String vol = param(q, "vol"); if (vol != null) PlayModeActivity.setGain(pf(vol, 0f));
+                        PlayModeActivity.begin(ctx);
+                    } else PlayModeActivity.end();
+                    body = ok(); break;
+                }
                 case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }

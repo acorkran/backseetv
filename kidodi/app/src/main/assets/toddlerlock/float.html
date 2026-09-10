@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toddler Lock — quick lock</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+      -webkit-user-select: none; user-select: none; cursor: pointer; }
+    #lock { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+    #img { width: 86%; height: 86%; object-fit: contain; opacity: .85;
+      filter: drop-shadow(0 3px 8px rgba(0,0,0,.45)); transition: transform .1s, opacity .15s; }
+    #lock:hover #img { transform: scale(1.06); }
+    #lock:active #img { transform: scale(.92); }
+  </style>
+</head>
+<body>
+  <!-- A tap locks. Position / size / opacity are driven from the main window's settings. -->
+  <div id="lock" title="Lock now"><img id="img" src="lock.png" draggable="false" alt="Lock"></div>
+  <script src="float.js"></script>
+</body>
+</html>
