@@ -70,14 +70,19 @@ public class WearRemoteActivity extends Activity {
         content.addView(playerView);
         current = playerView;
 
-        // on the player screen: swipe UP -> playlists, swipe DOWN -> camera (Samsung-media style)
+        // On the player screen: swipe UP -> playlists, swipe LEFT -> camera. We deliberately AVOID
+        // swipe-down (watch quick-settings) and swipe-right (WearOS back/dismiss = one level back).
         gd = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
                 if (e1 == null || e2 == null || current != playerView) return false;
-                float dy = e1.getY() - e2.getY(), dx = Math.abs(e1.getX() - e2.getX());
-                if (Math.abs(dy) < pad(40) || Math.abs(vy) < 200 || Math.abs(dy) < dx) return false;
-                if (dy > 0) openPlaylists(); else openCamera();
-                return true;
+                float dy = e1.getY() - e2.getY();   // >0 = up
+                float dx = e2.getX() - e1.getX();   // >0 = right, <0 = left
+                if (Math.abs(dy) >= Math.abs(dx)) {                 // vertical-dominant
+                    if (dy > pad(40) && Math.abs(vy) > 200) { openPlaylists(); return true; }   // UP -> playlists
+                } else {                                            // horizontal-dominant
+                    if (dx < -pad(40) && Math.abs(vx) > 200) { openCamera(); return true; }     // LEFT -> camera
+                }
+                return false;   // down (quick settings) / right (back) left to the system
             }
         });
 
@@ -325,8 +330,8 @@ public class WearRemoteActivity extends Activity {
         hint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openPlaylists(); } });
         col.addView(hint);
 
-        TextView camHint = new TextView(this);   // swipe down (or tap) for the camera check-in
-        camHint.setText("▼ Camera"); camHint.setTextColor(0xFF6B7075); camHint.setTextSize(11);
+        TextView camHint = new TextView(this);   // swipe LEFT (or tap) for the camera check-in
+        camHint.setText("◀ Camera"); camHint.setTextColor(0xFF6B7075); camHint.setTextSize(11);
         camHint.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams chlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         chlp.topMargin = pad(2); camHint.setLayoutParams(chlp);
@@ -482,7 +487,13 @@ public class WearRemoteActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    @Override public void onBackPressed() { if (current == cameraView) closeCamera(); else show(playerView); }
+    // Swipe-right / back = one level back: camera -> player (stop capture), any sub-view -> player,
+    // player -> exit the app (BleService stays alive so the connection persists for next open).
+    @Override public void onBackPressed() {
+        if (current == cameraView) closeCamera();
+        else if (current != playerView) show(playerView);
+        else super.onBackPressed();
+    }
     @Override protected void onResume() { super.onResume(); attach(); }
     @Override protected void onPause() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
     // NOTE: we deliberately do NOT stop BleService on destroy — it stays alive so the
