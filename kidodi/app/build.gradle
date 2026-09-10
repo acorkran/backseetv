@@ -63,4 +63,28 @@ dependencies {
     // + offline, no Play Services) so nobody types random-hotspot credentials.
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'com.google.mlkit:barcode-scanning:17.2.0'
+
+    // Data Layer (phone <-> watch over the Bluetooth companion link): pushes the watch app's update
+    implementation 'com.google.android.gms:play-services-wearable:18.2.0'
 }
+
+// ---- Embed the WATCH APK so the phone can push it to the watch over the Data Layer ---------------
+// Building :app builds :wear too and drops wear.apk + wear.sha into this module's assets, so an
+// `adb install -r` of the phone APK is all it takes: the phone then self-updates the watch (no
+// wireless-adb / charger dance). See WearPusher (phone) + WearUpdater (watch).
+// Assets: wear.apk (the build), wear.sha (SHA-256 of those bytes — transfer check), wear.id (the
+// watch module's SOURCE hash — the update identity; matches BuildConfig.BUILD_ID inside the APK).
+def embeddedWear = layout.buildDirectory.dir('embedded-wear')
+tasks.register('embedWearApk', Copy) {
+    dependsOn ':wear:assembleDebug', ':wear:writeWearBuildId'
+    from(project(':wear').layout.buildDirectory.file('outputs/apk/debug/wear-debug.apk')) { rename { 'wear.apk' } }
+    from(project(':wear').layout.buildDirectory.file('wear-build-id.txt')) { rename { 'wear.id' } }
+    into embeddedWear
+    doLast {
+        def apk = embeddedWear.get().file('wear.apk').asFile
+        def sha = java.security.MessageDigest.getInstance('SHA-256').digest(apk.bytes).encodeHex().toString()
+        embeddedWear.get().file('wear.sha').asFile.text = sha
+    }
+}
+android.sourceSets.main.assets.srcDir(embeddedWear)
+afterEvaluate { tasks.named('preBuild') { dependsOn 'embedWearApk' } }

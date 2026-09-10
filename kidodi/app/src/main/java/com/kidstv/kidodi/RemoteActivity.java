@@ -209,7 +209,8 @@ public class RemoteActivity extends Activity {
             boolean ready = s.startsWith("ready");
             ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
             RemoteService svc = RemoteService.get();
-            linkLabel.setText(ready && svc != null ? svc.transport() : "");
+            String ws = WearPusher.watchStatus();
+            linkLabel.setText((ready && svc != null ? svc.transport() : "") + (ws.isEmpty() ? "" : "  ·  " + ws));
         }
         public void onState(String json) { showState(json); }
     };

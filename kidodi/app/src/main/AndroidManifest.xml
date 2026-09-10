@@ -109,6 +109,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- after THIS app is updated: push the embedded watch build to the watch (phone role only) -->
+        <receiver android:name=".PackageReplacedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
         <!-- phone connection service: BLE primary + wifi fallback -->
         <service android:name=".RemoteService"
             android:exported="false"

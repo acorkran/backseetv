@@ -69,6 +69,8 @@ public class RemoteService extends Service {
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
         });
         ble.start();
+        WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
+        main.postDelayed(new Runnable() { public void run() { WearPusher.refreshStatus(RemoteService.this); main.postDelayed(this, 20000); } }, 20000);
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
         main.postDelayed(() -> { if (ble == null || !ble.isConnected()) startWifi(); }, 7000);
     }

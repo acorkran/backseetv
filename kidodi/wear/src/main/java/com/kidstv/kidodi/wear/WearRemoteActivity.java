@@ -65,6 +65,7 @@ public class WearRemoteActivity extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         requestPerms();
+        WearUpdater.onAppStart(this);   // publish what's installed; apply a phone-pushed build we may have missed
 
         content = new FrameLayout(this);
         playerView = buildPlayer();
@@ -88,9 +89,20 @@ public class WearRemoteActivity extends Activity {
                 }
                 return false;   // down (quick settings) / right (back) left to the system
             }
-            @Override public boolean onSingleTapUp(MotionEvent e) {   // tap = pan/tilt on the camera frame
+            @Override public boolean onDown(MotionEvent e) { return current == cameraView; }   // needed so tap/scroll callbacks fire on the camera view
+            @Override public boolean onSingleTapUp(MotionEvent e) {   // tap = pan/tilt toward the tapped point
+                android.util.Log.i("KidodiCam", "tap cam=" + (current == cameraView) + " x=" + e.getX() + " y=" + e.getY());
                 if (current == cameraView) { panToward(e.getX(), e.getY()); return true; }
                 return false;   // player taps fall through to the buttons
+            }
+            @Override public boolean onScroll(MotionEvent e1, MotionEvent e2, float dx, float dy) {   // drag = pan (a tap with slight movement lands here)
+                if (current != cameraView || camZoom <= 1.01f) return false;
+                float vw = Math.max(1, content.getWidth()), vh = Math.max(1, content.getHeight());
+                camCx += (dx / vw) / camZoom;   // dx = last.x - now.x: drag right -> reveal left
+                camCy += (dy / vh) / camZoom;
+                clampCentre();
+                if (lastCamBmp != null) paintFrame(lastCamBmp);
+                return true;
             }
         });
 
