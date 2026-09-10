@@ -59,6 +59,7 @@ public class ControlServer {
 
             if (path.equals("/upload")) { handleUpload(param(q, "name"), h.toString(), in, c); return; }   // wifi file import
             if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
+            if (path.equals("/live")) { handleLive(c); return; }   // MJPEG live feed (Wi-Fi tier)
 
             String body;
             switch (path) {
@@ -138,6 +139,33 @@ public class ControlServer {
     }
 
     // --- camera-monitor plugin: periodically-updated still images (off by default) ---
+    /** Wi-Fi LIVE tier: MJPEG (multipart/x-mixed-replace) of the full-res still at ~8fps while open.
+        Bumps SnapshotService to the live rate on connect, drops it on disconnect. Long-lived — runs on
+        this connection's own handler thread, so it never blocks accept(). */
+    private void handleLive(Socket c) {
+        SnapshotService.setLive(ctx, true);
+        try {
+            OutputStream os = c.getOutputStream();
+            os.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=kidodiframe\r\n"
+                    + "Cache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes("UTF-8"));
+            os.flush();
+            while (run) {
+                byte[] jpeg = SnapshotService.latestSnapshot();
+                if (jpeg != null) {
+                    os.write(("--kidodiframe\r\nContent-Type: image/jpeg\r\nContent-Length: " + jpeg.length + "\r\n\r\n").getBytes("UTF-8"));
+                    os.write(jpeg);
+                    os.write("\r\n".getBytes("UTF-8"));
+                    os.flush();
+                }
+                Thread.sleep(120);
+            }
+        } catch (Exception ignored) {   // client disconnected / stream closed
+        } finally {
+            SnapshotService.setLive(ctx, false);
+            try { c.close(); } catch (Exception ignored) {}
+        }
+    }
+
     private void writeJpeg(Socket c, byte[] data) throws Exception {
         OutputStream os = c.getOutputStream();
         if (data == null) {   // snapshots off or not ready yet

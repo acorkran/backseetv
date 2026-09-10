@@ -41,9 +41,14 @@ public class SnapshotService extends LifecycleService {
     static final float TARGET_PX = 480f;        // downscale longest side (small still, kind to BLE)
 
     private static SnapshotService INSTANCE;
-    private static volatile byte[] latest = null;   // latest JPEG still
+    private static volatile byte[] latest = null;    // latest full-res JPEG still (~480px)
+    private static volatile byte[] latestLow = null; // latest reduced-res JPEG (~128px q40) for BLE
+    private static volatile long intervalMs = MIN_INTERVAL_MS;   // dynamic: drops while a live consumer is open
+    private static int liveCount = 0;                            // # of open /live (MJPEG) consumers
+    private static final java.util.Set<String> wanters = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     public static boolean running() { return INSTANCE != null; }
-    public static byte[] latestSnapshot() { return latest; }
+    public static byte[] latestSnapshot() { return latest; }      // full-res, for Wi-Fi
+    public static byte[] latestLowRes() { return latestLow; }      // reduced-res, for BLE chunks
 
     public static void begin(Context ctx) {
         Intent i = new Intent(ctx.getApplicationContext(), SnapshotService.class);
@@ -51,17 +56,33 @@ public class SnapshotService extends LifecycleService {
         else ctx.getApplicationContext().startService(i);
     }
     public static void end(Context ctx) {
-        latest = null;
+        latest = null; latestLow = null;
         ctx.getApplicationContext().stopService(new Intent(ctx.getApplicationContext(), SnapshotService.class));
     }
-    /** Toggle snapshots. When enabling, the device owner grants itself CAMERA first (no user prompt),
-        then starts capture after a short beat — the grant needs a moment to take effect before an
-        FGS-camera start, or the very first enable on a fresh device throws. */
-    public static void set(Context ctx, boolean on) {
-        if (on) {
+    /** Ref-counted capture: the camera runs while ANY consumer wants it (snap / BLE stills / live).
+        When enabling from empty, the device owner grants itself CAMERA first (no user prompt), then
+        starts after a short beat — the grant needs a moment before an FGS-camera start or the first
+        enable on a fresh device throws. */
+    public static void want(Context ctx, String key, boolean on) {
+        boolean startNow = false, stopNow = false;
+        synchronized (wanters) {
+            if (on) { startNow = wanters.isEmpty(); wanters.add(key); }
+            else { wanters.remove(key); stopNow = wanters.isEmpty(); }
+        }
+        if (startNow) {
             grantCamera(ctx);
             new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> begin(ctx), 400);
-        } else end(ctx);
+        } else if (stopNow) end(ctx);
+    }
+    /** Back-compat: the /snap toggle. */
+    public static void set(Context ctx, boolean on) { want(ctx, "snap", on); }
+    /** A live (Wi-Fi MJPEG) consumer: bumps the capture rate to ~8fps and keeps capture alive. */
+    public static void setLive(Context ctx, boolean on) {
+        synchronized (SnapshotService.class) {
+            if (on) liveCount++; else if (liveCount > 0) liveCount--;
+            intervalMs = liveCount > 0 ? 120 : MIN_INTERVAL_MS;
+        }
+        want(ctx, "live", on);
     }
     private static void grantCamera(Context ctx) {
         try {
@@ -118,7 +139,7 @@ public class SnapshotService extends LifecycleService {
 
     private void analyze(ImageProxy proxy) {
         long now = System.currentTimeMillis();
-        if (now - lastProcess < MIN_INTERVAL_MS) { proxy.close(); return; }   // throttle to the still rate
+        if (now - lastProcess < intervalMs) { proxy.close(); return; }   // throttle to the current rate (still/live)
         lastProcess = now;
         try {
             ImageProxy.PlaneProxy plane = proxy.getPlanes()[0];
@@ -140,6 +161,14 @@ public class SnapshotService extends LifecycleService {
             ByteArrayOutputStream jpg = new ByteArrayOutputStream();
             out.compress(Bitmap.CompressFormat.JPEG, 60, jpg);
             latest = jpg.toByteArray();
+            // reduced-res copy for BLE chunks (~128px longest side, q40, target <4KB)
+            float ls = Math.min(1f, 128f / Math.max(out.getWidth(), out.getHeight()));
+            Bitmap low = Bitmap.createScaledBitmap(out,
+                    Math.max(1, Math.round(out.getWidth() * ls)), Math.max(1, Math.round(out.getHeight() * ls)), true);
+            ByteArrayOutputStream ljpg = new ByteArrayOutputStream();
+            low.compress(Bitmap.CompressFormat.JPEG, 40, ljpg);
+            latestLow = ljpg.toByteArray();
+            if (low != out) low.recycle();
             if (out != rgba) out.recycle();
         } catch (Exception e) { Log.w(TAG, "snapshot convert: " + e); }
         finally { proxy.close(); }
@@ -149,7 +178,7 @@ public class SnapshotService extends LifecycleService {
         try { if (provider != null) provider.unbindAll(); } catch (Exception ignored) {}
         try { exec.shutdownNow(); } catch (Exception ignored) {}
         if (INSTANCE == this) INSTANCE = null;
-        latest = null;
+        latest = null; latestLow = null;
         super.onDestroy();
     }
 

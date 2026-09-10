@@ -45,7 +45,10 @@ public class BleServer {
     private BluetoothLeAdvertiser adv;
     private AdvertiseCallback advCb;
     private BluetoothGattCharacteristic stateChar;
+    private BluetoothGattCharacteristic imgChar;
     private Runnable pusher;
+    private int cambleWant = 0;                                          // # of clients wanting BLE stills
+    private java.util.concurrent.ScheduledExecutorService imgExec;       // pushes chunked stills ~1/sec
 
     public BleServer(Context c, PlayerController ctrl) { this.ctx = c.getApplicationContext(); this.ctrl = ctrl; }
 
@@ -75,8 +78,14 @@ public class BleServer {
                 BluetoothGattCharacteristic.PERMISSION_READ);
         stateChar.addDescriptor(new BluetoothGattDescriptor(Ble.CCCD,
                 BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE));
+        imgChar = new BluetoothGattCharacteristic(Ble.IMG,
+                BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                BluetoothGattCharacteristic.PERMISSION_READ);
+        imgChar.addDescriptor(new BluetoothGattDescriptor(Ble.CCCD,
+                BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE));
         svc.addCharacteristic(cmd);
         svc.addCharacteristic(stateChar);
+        svc.addCharacteristic(imgChar);
         gatt.addService(svc);
 
         startAdvertising(ad);
@@ -135,6 +144,7 @@ public class BleServer {
         if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
         if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
         if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
+        if (cmd.startsWith("camble:")) { setCamble("on".equals(cmd.substring(7).trim())); return; }  // reduced-res stills over BLE
 
         switch (cmd) {
             case "play": PlayerActivity.wakeScreen(); ctrl.play(); break;
@@ -152,6 +162,60 @@ public class BleServer {
         }
     }
 
+    /** Toggle BLE reduced-res still delivery (ref-counted across clients). While ≥1 client wants it,
+        a background thread pushes a fresh low-res still on the IMG characteristic ~once/second. */
+    private void setCamble(boolean on) {
+        if (on) {
+            cambleWant++;
+            SnapshotService.want(ctx, "ble", true);
+            if (imgExec == null) {
+                imgExec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+                imgExec.scheduleWithFixedDelay(this::pushImg, 1000, 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        } else {
+            if (cambleWant > 0) cambleWant--;
+            if (cambleWant == 0) {
+                if (imgExec != null) { imgExec.shutdownNow(); imgExec = null; }
+                SnapshotService.want(ctx, "ble", false);
+            }
+        }
+    }
+
+    /** Notify the latest reduced-res still to IMG subscribers as framed chunks:
+        START = [0x01][JPEG length int32 big-endian][data...], then CONTINUE = [0x02][data...]. */
+    private void pushImg() {
+        try {
+            if (gatt == null || imgChar == null || subs.isEmpty()) return;
+            byte[] jpeg = SnapshotService.latestLowRes();
+            if (jpeg == null) return;
+            final int CHUNK = 500;   // centrals request MTU 512 -> ~509 usable; keep a margin
+            int off = 0; boolean first = true;
+            while (off < jpeg.length) {
+                byte[] frame;
+                if (first) {
+                    int n = Math.min(CHUNK - 5, jpeg.length - off);
+                    frame = new byte[5 + n];
+                    frame[0] = 0x01;
+                    frame[1] = (byte) ((jpeg.length >> 24) & 0xFF);
+                    frame[2] = (byte) ((jpeg.length >> 16) & 0xFF);
+                    frame[3] = (byte) ((jpeg.length >> 8) & 0xFF);
+                    frame[4] = (byte) (jpeg.length & 0xFF);
+                    System.arraycopy(jpeg, off, frame, 5, n);
+                    off += n; first = false;
+                } else {
+                    int n = Math.min(CHUNK - 1, jpeg.length - off);
+                    frame = new byte[1 + n];
+                    frame[0] = 0x02;
+                    System.arraycopy(jpeg, off, frame, 1, n);
+                    off += n;
+                }
+                imgChar.setValue(frame);
+                for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, imgChar, false); } catch (Exception ignored) {}
+                try { Thread.sleep(15); } catch (InterruptedException e) { return; }   // pace so the stack doesn't drop chunks
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void pushState() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
         stateChar.setValue(ctrl.stateJson().getBytes());
@@ -166,6 +230,7 @@ public class BleServer {
 
     public void stop() {
         try { if (pusher != null) main.removeCallbacks(pusher); } catch (Exception ignored) {}
+        try { if (imgExec != null) { imgExec.shutdownNow(); imgExec = null; } } catch (Exception ignored) {}
         try { if (adv != null && advCb != null) adv.stopAdvertising(advCb); } catch (Exception ignored) {}
         try { if (gatt != null) gatt.close(); } catch (Exception ignored) {}
         gatt = null;
