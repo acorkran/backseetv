@@ -184,8 +184,27 @@ public class PlayerController {
             o.put("volume", Math.round(vol * 100) / 100.0);
             o.put("sleeping", sleeping);
             o.put("sleep_remaining_ms", sleeping ? Math.max(0, sleepEnd - System.currentTimeMillis()) : 0);
+            o.put("ip", wifiIp());   // so a remote can fetch /snapshot.jpg directly (BLE carries this; no mDNS needed)
         } catch (Exception ignored) {}
         return o.toString();
+    }
+
+    /** This device's site-local IPv4 (e.g. 192.168.x) so a remote can reach the control server
+        without relying on mDNS resolution (which proved flaky). "" if not on a LAN. */
+    static String wifiIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                java.net.NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
     }
 
     private void on(Runnable r) { if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main.post(r); }

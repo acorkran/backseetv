@@ -13,7 +13,10 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.widget.ImageView;
 import android.widget.Toast;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -48,6 +51,8 @@ public class RemoteActivity extends Activity {
     private IconView playPause;
     private FrameLayout frame;
     private View picker;
+    private View still; private volatile boolean stillOn;
+    private volatile String tabletIp;   // the TV's LAN IP, learned from state (BLE) — for /snapshot.jpg
     private String currentPl = "Shuffle All";
 
     @Override protected void onCreate(Bundle b) {
@@ -161,6 +166,13 @@ public class RemoteActivity extends Activity {
         importBtn.setOnClickListener(v -> pickImport());
         root.addView(importBtn);
 
+        TextView stillBtn = new TextView(this);
+        stillBtn.setText("👶  Check-in  ·  still image");
+        stillBtn.setTextColor(ACCENT); stillBtn.setTextSize(13); stillBtn.setGravity(Gravity.CENTER);
+        stillBtn.setPadding(0, dp(12), 0, 0); stillBtn.setClickable(true);
+        stillBtn.setOnClickListener(v -> openStill());
+        root.addView(stillBtn);
+
         frame = new FrameLayout(this);
         frame.addView(root);
         setContentView(frame);
@@ -205,6 +217,8 @@ public class RemoteActivity extends Activity {
             } else sleepText.setText("");
             currentPl = o.optString("playlist", "Shuffle All");
             plChip.setText("Playlist:  " + currentPl + "  ▾");
+            String ip = o.optString("ip", "");
+            if (!ip.isEmpty()) tabletIp = ip;
         } catch (Exception ignored) {}
     }
 
@@ -251,7 +265,90 @@ public class RemoteActivity extends Activity {
         }
     }
     private void closePicker() { if (picker != null) { frame.removeView(picker); picker = null; } }
-    @Override public void onBackPressed() { if (picker != null) closePicker(); else super.onBackPressed(); }
+    @Override public void onBackPressed() {
+        if (still != null) closeStill();
+        else if (picker != null) closePicker();
+        else super.onBackPressed();
+    }
+
+    // --- check-in: periodically-updated STILL IMAGE from the TV's camera (Wi-Fi tier) ---
+    // Not a video feed: the TV serves one downscaled JPEG at ~0.75fps; we poll + show the latest.
+    private void openStill() {
+        if (still != null) return;
+        send("snap:on");   // ask the TV to start capturing stills
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(BG);
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(dp(16), dp(24), dp(16), dp(24));
+
+        TextView h = new TextView(this);
+        h.setText("Check-in — still image, refreshes about once a second");
+        h.setTextColor(SUB); h.setTextSize(13); h.setGravity(Gravity.CENTER);
+        h.setPadding(0, 0, 0, dp(12));
+        col.addView(h);
+
+        final ImageView img = new ImageView(this);
+        img.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        img.setBackgroundColor(0xFF000000);
+        col.addView(img, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        final TextView status = new TextView(this);
+        status.setText("finding the TV…"); status.setTextColor(SUB); status.setTextSize(12);
+        status.setGravity(Gravity.CENTER); status.setPadding(0, dp(10), 0, dp(10));
+        col.addView(status);
+
+        Button close = new Button(this);
+        close.setText("Close"); close.setAllCaps(false);
+        close.setOnClickListener(v -> closeStill());
+        col.addView(close, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        still = col; frame.addView(still);
+        stillOn = true;
+        startStillPoller(img, status);
+    }
+    private void startStillPoller(final ImageView img, final TextView status) {
+        new Thread(() -> {
+            RemoteService svc = RemoteService.get();
+            // prefer the TV's LAN IP from state (carried over BLE — robust); fall back to mDNS
+            String h = (tabletIp != null && !tabletIp.isEmpty()) ? tabletIp + ":8090" : (svc != null ? svc.playerHttpHost() : null);
+            final String host = h;
+            if (host == null) { main.post(() -> status.setText("Join the same Wi-Fi as the TV to see the check-in")); return; }
+            while (stillOn) {
+                try {
+                    java.net.HttpURLConnection c = openOnWifi("http://" + host + "/snapshot.jpg");
+                    c.setConnectTimeout(2000); c.setReadTimeout(3000);
+                    if (c.getResponseCode() == 200) {
+                        java.io.InputStream in = c.getInputStream();
+                        final Bitmap bmp = BitmapFactory.decodeStream(in);
+                        in.close();
+                        if (bmp != null) main.post(() -> { img.setImageBitmap(bmp); status.setText(""); });
+                    } else main.post(() -> status.setText("waiting for the first still…"));
+                    c.disconnect();
+                } catch (Exception e) { main.post(() -> status.setText("reconnecting…")); }
+                try { Thread.sleep(1300); } catch (InterruptedException e) { break; }
+            }
+        }).start();
+    }
+    private void closeStill() {
+        stillOn = false;
+        send("snap:off");   // stop the TV capturing
+        if (still != null) { frame.removeView(still); still = null; }
+    }
+    /** Open the URL bound to the Wi-Fi network — the TV is on the LAN, but with mobile data up the
+        app's default network is cellular, which can't reach a 192.168.x host. Falls back to default. */
+    private java.net.HttpURLConnection openOnWifi(String urlStr) throws Exception {
+        java.net.URL url = new java.net.URL(urlStr);
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm != null) for (android.net.Network n : cm.getAllNetworks()) {
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
+                    return (java.net.HttpURLConnection) n.openConnection(url);
+            }
+        } catch (Exception ignored) {}
+        return (java.net.HttpURLConnection) url.openConnection();
+    }
 
     private static String mmss(int ms) { int s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
 

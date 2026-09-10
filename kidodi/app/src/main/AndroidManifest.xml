@@ -32,6 +32,7 @@
         android:label="Kidodi"
         android:icon="@android:drawable/ic_media_play"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 
         <!-- Android Auto: a template (car) app, not a media app -->
