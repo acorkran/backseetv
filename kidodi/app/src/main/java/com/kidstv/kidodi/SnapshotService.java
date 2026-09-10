@@ -63,16 +63,34 @@ public class SnapshotService extends LifecycleService {
         When enabling from empty, the device owner grants itself CAMERA first (no user prompt), then
         starts after a short beat — the grant needs a moment before an FGS-camera start or the first
         enable on a fresh device throws. */
+    // All start/stop decisions run serialized on the main thread with single guarded pending runnables,
+    // so rapid open/close toggling can't queue multiple begins or race a teardown against a startup.
+    private static final android.os.Handler H = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static Runnable pendingStart, pendingStop;
     public static void want(Context ctx, String key, boolean on) {
-        boolean startNow = false, stopNow = false;
-        synchronized (wanters) {
-            if (on) { startNow = wanters.isEmpty(); wanters.add(key); }
-            else { wanters.remove(key); stopNow = wanters.isEmpty(); }
-        }
-        if (startNow) {
-            grantCamera(ctx);
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> begin(ctx), 400);
-        } else if (stopNow) end(ctx);
+        final Context ac = ctx.getApplicationContext();
+        synchronized (wanters) { if (on) wanters.add(key); else wanters.remove(key); }
+        H.post(() -> {
+            boolean wanted; synchronized (wanters) { wanted = !wanters.isEmpty(); }
+            if (wanted) {
+                if (pendingStop != null) { H.removeCallbacks(pendingStop); pendingStop = null; }   // cancel a pending teardown
+                if (INSTANCE == null && pendingStart == null) {                                    // start exactly once
+                    grantCamera(ac);
+                    pendingStart = () -> { pendingStart = null;
+                        synchronized (wanters) { if (wanters.isEmpty()) return; }
+                        if (INSTANCE == null) begin(ac); };
+                    H.postDelayed(pendingStart, 400);
+                }
+            } else {
+                if (pendingStart != null) { H.removeCallbacks(pendingStart); pendingStart = null; } // cancel a pending start
+                if (pendingStop == null) {                                                          // debounce the teardown
+                    pendingStop = () -> { pendingStop = null;
+                        synchronized (wanters) { if (!wanters.isEmpty()) return; }
+                        end(ac); };
+                    H.postDelayed(pendingStop, 1500);
+                }
+            }
+        });
     }
     /** Back-compat: the /snap toggle. */
     public static void set(Context ctx, boolean on) { want(ctx, "snap", on); }
