@@ -95,28 +95,32 @@ public class KidodiScreen extends Screen {
         return new CarIcon.Builder(IconCompat.createWithResource(getCarContext(), android.R.drawable.ic_menu_gallery)).build();
     }
 
+    private CarIcon icon(int res) { return new CarIcon.Builder(IconCompat.createWithResource(getCarContext(), res)).build(); }
+
+    // HOST LIMITS (androidx.car.app 1.4.0, enforced at build time -> IllegalArgumentException -> the
+    // app "doesn't load"): a PaneTemplate's ACTION STRIP takes max 2 actions with at most 1 text
+    // title (ACTIONS_CONSTRAINTS_SIMPLE); the pane BODY takes max 2 actions (both may be titled);
+    // Pane.setImage needs host API 4. So: strip = 2 icon actions, body = Light + More…, image gated.
     @NonNull @Override public Template onGetTemplate() {
-        Pane pane = new Pane.Builder()
+        Pane.Builder pane = new Pane.Builder()
                 .addRow(new Row.Builder().setTitle(show).addText(ep.isEmpty() ? " " : ep).build())
                 .addRow(new Row.Builder().setTitle(status).build())
-                // periodically-updated STILL image from the child camera (slow refresh, not video)
-                .setImage(dashImage())
-                .addAction(new Action.Builder().setTitle("Sleep 15m")
-                        .setOnClickListener(() -> { send("sleep:15"); invalidate(); }).build())
-                .addAction(new Action.Builder().setTitle("Power")
-                        .setOnClickListener(() -> { send("power"); invalidate(); }).build())
-                .build();
+                .addAction(new Action.Builder().setTitle("Light")
+                        .setOnClickListener(() -> { send("flash"); invalidate(); }).build())
+                .addAction(new Action.Builder().setTitle("More…")
+                        .setOnClickListener(() -> getScreenManager().push(new MoreScreen(getCarContext()))).build());
+        // periodically-updated STILL image from the child camera (slow refresh, not video)
+        if (getCarContext().getCarAppApiLevel() >= 4) pane.setImage(dashImage());
 
-        return new PaneTemplate.Builder(pane)
+        return new PaneTemplate.Builder(pane.build())
                 .setTitle("Kidodi")
                 .setHeaderAction(Action.APP_ICON)
                 .setActionStrip(new ActionStrip.Builder()
-                        .addAction(new Action.Builder().setTitle(playing ? "Pause" : "Play")
+                        .addAction(new Action.Builder()
+                                .setIcon(icon(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play))
                                 .setOnClickListener(() -> { send("playpause"); invalidate(); }).build())
-                        .addAction(new Action.Builder().setTitle("Next")
+                        .addAction(new Action.Builder().setIcon(icon(android.R.drawable.ic_media_next))
                                 .setOnClickListener(() -> { send("next"); invalidate(); }).build())
-                        .addAction(new Action.Builder().setTitle("Light")
-                                .setOnClickListener(() -> { send("flash"); invalidate(); }).build())
                         .build())
                 .build();
     }
