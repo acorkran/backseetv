@@ -179,20 +179,27 @@ public class PlayerController {
     public void setAudio(Context ctx) {
         am = (AudioManager) ctx.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
         prefs = ctx.getApplicationContext().getSharedPreferences("kidodi", Context.MODE_PRIVATE);
-        muted = prefs.getBoolean("muted", false);
+        muted = prefs.getBoolean("muted", true);   // first run = MUTED (nap-safe default); volume-up unmutes
         vol = readSystemVol();
-        if (vol <= 0.001f) setVolume(0.5f);
+        if (vol <= 0.001f) writeSystemVol(0.5f);   // a 0 system stream makes "unmute" do nothing -> give it a floor (does NOT unmute)
         applyMute();
     }
     private float readSystemVol() {
         try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return max > 0 ? (float) am.getStreamVolume(AudioManager.STREAM_MUSIC) / max : 0f; }
         catch (Exception e) { return 0f; }
     }
-    /** SYSTEM media volume — the real loudness. The player multiplier stays at 1 unless muted. */
-    public void setVolume(float v) {
+    private void writeSystemVol(float v) {
         vol = clamp(v);
         try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(vol * max), 0); }
         catch (Exception ignored) {}
+    }
+    /** SYSTEM media volume — the real loudness. The player multiplier stays at 1 unless muted.
+     *  RAISING it while muted UNMUTES (TV-remote behaviour: the volume UI must never move while the
+     *  device stays silent — that was the nap-run confusion). Lowering never unmutes. */
+    public void setVolume(float v) {
+        boolean up = v > vol + 0.001f;
+        writeSystemVol(v);
+        if (up && muted) setMuted(false);
     }
     public void nudge(float d)     { setVolume(vol + d); }
     public void setMuted(boolean m) { muted = m; try { if (prefs != null) prefs.edit().putBoolean("muted", m).apply(); } catch (Exception ignored) {} applyMute(); }
