@@ -30,7 +30,7 @@ import java.util.List;
 @SuppressLint({"MissingPermission"})
 @SuppressWarnings("deprecation")
 public class BleClient {
-    public interface Listener { void onStatus(String s); void onState(String json); }
+    public interface Listener { void onStatus(String s); void onState(String json); void onStill(byte[] jpeg); }
     static final String TAG = "Kidodi";
 
     private final Context ctx;
@@ -40,7 +40,8 @@ public class BleClient {
     private BluetoothLeScanner scanner;
     private ScanCallback scanCb;
     private BluetoothGatt gatt;
-    private BluetoothGattCharacteristic cmdCh, stateCh;
+    private BluetoothGattCharacteristic cmdCh, stateCh, imgCh;
+    private byte[] imgBuf; private int imgLen, imgPos;   // chunked-still reassembly
     private volatile boolean connected = false;
     private volatile boolean stopped = false;
     private volatile boolean scanning = false;
@@ -101,6 +102,8 @@ public class BleClient {
             if (svc == null) { status("service not found"); return; }
             cmdCh = svc.getCharacteristic(Ble.CMD);
             stateCh = svc.getCharacteristic(Ble.STATE);
+            imgCh = svc.getCharacteristic(Ble.IMG);
+            if (imgCh != null) g.setCharacteristicNotification(imgCh, true);   // CCCD written after STATE's completes
             if (stateCh != null) {
                 g.setCharacteristicNotification(stateCh, true);
                 BluetoothGattDescriptor cccd = stateCh.getDescriptor(Ble.CCCD);
@@ -109,12 +112,40 @@ public class BleClient {
             lastStateMs = System.currentTimeMillis();
             status("ready");
         }
+        // Serialize CCCD writes: once STATE's is set, enable IMG's (Android drops back-to-back descriptor writes).
+        @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor desc, int st) {
+            if (imgCh != null && desc.getCharacteristic() != null && Ble.STATE.equals(desc.getCharacteristic().getUuid())) {
+                BluetoothGattDescriptor icccd = imgCh.getDescriptor(Ble.CCCD);
+                if (icccd != null) { icccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); g.writeDescriptor(icccd); }
+            }
+        }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch) { deliver(ch.getUuid(), ch.getValue()); }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch, byte[] value) { deliver(ch.getUuid(), value); }
     };
 
     private void deliver(java.util.UUID uuid, byte[] v) {
-        if (Ble.STATE.equals(uuid) && v != null) { lastStateMs = System.currentTimeMillis(); String s = new String(v); main.post(() -> l.onState(s)); }
+        if (v == null) return;
+        if (Ble.STATE.equals(uuid)) { lastStateMs = System.currentTimeMillis(); String s = new String(v); main.post(() -> l.onState(s)); }
+        else if (Ble.IMG.equals(uuid)) onImgChunk(v);
+    }
+
+    // Reassemble a chunked still: [0x01][int32 BE len][data…] starts a frame; [0x02][data…] continues.
+    private void onImgChunk(byte[] v) {
+        int type = v[0] & 0xFF;
+        if (type == 0x01) {
+            if (v.length < 5) { imgBuf = null; return; }
+            imgLen = ((v[1] & 0xFF) << 24) | ((v[2] & 0xFF) << 16) | ((v[3] & 0xFF) << 8) | (v[4] & 0xFF);
+            if (imgLen <= 0 || imgLen > 2_000_000) { imgBuf = null; return; }
+            imgBuf = new byte[imgLen]; imgPos = 0;
+            appendImg(v, 5);
+        } else if (type == 0x02 && imgBuf != null) {
+            appendImg(v, 1);
+        }
+    }
+    private void appendImg(byte[] v, int off) {
+        int n = Math.min(v.length - off, imgLen - imgPos);
+        if (n > 0) { System.arraycopy(v, off, imgBuf, imgPos, n); imgPos += n; }
+        if (imgBuf != null && imgPos >= imgLen) { final byte[] done = imgBuf; imgBuf = null; main.post(() -> l.onStill(done)); }
     }
 
     private void startHealth() {

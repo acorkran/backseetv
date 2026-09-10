@@ -271,11 +271,10 @@ public class RemoteActivity extends Activity {
         else super.onBackPressed();
     }
 
-    // --- check-in: periodically-updated STILL IMAGE from the TV's camera (Wi-Fi tier) ---
-    // Not a video feed: the TV serves one downscaled JPEG at ~0.75fps; we poll + show the latest.
+    // --- check-in: STILL IMAGE over BLE (<1fps, "not a feed") OR LIVE view over Wi-Fi (/live MJPEG) ---
     private void openStill() {
         if (still != null) return;
-        send("snap:on");   // ask the TV to start capturing stills
+        boolean wifi = tabletIp != null && !tabletIp.isEmpty();   // TV's LAN IP known -> Wi-Fi live is possible
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setBackgroundColor(BG);
@@ -283,7 +282,7 @@ public class RemoteActivity extends Activity {
         col.setPadding(dp(16), dp(24), dp(16), dp(24));
 
         TextView h = new TextView(this);
-        h.setText("Check-in — still image, refreshes about once a second");
+        h.setText(wifi ? "Live view" : "Check-in — still image, refreshes about once a second");
         h.setTextColor(SUB); h.setTextSize(13); h.setGravity(Gravity.CENTER);
         h.setPadding(0, 0, 0, dp(12));
         col.addView(h);
@@ -305,34 +304,76 @@ public class RemoteActivity extends Activity {
 
         still = col; frame.addView(still);
         stillOn = true;
-        startStillPoller(img, status);
+        if (wifi) { send("snap:on"); startLive(tabletIp + ":8090", img, status); }
+        else { send("camble:on"); startBleStills(img, status); }
     }
-    private void startStillPoller(final ImageView img, final TextView status) {
+
+    // Wi-Fi: parse the TV's /live MJPEG (multipart/x-mixed-replace) and show frames as they arrive.
+    private void startLive(final String host, final ImageView img, final TextView status) {
         new Thread(() -> {
-            RemoteService svc = RemoteService.get();
-            // prefer the TV's LAN IP from state (carried over BLE — robust); fall back to mDNS
-            String h = (tabletIp != null && !tabletIp.isEmpty()) ? tabletIp + ":8090" : (svc != null ? svc.playerHttpHost() : null);
-            final String host = h;
-            if (host == null) { main.post(() -> status.setText("Join the same Wi-Fi as the TV to see the check-in")); return; }
+            int fails = 0;
             while (stillOn) {
+                java.net.HttpURLConnection c = null;
                 try {
-                    java.net.HttpURLConnection c = openOnWifi("http://" + host + "/snapshot.jpg");
-                    c.setConnectTimeout(2000); c.setReadTimeout(3000);
-                    if (c.getResponseCode() == 200) {
-                        java.io.InputStream in = c.getInputStream();
-                        final Bitmap bmp = BitmapFactory.decodeStream(in);
-                        in.close();
+                    c = openOnWifi("http://" + host + "/live");
+                    c.setConnectTimeout(2500); c.setReadTimeout(6000);
+                    if (c.getResponseCode() != 200) throw new Exception("http " + c.getResponseCode());
+                    java.io.InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 1 << 16);
+                    fails = 0;
+                    while (stillOn) {
+                        int len = -1; String line;
+                        while ((line = readLine(in)) != null) {
+                            if (line.isEmpty()) { if (len >= 0) break; else continue; }
+                            if (line.toLowerCase().startsWith("content-length:"))
+                                try { len = Integer.parseInt(line.substring(15).trim()); } catch (Exception ignore) {}
+                        }
+                        if (line == null) break;                      // stream ended
+                        if (len <= 0 || len > 4_000_000) continue;
+                        byte[] jpg = new byte[len]; int r = 0, k;
+                        while (r < len && (k = in.read(jpg, r, len - r)) >= 0) r += k;
+                        if (r != len) break;
+                        final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, len);
                         if (bmp != null) main.post(() -> { img.setImageBitmap(bmp); status.setText(""); });
-                    } else main.post(() -> status.setText("waiting for the first still…"));
-                    c.disconnect();
-                } catch (Exception e) { main.post(() -> status.setText("reconnecting…")); }
-                try { Thread.sleep(1300); } catch (InterruptedException e) { break; }
+                    }
+                } catch (Exception e) {
+                    if (++fails >= 3) {   // give up on live -> fall back to BLE stills
+                        main.post(() -> status.setText("no live view — showing stills over Bluetooth"));
+                        send("camble:on"); startBleStills(img, status); return;
+                    }
+                    main.post(() -> status.setText("connecting live…"));
+                } finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
+                try { Thread.sleep(400); } catch (InterruptedException e) { break; }
             }
         }).start();
     }
+
+    // BLE: the TV pushes chunked low-res stills; RemoteService reassembles them, we show the latest.
+    private void startBleStills(final ImageView img, final TextView status) {
+        new Thread(() -> {
+            byte[] lastShown = null;
+            while (stillOn) {
+                byte[] jpg = RemoteService.latestStill();
+                if (jpg != null && jpg != lastShown) {
+                    lastShown = jpg;
+                    final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
+                    if (bmp != null) main.post(() -> { img.setImageBitmap(bmp); status.setText(""); });
+                } else if (jpg == null) main.post(() -> status.setText("waiting for a still over Bluetooth…"));
+                try { Thread.sleep(700); } catch (InterruptedException e) { break; }
+            }
+        }).start();
+    }
+
+    private static String readLine(java.io.InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        int c;
+        while ((c = in.read()) != -1) { if (c == '\n') break; if (c != '\r') b.write(c); }
+        if (c == -1 && b.size() == 0) return null;
+        return b.toString("UTF-8");
+    }
+
     private void closeStill() {
         stillOn = false;
-        send("snap:off");   // stop the TV capturing
+        send("camble:off"); send("snap:off");   // stop the BLE push + capture
         if (still != null) { frame.removeView(still); still = null; }
     }
     /** Open the URL bound to the Wi-Fi network — the TV is on the LAN, but with mobile data up the
