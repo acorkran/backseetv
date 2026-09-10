@@ -88,6 +88,12 @@ public class RemoteService extends Service {
         else if (wifi != null) wifi.send(cmd);
     }
     public String state() { return lastState; }
+
+    // Latest reduced-res camera STILL (BLE-reassembled or Wi-Fi), shared with the AA dash + views.
+    // The camera-consumer impl pushes frames via setLatestStill(); AA/others read latestStill().
+    private static volatile byte[] sLatestStill = null;
+    public static byte[] latestStill() { return sLatestStill; }
+    public static void setLatestStill(byte[] jpeg) { sLatestStill = jpeg; }
     /** For Wi-Fi file import: a ONE-SHOT mDNS discovery of the player's host:port that does NOT
      *  leave a polling transport running (that redundant poller alongside BLE caused lag). Blocking,
      *  off-main; up to ~5s. Returns null if not found (not on the same network). */
