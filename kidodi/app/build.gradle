@@ -25,6 +25,11 @@ android {
         disable 'UnsafeOptInUsageError'
     }
 
+    androidResources {
+        // Play-mode Piper WAV clips must be stored UNCOMPRESSED so SoundPool.load(openFd) works.
+        noCompress += 'wav'
+    }
+
     buildTypes {
         debug {
             // default debug signing -> app-debug.apk
