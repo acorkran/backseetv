@@ -112,8 +112,8 @@ public class WearRemoteActivity extends Activity {
         root.addView(buildVolOverlay());
         setContentView(root);
 
-        BleService.ensure(this);   // BLE lives in a foreground service; survives screen-off / backgrounding
-        attach();
+        // The BLE link is ON DEMAND: acquired in onResume, released in onPause (BleService lingers
+        // briefly, then disconnects and exits). A 24/7 link flattened the watch overnight.
     }
 
     private final BleService.Listener svcListener = new BleService.Listener() {
@@ -545,16 +545,19 @@ public class WearRemoteActivity extends Activity {
     }
 
     // Swipe-right / back = one level back: camera -> player (stop capture), any sub-view -> player,
-    // player -> exit the app (BleService stays alive so the connection persists for next open).
+    // player -> exit the app (the link lingers ~45s in BleService, then shuts down).
     @Override public void onBackPressed() {
         if (current == cameraView) closeCamera();
         else if (current != playerView) show(playerView);
         else super.onBackPressed();
     }
-    @Override protected void onResume() { super.onResume(); attach(); }
-    @Override protected void onPause() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
-    // NOTE: we deliberately do NOT stop BleService on destroy — it stays alive so the
-    // connection (and a Tile) persist. It stops itself when the app is fully removed.
+    @Override protected void onResume() { super.onResume(); BleService.acquire(this, "ui"); attach(); }
+    @Override protected void onPause() {
+        if (current == cameraView) closeCamera();   // NEVER keep stills/live streaming in the background (battery)
+        BleService svc = BleService.get(); if (svc != null) svc.setListener(null);
+        BleService.release(this, "ui");
+        super.onPause();
+    }
     @Override protected void onDestroy() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onDestroy(); }
     private int pad(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }
 }

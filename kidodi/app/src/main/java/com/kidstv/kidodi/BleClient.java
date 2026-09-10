@@ -65,7 +65,12 @@ public class BleClient {
         try { if (scanCb != null) scanner.stopScan(scanCb); } catch (Exception ignored) {}
         List<ScanFilter> filters = Collections.singletonList(
                 new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Ble.SERVICE)).build());
-        ScanSettings ss = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        // LOW_LATENCY (radio ~100% duty) only for the first seconds — that's what makes opening the
+        // remote feel instant. If the TV isn't found by then it's probably off or far away: drop to
+        // LOW_POWER (~10% duty) rather than burn the battery hunting for it.
+        ScanSettings fast = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
+        final ScanSettings slow = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build();
+        final List<ScanFilter> f = filters;
         scanCb = new ScanCallback() {
             @Override public void onScanResult(int t, ScanResult r) {
                 if (connected) return;
@@ -76,15 +81,23 @@ public class BleClient {
             }
             @Override public void onScanFailed(int e) { scanning = false; status("scan failed " + e); }
         };
+        final ScanCallback cb = scanCb;
         status("scanning...");
         scanning = true;
-        scanner.startScan(filters, ss, scanCb);
+        scanner.startScan(filters, fast, scanCb);
+        main.postDelayed(() -> {
+            if (!stopped && scanning && !connected && scanCb == cb) {
+                try { scanner.stopScan(cb); scanner.startScan(f, slow, cb); } catch (Exception ignored) {}
+            }
+        }, FAST_SCAN_MS);
     }
+    static final long FAST_SCAN_MS = 8000;
+    private long reconnectDelay = 2500;   // backs off to 30s while the TV stays unreachable; resets on connect
 
     private final BluetoothGattCallback gattCb = new BluetoothGattCallback() {
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connected = true; discovered = false; status("negotiating...");
+                connected = true; discovered = false; reconnectDelay = 2500; status("negotiating...");
                 g.requestMtu(512);
                 main.postDelayed(() -> { if (gatt != null && !discovered) gatt.discoverServices(); }, 900);
             }
@@ -92,7 +105,10 @@ public class BleClient {
                 connected = false; cmdCh = null; stateCh = null;
                 try { g.close(); } catch (Exception ignored) {}
                 gatt = null;
-                if (!stopped) { status("reconnecting…"); main.postDelayed(() -> start(), 2500); }
+                if (!stopped) {   // auto-reconnect with backoff (only while something is using the link)
+                    status("reconnecting…"); main.postDelayed(() -> start(), reconnectDelay);
+                    reconnectDelay = Math.min(30_000, reconnectDelay * 2);
+                }
             }
         }
         @Override public void onMtuChanged(BluetoothGatt g, int mtu, int st) { Log.i(TAG, "mtu=" + mtu); if (!discovered) g.discoverServices(); }
@@ -148,20 +164,21 @@ public class BleClient {
         if (imgBuf != null && imgPos >= imgLen) { final byte[] done = imgBuf; imgBuf = null; main.post(() -> l.onStill(done)); }
     }
 
+    // Watchdog: the player pushes state on change + a 10s heartbeat. No state for 25s => dead link.
     private void startHealth() {
         if (health != null) return;
         health = new Runnable() { public void run() {
             if (stopped) return;
-            if (!connected) { scanning = false; start(); }
-            else if (connected && lastStateMs > 0 && System.currentTimeMillis() - lastStateMs > 8000) {
+            if (!connected) { if (!scanning) start(); }
+            else if (connected && lastStateMs > 0 && System.currentTimeMillis() - lastStateMs > 25_000) {
                 connected = false; discovered = false; cmdCh = null; stateCh = null;
                 try { if (gatt != null) gatt.close(); } catch (Exception ignored) {}
                 gatt = null; lastStateMs = 0;
                 status("reconnecting…"); start();
             }
-            main.postDelayed(this, 4000);
+            main.postDelayed(this, 10_000);
         }};
-        main.postDelayed(health, 4000);
+        main.postDelayed(health, 10_000);
     }
 
     public void send(String cmd) {

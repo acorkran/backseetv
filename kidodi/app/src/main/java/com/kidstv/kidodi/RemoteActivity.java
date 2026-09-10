@@ -61,6 +61,14 @@ public class RemoteActivity extends Activity {
     private ScaleGestureDetector ptzScale;
     private volatile String tabletIp;   // the TV's LAN IP, learned from state (BLE) — for /snapshot.jpg
     private boolean local;              // running ON the TV as its admin remote (loopback, no BLE)
+    // Last pushed clock values; the TV pushes on change + a 10s heartbeat (battery), so we tick locally.
+    private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol;
+    private boolean lastPlaying, lastSleeping, lastNapped; private int tickN;
+    private final Runnable uiTick = new Runnable() { public void run() {
+        renderClock();
+        if (++tickN % 20 == 0) WearPusher.refreshStatus(RemoteActivity.this);
+        main.postDelayed(this, 1000);
+    }};
     private String currentPl = "Shuffle All";
 
     @Override protected void onCreate(Bundle b) {
@@ -223,6 +231,19 @@ public class RemoteActivity extends Activity {
     }
     private void send(String cmd) { RemoteService svc = RemoteService.get(); if (svc != null) svc.send(cmd); }
 
+    /** Position / sleep countdown interpolated from the last push (ticks every second while visible). */
+    private void renderClock() {
+        long el = lastPlaying ? System.currentTimeMillis() - lastStateAt : 0;
+        int pos = (int) Math.min(lastDur > 0 ? lastDur : Integer.MAX_VALUE, lastPos + el);
+        progress.setProgress(lastDur > 0 ? Math.round(1000f * pos / lastDur) : 0);
+        timeText.setText(lastDur > 0 ? mmss(pos) + " / " + mmss(lastDur) + "     vol " + Math.round(lastVol * 100) + "%" : "");
+        if (lastSleeping) {
+            long s = Math.max(0, lastSleepMs - (System.currentTimeMillis() - lastStateAt)) / 1000;
+            sleepText.setText("Sleeping in " + (s / 60) + ":" + String.format("%02d", s % 60));
+        } else if (lastNapped) sleepText.setText("TV is off");
+        else sleepText.setText("");
+    }
+
     private void showState(String json) {
         try {
             JSONObject o = new JSONObject(json);
@@ -232,15 +253,11 @@ public class RemoteActivity extends Activity {
             int i = t.indexOf(".S");
             title.setText((i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim());
             subtitle.setText((i > 0 ? t.substring(i + 1) : "").replace('.', ' ').replace('⧸', '/').trim());
-            int pos = o.optInt("position_ms", 0), dur = o.optInt("duration_ms", 0);
-            progress.setProgress(dur > 0 ? Math.round(1000f * pos / dur) : 0);
-            timeText.setText(dur > 0 ? mmss(pos) + " / " + mmss(dur) + "     vol " + Math.round(o.optDouble("volume", 0) * 100) + "%" : "");
-            if (o.optBoolean("sleeping", false)) {
-                long s = Math.max(0, o.optLong("sleep_remaining_ms", 0)) / 1000;
-                sleepText.setText("Sleeping in " + (s / 60) + ":" + String.format("%02d", s % 60));
-            } else if (o.optBoolean("napped", false)) {
-                sleepText.setText("TV is off");
-            } else sleepText.setText("");
+            lastPos = o.optInt("position_ms", 0); lastDur = o.optInt("duration_ms", 0); lastPlaying = playing;
+            lastVol = o.optDouble("volume", 0); lastStateAt = System.currentTimeMillis();
+            lastSleeping = o.optBoolean("sleeping", false); lastSleepMs = Math.max(0, o.optLong("sleep_remaining_ms", 0));
+            lastNapped = o.optBoolean("napped", false);
+            renderClock();
             currentPl = o.optString("playlist", "Shuffle All");
             plChip.setText("Playlist:  " + currentPl + "  ▾");
             String ip = o.optString("ip", "");
@@ -610,8 +627,19 @@ public class RemoteActivity extends Activity {
         return -1;
     }
 
-    @Override protected void onResume() { super.onResume(); attach(); }
-    @Override protected void onPause() { RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume();
+        RemoteService.acquire(this, "ui");   // the link is on demand: held while this screen is visible
+        attach();
+        main.removeCallbacks(uiTick); main.post(uiTick);
+    }
+    @Override protected void onPause() {
+        main.removeCallbacks(uiTick);
+        if (still != null) closeStill();   // never keep polling the camera still in the background
+        RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null);
+        RemoteService.release(this, "ui");
+        super.onPause();
+    }
     @Override protected void onDestroy() { RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null); super.onDestroy(); }
 
     // --- view helpers --------------------------------------------------------

@@ -66,12 +66,17 @@ public class KidodiScreen extends Screen {
             show = (i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim();
             if (show.isEmpty()) show = "Kidodi";
             ep = (i > 0 ? t.substring(i + 1) : "").replace('.', ' ').replace('⧸', '/').trim();
-            if (o.optBoolean("sleeping", false)) {
-                long s = Math.max(0, o.optLong("sleep_remaining_ms", 0)) / 1000;
-                status = "Sleep in " + (s / 60) + ":" + String.format("%02d", s % 60);
-            } else if (o.optBoolean("napped", false)) status = "TV is off";
-            else status = playing ? "Playing" : "Paused";
+            sleeping = o.optBoolean("sleeping", false); sleepMs = Math.max(0, o.optLong("sleep_remaining_ms", 0));
+            napped = o.optBoolean("napped", false); stateAt = System.currentTimeMillis();
         } catch (Exception ignored) {}
+    }
+    private boolean sleeping, napped; private long sleepMs, stateAt;
+    /** The TV pushes on change + a 10s heartbeat, so the countdown is interpolated at render time. */
+    private String statusLine() {
+        if (stateAt == 0) return status;
+        if (sleeping) { long s = Math.max(0, sleepMs - (System.currentTimeMillis() - stateAt)) / 1000; return "Sleep in " + (s / 60) + ":" + String.format("%02d", s % 60); }
+        if (napped) return "TV is off";
+        return playing ? "Playing" : "Paused";
     }
 
     private void send(String cmd) { RemoteService svc = RemoteService.get(); if (svc != null) svc.send(cmd); }
@@ -104,7 +109,7 @@ public class KidodiScreen extends Screen {
     @NonNull @Override public Template onGetTemplate() {
         Pane.Builder pane = new Pane.Builder()
                 .addRow(new Row.Builder().setTitle(show).addText(ep.isEmpty() ? " " : ep).build())
-                .addRow(new Row.Builder().setTitle(status).build())
+                .addRow(new Row.Builder().setTitle(statusLine()).build())
                 .addAction(new Action.Builder().setTitle("Light")
                         .setOnClickListener(() -> { send("flash"); invalidate(); }).build())
                 .addAction(new Action.Builder().setTitle("More…")

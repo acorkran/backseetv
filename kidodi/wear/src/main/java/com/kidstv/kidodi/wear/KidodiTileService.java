@@ -32,6 +32,10 @@ import org.json.JSONObject;
 public class KidodiTileService extends TileService {
     static final String VER = "1";
 
+    // The BLE link is on demand: hold it only while the tile is actually on screen.
+    @Override protected void onTileEnterEvent(androidx.wear.tiles.EventBuilders.TileEnterEvent e) { BleService.acquire(this, "tile"); }
+    @Override protected void onTileLeaveEvent(androidx.wear.tiles.EventBuilders.TileLeaveEvent e) { BleService.release(this, "tile"); }
+
     @Override protected ListenableFuture<TileBuilders.Tile> onTileRequest(RequestBuilders.TileRequest req) {
         String title = "Open Kidodi";
         String status = "Tap to open the remote";
@@ -92,7 +96,7 @@ public class KidodiTileService extends TileService {
                 .setId("open")
                 .setOnClick(new ActionBuilders.LaunchAction.Builder()
                         .setAndroidActivity(new ActionBuilders.AndroidActivity.Builder()
-                                .setPackageName("com.kidstv.kidodi.wear")
+                                .setPackageName(getPackageName())   // applicationId is com.kidstv.kidodi now
                                 .setClassName("com.kidstv.kidodi.wear.WearRemoteActivity")
                                 .build())
                         .build())

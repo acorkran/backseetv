@@ -5,7 +5,13 @@ package com.kidstv.kidodi;
 //  BLE is primary; if BLE hasn't connected in ~7s, it also brings up the Wi-Fi/
 //  mDNS fallback and uses whichever is live (preferring BLE). send() routes to
 //  the active transport; state() is the latest reported state. Shared by the
-//  phone RemoteActivity AND the Android Auto media service.
+//  phone RemoteActivity AND the Android Auto session.
+//
+//  ON DEMAND: the link only runs while something holds it — the remote activity
+//  is resumed, an AA session is alive, the TV's own admin Remote is open — plus
+//  a short linger. When the last user releases, both transports stop and the
+//  service exits. (A 24/7 link is a battery drain: LOW_LATENCY scanning when
+//  the TV is away, 1 Hz wakeups when it's near.)
 // ============================================================================
 
 import android.app.Notification;
@@ -18,27 +24,47 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
+
+import java.util.HashSet;
+import java.util.Set;
 
 public class RemoteService extends Service {
     public interface Listener { void onStatus(String s); void onState(String json); }
+    static final String TAG = "Kidodi";
+    static final long LINGER_MS = 45_000;
 
     private static RemoteService INSTANCE;
     public static RemoteService get() { return INSTANCE; }
-    public static void ensure(Context ctx) { ensure(ctx, false); }
+
+    /** Start without a user (package-replaced push, legacy callers): idles out after the linger. */
+    public static void ensure(Context ctx) { start(ctx, null, false); }
     /** The TV's own admin Remote: loopback HTTP to this very player, no BLE. */
-    public static void ensureLocal(Context ctx) { ensure(ctx, true); }
-    private static void ensure(Context ctx, boolean local) {
+    public static void ensureLocal(Context ctx) { start(ctx, null, true); }
+    /** Something needs the link (tag = "ui", "aa", ...). Starts the service if needed. */
+    public static void acquire(Context ctx, String tag) {
+        RemoteService s = INSTANCE;
+        if (s != null) { s.doAcquire(tag); return; }
+        start(ctx, tag, false);
+    }
+    /** That user is done; the link lingers briefly, then shuts down if nobody else needs it. */
+    public static void release(Context ctx, String tag) { RemoteService s = INSTANCE; if (s != null) s.doRelease(tag); }
+    private static void start(Context ctx, String tag, boolean local) {
         Intent i = new Intent(ctx.getApplicationContext(), RemoteService.class).putExtra("local", local);
+        if (tag != null) i.putExtra("acquire", tag);
         if (Build.VERSION.SDK_INT >= 26) ctx.getApplicationContext().startForegroundService(i);
         else ctx.getApplicationContext().startService(i);
     }
 
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Set<String> uses = new HashSet<>();
     private BleClient ble;
     private WifiClient wifi;
     private volatile String lastState = "{}", lastStatus = "starting…", transport = "—";
     private volatile java.util.List<String> playlistNames = new java.util.ArrayList<>();
     private Listener ui;
+    private boolean started = false;
+    private volatile boolean local = false;   // TV-side admin Remote: loopback HTTP to ourselves, no BLE
 
     private static boolean isPlaylists(String json) { return json != null && json.contains("\"type\":\"playlists\""); }
     private static boolean isQueue(String json) { return json != null && json.contains("\"type\":\"queue\""); }
@@ -58,9 +84,6 @@ public class RemoteService extends Service {
 
     @Override public IBinder onBind(Intent i) { return null; }
 
-    private boolean started = false;
-    private volatile boolean local = false;   // TV-side admin Remote: loopback HTTP to ourselves, no BLE
-
     @Override public void onCreate() {
         super.onCreate();
         INSTANCE = this;
@@ -71,14 +94,29 @@ public class RemoteService extends Service {
         if (!started) {
             started = true;
             // On the TV (role=player) this service can only ever be the local admin remote — even on a
-            // sticky restart with a null intent it must never start scanning BLE for itself.
+            // restart with a null intent it must never start scanning BLE for itself.
             String role = getSharedPreferences("kidodi", MODE_PRIVATE).getString("role", "");
             local = "player".equals(role) || (intent != null && intent.getBooleanExtra("local", false));
             if (local) startWifi("127.0.0.1", 8090);
             else startLinks();
         }
-        return START_STICKY;
+        String tag = intent != null ? intent.getStringExtra("acquire") : null;
+        if (tag != null) doAcquire(tag);
+        else if (uses.isEmpty()) scheduleIdle();
+        return START_NOT_STICKY;   // never resurrect ourselves into an idle 24/7 link
     }
+
+    private void doAcquire(String tag) { uses.add(tag); main.removeCallbacks(idle); }
+    private void doRelease(String tag) { uses.remove(tag); if (uses.isEmpty()) scheduleIdle(); }
+    private void scheduleIdle() { main.removeCallbacks(idle); main.postDelayed(idle, LINGER_MS); }
+    private final Runnable idle = () -> {
+        if (!uses.isEmpty()) return;
+        Log.i(TAG, "remote link idle -> stopping");
+        try { if (ble != null) ble.stop(); } catch (Exception ignored) {} ble = null;
+        try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {} wifi = null;
+        stopForeground(true);
+        stopSelf();
+    };
 
     private void startLinks() {
         ble = new BleClient(this, new BleClient.Listener() {
@@ -92,9 +130,8 @@ public class RemoteService extends Service {
         });
         ble.start();
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
-        main.postDelayed(new Runnable() { public void run() { WearPusher.refreshStatus(RemoteService.this); main.postDelayed(this, 20000); } }, 20000);
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
-        main.postDelayed(() -> { if (ble == null || !ble.isConnected()) startWifi(null, 0); }, 7000);
+        main.postDelayed(() -> { if (ble != null && !ble.isConnected()) startWifi(null, 0); }, 7000);
     }
 
     private void startWifi(String fixedHost, int fixedPort) {
@@ -120,13 +157,11 @@ public class RemoteService extends Service {
     public String state() { return lastState; }
 
     // Latest reduced-res camera STILL (BLE-reassembled or Wi-Fi), shared with the AA dash + views.
-    // The camera-consumer impl pushes frames via setLatestStill(); AA/others read latestStill().
     private static volatile byte[] sLatestStill = null;
     public static byte[] latestStill() { return sLatestStill; }
     public static void setLatestStill(byte[] jpeg) { sLatestStill = jpeg; }
     /** For Wi-Fi file import: a ONE-SHOT mDNS discovery of the player's host:port that does NOT
-     *  leave a polling transport running (that redundant poller alongside BLE caused lag). Blocking,
-     *  off-main; up to ~5s. Returns null if not found (not on the same network). */
+     *  leave a polling transport running. Blocking, off-main; up to ~5s. Returns null if not found. */
     public String playerHttpHost() {
         WifiClient tmp = new WifiClient(this, new WifiClient.Listener() { public void onStatus(String s) {} public void onState(String s) {} });
         tmp.start();
@@ -143,6 +178,7 @@ public class RemoteService extends Service {
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
     @Override public void onDestroy() {
+        main.removeCallbacks(idle);
         try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
         try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {}
         if (INSTANCE == this) INSTANCE = null;

@@ -89,7 +89,10 @@ public class BleServer {
         gatt.addService(svc);
 
         startAdvertising(ad);
-        pusher = new Runnable() { public void run() { pushState(); main.postDelayed(this, 1000); } };
+        // Notify on CHANGE (+ a 10s heartbeat), not every second: each notification wakes the watch's
+        // SoC, and 3600 wakeups/hour all night is what flattened it. position/sleep countdowns are
+        // excluded from the change signature — remotes interpolate those locally.
+        pusher = new Runnable() { public void run() { pushStateIfChanged(); main.postDelayed(this, 1000); } };
         main.postDelayed(pusher, 1000);
         Log.i(TAG, "BLE server started");
     }
@@ -113,7 +116,12 @@ public class BleServer {
 
     private final BluetoothGattServerCallback serverCb = new BluetoothGattServerCallback() {
         @Override public void onConnectionStateChange(BluetoothDevice dev, int status, int newState) {
-            if (newState == BluetoothProfile.STATE_DISCONNECTED) subs.remove(dev);
+            if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                subs.remove(dev);
+                // A remote that vanished mid-"camble:on" can't send camble:off: with nobody subscribed,
+                // stop the BLE still pipeline (and the camera behind it) instead of running it forever.
+                if (subs.isEmpty() && cambleWant > 0) main.post(() -> { cambleWant = 1; setCamble(false); });
+            }
             Log.i(TAG, "BLE conn " + dev.getAddress() + " -> " + newState);
         }
         @Override public void onCharacteristicWriteRequest(BluetoothDevice dev, int rid, BluetoothGattCharacteristic ch,
@@ -220,9 +228,24 @@ public class BleServer {
         } catch (Exception ignored) {}
     }
 
+    static final long HEARTBEAT_MS = 10_000;
+    private String lastSig = null; private long lastPushMs = 0;
+    private void pushStateIfChanged() {
+        if (gatt == null || stateChar == null || subs.isEmpty()) return;
+        String json = ctrl.stateJson();
+        String sig = json.replaceAll("\"(position_ms|sleep_remaining_ms)\":-?\\d+", "");
+        long now = System.currentTimeMillis();
+        if (sig.equals(lastSig) && now - lastPushMs < HEARTBEAT_MS) return;
+        lastSig = sig; lastPushMs = now;
+        stateChar.setValue(json.getBytes());
+        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+    }
+    /** Immediate push (after a command) so the remote that sent it sees the result at once. */
     private void pushState() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.stateJson().getBytes());
+        String json = ctrl.stateJson();
+        lastSig = json.replaceAll("\"(position_ms|sleep_remaining_ms)\":-?\\d+", ""); lastPushMs = System.currentTimeMillis();
+        stateChar.setValue(json.getBytes());
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 

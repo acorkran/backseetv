@@ -8,9 +8,12 @@ import androidx.car.app.Session;
 
 public class KidodiSession extends Session {
     @NonNull @Override public Screen onCreateScreen(@NonNull Intent intent) {
-        // BLE-primary / wifi-fallback link. Android 12+ can refuse a foreground-service start from a
-        // bound-only process; never let that kill the car session (the phone remote may run it anyway).
-        try { RemoteService.ensure(getCarContext()); } catch (Exception ignored) {}
+        // The link is on demand: hold it for as long as the car session is alive. Android 12+ can refuse
+        // a foreground-service start from a bound-only process; never let that kill the car session.
+        getLifecycle().addObserver(new androidx.lifecycle.DefaultLifecycleObserver() {
+            @Override public void onStart(@NonNull androidx.lifecycle.LifecycleOwner o) { try { RemoteService.acquire(getCarContext(), "aa"); } catch (Exception ignored) {} }
+            @Override public void onStop(@NonNull androidx.lifecycle.LifecycleOwner o) { try { RemoteService.release(getCarContext(), "aa"); } catch (Exception ignored) {} }
+        });
         return new KidodiScreen(getCarContext());
     }
 }
