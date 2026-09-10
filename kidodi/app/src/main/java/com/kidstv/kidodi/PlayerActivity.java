@@ -18,6 +18,7 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
@@ -131,9 +132,19 @@ public class PlayerActivity extends Activity {
         if (a != null) a.main.post(() -> a.doFlash(ms));
     }
     private void doFlash(int ms) {
+        ms = Math.max(200, Math.min(4000, ms));
+        // If napped, the display has actually gone to sleep — a brightness change alone shows nothing.
+        // Force the screen ON (brief wake lock, auto-released) so the white flash is visible.
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null)
+                pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "kidodi:flash")
+                  .acquire(ms + 400L);
+        } catch (Exception e) {}
         final WindowManager.LayoutParams lp = getWindow().getAttributes();
         lp.screenBrightness = 1.0f; getWindow().setAttributes(lp);
         flash.setVisibility(View.VISIBLE);
+        final int dur = ms;
         main.postDelayed(() -> {
             flash.setVisibility(View.GONE);
             // re-derive from the CURRENT nap state (not a stale snapshot) so a wake during
@@ -141,7 +152,7 @@ public class PlayerActivity extends Activity {
             WindowManager.LayoutParams p = getWindow().getAttributes();
             p.screenBrightness = napped ? 0.02f : -1.0f;
             getWindow().setAttributes(p);
-        }, Math.max(200, Math.min(4000, ms)));
+        }, dur);
     }
 
     @Override protected void onResume() { super.onResume(); enterKiosk(); }
