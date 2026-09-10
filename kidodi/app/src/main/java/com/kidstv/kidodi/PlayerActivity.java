@@ -127,7 +127,17 @@ public class PlayerActivity extends Activity {
     /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
     public static void wakeScreen() {
         final PlayerActivity a = sRef.get();
-        if (a != null) a.main.post(() -> { if (a.napped) a.setNapScreen(false); });
+        if (a != null) a.main.post(() -> { if (a.napped) a.setNapScreen(false); else a.wakeDisplay(); });
+    }
+    /** Light a physically-off display (physical power button / doze). FLAG_KEEP_SCREEN_ON keeps it on
+        afterwards. Samsung cancels this unless the app may post notifications (self-granted in enterKiosk);
+        on battery it also needs the doze whitelist (`dumpsys deviceidle whitelist +com.kidstv.kidodi`). */
+    private void wakeDisplay() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isInteractive())
+                pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "kidodi:wake").acquire(3000);
+        } catch (Exception ignored) {}
     }
     private void doPower() {
         if (!napped) { setNapScreen(true); PlayerController.get().pause(); }
@@ -140,6 +150,10 @@ public class PlayerActivity extends Activity {
         napOverlay.setVisibility(nap ? View.VISIBLE : View.GONE);
         lp.screenBrightness = nap ? 0.02f : -1.0f;   // -1 = system default -> reliably ON again
         getWindow().setAttributes(lp);
+        // Un-napping while the display is physically OFF: un-blacking the overlay isn't enough — light
+        // the display, or it's audio on a dark screen. napped is already false, so the SCREEN_ON the wake
+        // triggers won't double-play through the receiver.
+        if (!nap) wakeDisplay();
     }
 
     // screen-as-flashlight, called by ControlServer /flash
@@ -188,6 +202,11 @@ public class PlayerActivity extends Activity {
                 try { dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE); } catch (Exception e) {}
                 try { dpm.setStatusBarDisabled(admin, true); } catch (Exception e) {}
                 try { dpm.setKeyguardDisabled(admin, true); } catch (Exception e) {}   // no lock screen blocking boot
+                // Samsung's PowerManager silently cancels an app's screen-wake when the app's notifications
+                // are disabled ("Screen__On : Cancel (notifications are disabled)"), which broke a remote
+                // Play / Light from a physically-off display. The kiosk grants itself POST_NOTIFICATIONS.
+                try { dpm.setPermissionGrantState(admin, getPackageName(), "android.permission.POST_NOTIFICATIONS",
+                        DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED); } catch (Exception e) {}
                 // the SHOW is the home screen: pin US as the preferred HOME so boot/Home land here (beats v1)
                 try {
                     android.content.IntentFilter home = new android.content.IntentFilter(Intent.ACTION_MAIN);
