@@ -50,6 +50,8 @@ public class PlayerActivity extends Activity {
     private View flash;
     private View napOverlay;
     private boolean napped = false;
+    private volatile boolean flashing = false;            // suppress screen-on -> wake during a Light flash
+    private android.content.BroadcastReceiver screenRx;   // physical power button sync
     private float preNapBrightness = -1f;
 
     @Override protected void onCreate(Bundle b) {
@@ -83,17 +85,31 @@ public class PlayerActivity extends Activity {
 
         player = new ExoPlayer.Builder(this).build();
         player.setVideoSurfaceView(surface);
-        player.setVolume(0f);   // MUTED by default
+        // volume + mute are managed by PlayerController.setAudio(): system media volume + a persisted mute
         player.addListener(new Player.Listener() {
             @Override public void onPlaybackStateChanged(int s) { if (s == Player.STATE_READY) Log.i(TAG, "STATE_READY (playing muted)"); }
         });
 
         PlayerController.get().attach(player);
+        PlayerController.get().setAudio(this);   // system media volume + persisted mute; never boots stuck silent
         PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
         server = new ControlServer(this, PlayerController.get());
         server.start();
         ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
         ble.start();
+
+        // Physical POWER button = same as the remote's Power: screen off -> nap (pause), screen on -> wake (play).
+        // Apps can't intercept the power key itself, but the screen-state broadcasts give the same effect.
+        screenRx = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context c, Intent i) {
+                String a = i.getAction();
+                if (Intent.ACTION_SCREEN_OFF.equals(a)) { if (!napped) { setNapScreen(true); PlayerController.get().pause(); } }
+                else if (Intent.ACTION_SCREEN_ON.equals(a)) { if (napped && !flashing) { setNapScreen(false); PlayerController.get().play(); } }
+            }
+        };
+        android.content.IntentFilter sf = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
+        sf.addAction(Intent.ACTION_SCREEN_ON);
+        try { registerReceiver(screenRx, sf); } catch (Exception ignored) {}
     }
 
     private void immersive() {
@@ -133,6 +149,7 @@ public class PlayerActivity extends Activity {
     }
     private void doFlash(int ms) {
         ms = Math.max(200, Math.min(4000, ms));
+        flashing = true;   // the wake lock fires SCREEN_ON — don't let that count as a "wake" (un-nap)
         // If napped, the display has actually gone to sleep — a brightness change alone shows nothing.
         // Force the screen ON (brief wake lock, auto-released) so the white flash is visible.
         try {
@@ -152,6 +169,7 @@ public class PlayerActivity extends Activity {
             WindowManager.LayoutParams p = getWindow().getAttributes();
             p.screenBrightness = napped ? 0.02f : -1.0f;
             getWindow().setAttributes(p);
+            main.postDelayed(() -> flashing = false, 600);   // outlast the wake lock's trailing SCREEN_ON
         }, dur);
     }
 
@@ -288,6 +306,7 @@ public class PlayerActivity extends Activity {
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
+        try { if (screenRx != null) unregisterReceiver(screenRx); } catch (Exception ignored) {}
         if (ble != null) { ble.stop(); ble = null; }
         if (server != null) { server.stop(); server = null; }
         PlayerController.get().detach();

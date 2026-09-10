@@ -10,6 +10,7 @@ package com.kidstv.kidodi;
 
 import android.content.Context;
 import android.net.Uri;
+import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -36,11 +37,18 @@ public class PlayerController {
     // volatile snapshot (written on main, read by the HTTP/BLE threads)
     private volatile int idx, count, posMs, durMs;
     private volatile boolean playing;
-    private volatile float vol = 0f;   // muted default
+    // Volume model: the user's loudness is the SYSTEM media volume (what actually comes out of the
+    // speaker); a separate PERSISTED mute drives the ExoPlayer multiplier (0/1). The bug this fixes:
+    // the old code only moved the player multiplier, so remotes "raised" volume while the system
+    // stream sat at 0 — and the kiosk swallows the hardware keys, so there was no way out.
+    private volatile float vol = 0.5f;        // system media volume fraction 0..1
+    private volatile boolean muted = false;   // persisted player mute
+    private AudioManager am; private android.content.SharedPreferences prefs;
     private volatile String title = "";
     private volatile boolean napped = false;   // "powered off" = paused + TV blacked
     private final LinkedHashMap<String, List<MediaItem>> playlists = new LinkedHashMap<>();
     private volatile String currentPl = "Shuffle All";
+    private volatile List<MediaItem> currentItems = new ArrayList<>();   // the current playlist in PLAY order (the queue)
 
     public void setNapped(boolean n) { napped = n; }
 
@@ -80,13 +88,34 @@ public class PlayerController {
             List<MediaItem> items = playlists.get(name);
             if (items == null || items.isEmpty() || p == null) return;
             currentPl = name;
-            boolean shuffle = "Shuffle All".equals(name);
-            p.setShuffleModeEnabled(shuffle);
+            // Shuffle All: pre-shuffle the LIST (not ExoPlayer's shuffle mode) so the visible queue order
+            // IS the play order — a remote can show "what's next" and jump to any item.
+            List<MediaItem> order = "Shuffle All".equals(name) ? shuffled(items) : items;
+            currentItems = order;
+            p.setShuffleModeEnabled(false);
             p.setRepeatMode(Player.REPEAT_MODE_ALL);
-            p.setMediaItems(items);
+            p.setMediaItems(order);
             p.prepare();
             p.play();
         });
+    }
+    private static List<MediaItem> shuffled(List<MediaItem> in) { List<MediaItem> out = new ArrayList<>(in); java.util.Collections.shuffle(out); return out; }
+
+    /** Jump to item i of the current queue and play. */
+    public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { p.seekToDefaultPosition(i); p.play(); } }); }
+    /** The current queue as JSON: titles in PLAY order + current index. n>0 = a window of center±n (fits BLE); n<=0 = full list. */
+    public String queueJson(int center, int n) {
+        JSONObject o = new JSONObject();
+        try {
+            List<MediaItem> items = currentItems;
+            int total = items.size();
+            if (center < 0) center = idx;   // default the window around the current item
+            int from = n <= 0 ? 0 : Math.max(0, center - n), to = n <= 0 ? total : Math.min(total, center + n + 1);
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (int i = from; i < to; i++) a.put(titleOf(items.get(i)));
+            o.put("type", "queue"); o.put("playlist", currentPl); o.put("index", idx); o.put("total", total); o.put("from", from); o.put("items", a);
+        } catch (Exception ignored) {}
+        return o.toString();
     }
 
     /** Playlist names as a one-shot payload (BLE "list" / HTTP /playlists). */
@@ -139,26 +168,48 @@ public class PlayerController {
     }
 
     // --- commands (marshaled to main) --------------------------------------
-    public void play()      { on(() -> p.play()); }
+    public void play()      { on(() -> { if (!sleeping) p.setVolume(muted ? 0f : 1f); p.play(); }); }   // restore the multiplier (a sleep fade may have zeroed it)
     public void pause()     { on(() -> p.pause()); }
     public void toggle()    { on(() -> { if (p.isPlaying()) p.pause(); else p.play(); }); }
     public void next()      { on(() -> p.seekToNextMediaItem()); }
     public void prev()      { on(() -> p.seekToPreviousMediaItem()); }
     public void seekNearEnd(){ on(() -> { long d = p.getDuration(); if (d > 0) p.seekTo(Math.max(0, d - 3000)); }); }
-    public void setVolume(float v) { on(() -> { vol = clamp(v); p.setVolume(vol); }); }
+    /** Bind system audio: read the current media volume, restore the persisted mute, and make sure the
+        appliance never boots stuck silent (system volume 0 -> 50%). */
+    public void setAudio(Context ctx) {
+        am = (AudioManager) ctx.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
+        prefs = ctx.getApplicationContext().getSharedPreferences("kidodi", Context.MODE_PRIVATE);
+        muted = prefs.getBoolean("muted", false);
+        vol = readSystemVol();
+        if (vol <= 0.001f) setVolume(0.5f);
+        applyMute();
+    }
+    private float readSystemVol() {
+        try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return max > 0 ? (float) am.getStreamVolume(AudioManager.STREAM_MUSIC) / max : 0f; }
+        catch (Exception e) { return 0f; }
+    }
+    /** SYSTEM media volume — the real loudness. The player multiplier stays at 1 unless muted. */
+    public void setVolume(float v) {
+        vol = clamp(v);
+        try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(vol * max), 0); }
+        catch (Exception ignored) {}
+    }
     public void nudge(float d)     { setVolume(vol + d); }
+    public void setMuted(boolean m) { muted = m; try { if (prefs != null) prefs.edit().putBoolean("muted", m).apply(); } catch (Exception ignored) {} applyMute(); }
+    public boolean isMuted() { return muted; }
+    private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(muted ? 0f : 1f); }); }
 
     // --- sleep timer (fade volume then pause) ------------------------------
     public void startSleep(final int min) {
         on(() -> {
             cancelSleepInternal();
             if (min <= 0) return;
-            sleeping = true; sleepMin = min; sleepFromVol = vol;
+            sleeping = true; sleepMin = min; sleepFromVol = muted ? 0f : 1f;   // fade the PLAYER multiplier, never the system volume
             sleepEnd = System.currentTimeMillis() + min * 60000L;
             sleepTick = new Runnable() { public void run() {
                 if (!sleeping) return;
                 long left = sleepEnd - System.currentTimeMillis();
-                if (left <= 0) { setVolume(0f); pause(); sleeping = false; return; }
+                if (left <= 0) { try { if (p != null) p.setVolume(0f); } catch (Exception ignored) {} pause(); sleeping = false; return; }
                 float frac = Math.max(0f, Math.min(1f, (float) left / (sleepMin * 60000f)));
                 try { if (p != null) p.setVolume(sleepFromVol * frac); } catch (Exception ignored) {}
                 main.postDelayed(this, 3000);
@@ -166,7 +217,7 @@ public class PlayerController {
             main.post(sleepTick);
         });
     }
-    public void cancelSleep() { on(() -> { cancelSleepInternal(); setVolume(sleepFromVol); }); }
+    public void cancelSleep() { on(() -> { cancelSleepInternal(); if (p != null) p.setVolume(muted ? 0f : 1f); }); }
     private void cancelSleepInternal() { sleeping = false; if (sleepTick != null) main.removeCallbacks(sleepTick); sleepTick = null; }
 
     public String stateJson() {
@@ -182,6 +233,7 @@ public class PlayerController {
             o.put("position_ms", posMs);
             o.put("duration_ms", durMs);
             o.put("volume", Math.round(vol * 100) / 100.0);
+            o.put("muted", muted);
             o.put("sleeping", sleeping);
             o.put("sleep_remaining_ms", sleeping ? Math.max(0, sleepEnd - System.currentTimeMillis()) : 0);
             o.put("ip", wifiIp());   // so a remote can fetch /snapshot.jpg directly (BLE carries this; no mDNS needed)

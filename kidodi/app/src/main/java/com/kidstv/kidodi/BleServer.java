@@ -142,6 +142,8 @@ public class BleServer {
         }
         if (cmd.startsWith("play:")) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(cmd.substring(5)); return; }
         if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
+        if (cmd.equals("queue")) { pushQueue(); return; }                                 // one-shot queue window (play order)
+        if (cmd.startsWith("jump:")) { try { ctrl.jumpTo(Integer.parseInt(cmd.substring(5).trim())); PlayerActivity.wakeScreen(); } catch (Exception ignored) {} return; }
         if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
         if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
         if (cmd.startsWith("hotspot:")) { if ("on".equals(cmd.substring(8).trim())) HotspotService.start(ctx); else HotspotService.stop(ctx); return; }  // host hotspot + show QR
@@ -155,7 +157,8 @@ public class BleServer {
             case "prev": PlayerActivity.wakeScreen(); ctrl.prev(); break;
             case "volup": ctrl.nudge(0.1f); break;
             case "voldown": ctrl.nudge(-0.1f); break;
-            case "mute": ctrl.setVolume(0f); break;
+            case "mute": ctrl.setMuted(!ctrl.isMuted()); break;   // toggle the persisted player mute (never zeroes system volume)
+            case "unmute": ctrl.setMuted(false); break;
             case "power": PlayerActivity.power(); break;        // on/off like the v1 remote
             case "sleep10": ctrl.startSleep(10); break;         // back-compat
             case "wake": ctrl.cancelSleep(); break;
@@ -226,6 +229,12 @@ public class BleServer {
     private void pushPlaylists() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
         stateChar.setValue(ctrl.playlistsJson().getBytes());
+        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+    }
+    /** A window of the queue around the current item (±4 -> fits one MTU); Wi-Fi /queue gives the full list. */
+    private void pushQueue() {
+        if (gatt == null || stateChar == null || subs.isEmpty()) return;
+        stateChar.setValue(ctrl.queueJson(-1, 4).getBytes());
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 
