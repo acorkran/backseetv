@@ -30,7 +30,7 @@ import java.util.List;
 @SuppressLint({"MissingPermission"})
 @SuppressWarnings("deprecation")
 public class BleClient {
-    public interface Listener { void onStatus(String s); void onState(String json); }
+    public interface Listener { void onStatus(String s); void onState(String json); void onStill(byte[] jpeg); }
     static final String TAG = "KidodiWear";
 
     private final Context ctx;
@@ -40,7 +40,8 @@ public class BleClient {
     private BluetoothLeScanner scanner;
     private ScanCallback scanCb;
     private BluetoothGatt gatt;
-    private BluetoothGattCharacteristic cmdCh, stateCh;
+    private BluetoothGattCharacteristic cmdCh, stateCh, stillCh;
+    private byte[] imgBuf; private int imgPos;   // reassembly of chunked IMG still frames
     private volatile boolean connected = false;
     private volatile boolean stopped = false;
     private volatile boolean scanning = false;
@@ -102,6 +103,7 @@ public class BleClient {
             if (svc == null) { status("service not found"); return; }
             cmdCh = svc.getCharacteristic(Ble.CMD);
             stateCh = svc.getCharacteristic(Ble.STATE);
+            stillCh = svc.getCharacteristic(Ble.IMG);
             if (stateCh != null) {
                 g.setCharacteristicNotification(stateCh, true);
                 BluetoothGattDescriptor cccd = stateCh.getDescriptor(Ble.CCCD);
@@ -110,12 +112,42 @@ public class BleClient {
             lastStateMs = System.currentTimeMillis();   // grace so the watchdog waits for first push
             status("ready");
         }
+        // The GATT queue does one write at a time: subscribe to IMG only AFTER the STATE CCCD lands.
+        @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int st) {
+            if (d != null && d.getCharacteristic() != null && Ble.STATE.equals(d.getCharacteristic().getUuid()) && stillCh != null) {
+                g.setCharacteristicNotification(stillCh, true);
+                BluetoothGattDescriptor c = stillCh.getDescriptor(Ble.CCCD);
+                if (c != null) { c.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); g.writeDescriptor(c); }
+            }
+        }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch) { deliver(ch.getUuid(), ch.getValue()); }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch, byte[] value) { deliver(ch.getUuid(), value); }
     };
 
     private void deliver(java.util.UUID uuid, byte[] v) {
-        if (Ble.STATE.equals(uuid) && v != null) { lastStateMs = System.currentTimeMillis(); String s = new String(v); main.post(() -> l.onState(s)); }
+        if (v == null) return;
+        if (Ble.STATE.equals(uuid)) { lastStateMs = System.currentTimeMillis(); final String s = new String(v); main.post(() -> l.onState(s)); return; }
+        if (Ble.IMG.equals(uuid)) onImgChunk(v);
+    }
+
+    // Reassemble a still: 0x01 START = [1][int32 BE len][data...]; 0x02 DATA = [1][data...]; done at len.
+    private void onImgChunk(byte[] v) {
+        if (v.length < 1) return;
+        if (v[0] == 0x01) {
+            if (v.length < 5) { imgBuf = null; return; }
+            int len = ((v[1] & 0xFF) << 24) | ((v[2] & 0xFF) << 16) | ((v[3] & 0xFF) << 8) | (v[4] & 0xFF);
+            if (len <= 0 || len > 2_000_000) { imgBuf = null; return; }
+            imgBuf = new byte[len]; imgPos = 0;
+            int n = Math.min(v.length - 5, len);
+            System.arraycopy(v, 5, imgBuf, 0, n); imgPos = n;
+        } else if (v[0] == 0x02 && imgBuf != null) {
+            int n = Math.min(v.length - 1, imgBuf.length - imgPos);
+            if (n > 0) { System.arraycopy(v, 1, imgBuf, imgPos, n); imgPos += n; }
+        } else return;
+        if (imgBuf != null && imgPos >= imgBuf.length) {
+            final byte[] done = imgBuf; imgBuf = null; imgPos = 0;
+            main.post(() -> l.onStill(done));
+        }
     }
 
     // Watchdog: the player pushes state every ~1s. No state for 8s => dead link => force reconnect.

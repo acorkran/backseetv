@@ -41,6 +41,15 @@ public class WearRemoteActivity extends Activity {
     private TextView status, title, subtitle;
     private Button playPause;
 
+    // camera view: reduced-res STILLS over BLE, upgraded to Wi-Fi /live MJPEG when the TV IP is reachable
+    private View cameraView;
+    private android.widget.ImageView camImg;
+    private TextView camStatus;
+    private volatile String tabletIp;
+    private volatile boolean camWifiOn;   // true while Wi-Fi live frames are arriving (suppress BLE stills)
+    private volatile boolean liveRun;
+    private Thread liveThread;
+
     // volume popup
     private View volOverlay;
     private View volFill;
@@ -57,17 +66,18 @@ public class WearRemoteActivity extends Activity {
         playerView = buildPlayer();
         settingsView = buildSettings();
         playlistView = buildPlaylists();
+        cameraView = buildCamera();
         content.addView(playerView);
         current = playerView;
 
-        // swipe UP on the player screen -> playlist library (Samsung-media style)
+        // on the player screen: swipe UP -> playlists, swipe DOWN -> camera (Samsung-media style)
         gd = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
-                if (e1 == null || e2 == null) return false;
-                float dy = e1.getY() - e2.getY();
-                if (current == playerView && dy > pad(40) && Math.abs(vy) > 200 && Math.abs(dy) > Math.abs(e1.getX() - e2.getX()))
-                    { openPlaylists(); return true; }
-                return false;
+                if (e1 == null || e2 == null || current != playerView) return false;
+                float dy = e1.getY() - e2.getY(), dx = Math.abs(e1.getX() - e2.getX());
+                if (Math.abs(dy) < pad(40) || Math.abs(vy) < 200 || Math.abs(dy) < dx) return false;
+                if (dy > 0) openPlaylists(); else openCamera();
+                return true;
             }
         });
 
@@ -87,6 +97,7 @@ public class WearRemoteActivity extends Activity {
             if (json != null && json.contains("\"type\":\"playlists\"")) populatePlaylists(json);
             else render(json);
         }
+        public void onStill(byte[] jpeg) { showStill(jpeg); }
     };
     private void attach() {
         BleService svc = BleService.get();
@@ -158,6 +169,111 @@ public class WearRemoteActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
+    // --- camera check-in: reduced-res STILLS over BLE (default), Wi-Fi /live MJPEG when reachable ----
+    private View buildCamera() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+        col.setPadding(pad(8), pad(8), pad(8), pad(8));
+        col.setBackgroundColor(Color.BLACK);
+
+        camImg = new android.widget.ImageView(this);
+        camImg.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        camImg.setBackgroundColor(0xFF101010);
+        col.addView(camImg, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        camStatus = new TextView(this);
+        camStatus.setText("connecting…"); camStatus.setTextColor(0xFF9AA0A6); camStatus.setTextSize(10);
+        camStatus.setGravity(Gravity.CENTER); camStatus.setPadding(0, pad(4), 0, 0);
+        col.addView(camStatus);
+        return col;
+    }
+
+    private void openCamera() {
+        show(cameraView);
+        camWifiOn = false;
+        camStatus.setText("Camera · BLE stills");
+        send("camble:on");   // reduced-res stills over BLE — always available
+        BleService svc = BleService.get();
+        byte[] cached = svc != null ? svc.latestStill() : null;
+        if (cached != null) showStill(cached);   // immediate paint
+        if (tabletIp != null && !tabletIp.isEmpty()) startWifiLive();   // upgrade to live if we know the TV IP
+    }
+    private void closeCamera() {
+        send("camble:off");
+        stopWifiLive();
+        show(playerView);
+    }
+    // A BLE still arrived — paint it only while the camera is open and Wi-Fi live isn't driving the view.
+    private void showStill(byte[] jpeg) {
+        if (current != cameraView || camWifiOn || jpeg == null || camImg == null) return;
+        android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+        if (bmp != null) { camImg.setImageBitmap(bmp); camStatus.setText("Camera · BLE stills"); }
+    }
+
+    private void startWifiLive() {
+        stopWifiLive();
+        final String ip = tabletIp;
+        if (ip == null || ip.isEmpty()) return;
+        liveRun = true;
+        liveThread = new Thread(() -> {
+            try {
+                java.net.HttpURLConnection c = openOnWifi("http://" + ip + ":8090/live");
+                c.setConnectTimeout(2500); c.setReadTimeout(6000);
+                if (c.getResponseCode() != 200) { c.disconnect(); return; }
+                java.io.InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 1 << 15);
+                byte[] jpg;
+                while (liveRun && (jpg = readMjpegFrame(in)) != null) {
+                    final android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
+                    if (bmp != null) main.post(() -> {
+                        camWifiOn = true;
+                        if (current == cameraView) { camImg.setImageBitmap(bmp); camStatus.setText("Camera · Wi-Fi live"); }
+                    });
+                }
+                c.disconnect();
+            } catch (Exception ignored) {}
+            camWifiOn = false;   // stream dropped -> BLE stills resume painting
+        });
+        liveThread.setDaemon(true); liveThread.start();
+    }
+    private void stopWifiLive() {
+        liveRun = false; camWifiOn = false;
+        Thread t = liveThread; liveThread = null;
+        if (t != null) t.interrupt();
+    }
+    // Open bound to the Wi-Fi network (the TV is on the LAN; the watch's default net may not be).
+    private java.net.HttpURLConnection openOnWifi(String urlStr) throws Exception {
+        java.net.URL url = new java.net.URL(urlStr);
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm != null) for (android.net.Network n : cm.getAllNetworks()) {
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
+                    return (java.net.HttpURLConnection) n.openConnection(url);
+            }
+        } catch (Exception ignored) {}
+        return (java.net.HttpURLConnection) url.openConnection();
+    }
+    // Read one MJPEG part: consume part-headers to the blank line, grab Content-Length, read that many bytes.
+    private byte[] readMjpegFrame(java.io.InputStream in) throws Exception {
+        int contentLength = -1; String line;
+        while ((line = readLine(in)) != null) {
+            if (line.isEmpty()) { if (contentLength >= 0) break; else continue; }
+            String low = line.toLowerCase();
+            if (low.startsWith("content-length:")) { try { contentLength = Integer.parseInt(line.substring(15).trim()); } catch (Exception ignored) {} }
+        }
+        if (contentLength <= 0 || contentLength > 4_000_000) return null;
+        byte[] buf = new byte[contentLength]; int off = 0;
+        while (off < contentLength) { int n = in.read(buf, off, contentLength - off); if (n < 0) return null; off += n; }
+        return buf;
+    }
+    private String readLine(java.io.InputStream in) throws Exception {
+        StringBuilder sb = new StringBuilder(); int ch = -1;
+        while ((ch = in.read()) != -1) { if (ch == '\n') break; if (ch != '\r') sb.append((char) ch); }
+        if (sb.length() == 0 && ch == -1) return null;
+        return sb.toString();
+    }
+
     // --- player screen (centered + compact to fit the round face) -----------
     private View buildPlayer() {
         LinearLayout col = new LinearLayout(this);
@@ -208,6 +324,14 @@ public class WearRemoteActivity extends Activity {
         hlp.topMargin = pad(6); hint.setLayoutParams(hlp);
         hint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openPlaylists(); } });
         col.addView(hint);
+
+        TextView camHint = new TextView(this);   // swipe down (or tap) for the camera check-in
+        camHint.setText("▼ Camera"); camHint.setTextColor(0xFF6B7075); camHint.setTextSize(11);
+        camHint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams chlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        chlp.topMargin = pad(2); camHint.setLayoutParams(chlp);
+        camHint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openCamera(); } });
+        col.addView(camHint);
         return col;
     }
 
@@ -305,6 +429,7 @@ public class WearRemoteActivity extends Activity {
             subtitle.setText(ep.replace('.', ' ').replace('⧸', '/').trim());
             if (volOverlay.getVisibility() != View.VISIBLE)
                 volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
+            String ip = o.optString("ip", ""); if (!ip.isEmpty()) tabletIp = ip;   // for Wi-Fi /live
         } catch (Exception ignored) {}
     }
 
@@ -357,7 +482,7 @@ public class WearRemoteActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    @Override public void onBackPressed() { show(playerView); }
+    @Override public void onBackPressed() { if (current == cameraView) closeCamera(); else show(playerView); }
     @Override protected void onResume() { super.onResume(); attach(); }
     @Override protected void onPause() { BleService svc = BleService.get(); if (svc != null) svc.setListener(null); super.onPause(); }
     // NOTE: we deliberately do NOT stop BleService on destroy — it stays alive so the

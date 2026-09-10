@@ -18,7 +18,7 @@ import android.os.Build;
 import android.os.IBinder;
 
 public class BleService extends Service {
-    public interface Listener { void onStatus(String s); void onState(String json); }
+    public interface Listener { void onStatus(String s); void onState(String json); void onStill(byte[] jpeg); }
 
     private static BleService INSTANCE;
     public static BleService get() { return INSTANCE; }
@@ -33,6 +33,7 @@ public class BleService extends Service {
     private BleClient ble;
     private volatile String lastState = "{}";
     private volatile String lastPlaylists = null;   // the one-shot {"type":"playlists",...} payload
+    private volatile byte[] lastStill = null;        // latest reassembled reduced-res still (BLE)
     private volatile String lastStatus = "starting…";
     private Listener ui;
 
@@ -50,6 +51,7 @@ public class BleService extends Service {
                 if (isPlaylists(json)) lastPlaylists = json; else lastState = json;
                 if (ui != null) ui.onState(json);
             }
+            public void onStill(byte[] jpeg) { lastStill = jpeg; if (ui != null) ui.onStill(jpeg); }
         });
         ble.start();
     }
@@ -62,11 +64,13 @@ public class BleService extends Service {
             l.onStatus(lastStatus);
             l.onState(lastState);
             if (lastPlaylists != null) l.onState(lastPlaylists);
+            if (lastStill != null) l.onStill(lastStill);
         }
     }
     public void send(String cmd) { if (ble != null) ble.send(cmd); }
     public String state() { return lastState; }
     public String playlists() { return lastPlaylists; }
+    public byte[] latestStill() { return lastStill; }
 
     @Override public void onDestroy() {
         if (ble != null) { ble.stop(); ble = null; }
