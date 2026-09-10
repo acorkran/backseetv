@@ -58,6 +58,7 @@ public class ControlServer {
             int i = target.indexOf('?'); if (i >= 0) { path = target.substring(0, i); q = target.substring(i + 1); }
 
             if (path.equals("/upload")) { handleUpload(param(q, "name"), h.toString(), in, c); return; }   // wifi file import
+            if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
 
             String body;
             switch (path) {
@@ -80,6 +81,7 @@ public class ControlServer {
                 }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
+                case "/snap": SnapshotService.set(ctx, "1".equals(param(q, "on")) || "true".equals(param(q, "on"))); body = ok(); break;
                 case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }
@@ -126,6 +128,18 @@ public class ControlServer {
             }
             return "{\"ok\":false,\"error\":\"not device owner\"}";
         } catch (Exception e) { return "{\"ok\":false,\"error\":\"" + String.valueOf(e).replace("\"", "'") + "\"}"; }
+    }
+
+    // --- camera-monitor plugin: periodically-updated still images (off by default) ---
+    private void writeJpeg(Socket c, byte[] data) throws Exception {
+        OutputStream os = c.getOutputStream();
+        if (data == null) {   // snapshots off or not ready yet
+            os.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("UTF-8"));
+            os.flush(); return;
+        }
+        os.write(("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
+                + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
+        os.write(data); os.flush();
     }
 
     private static String ok() { return "{\"ok\":true}"; }

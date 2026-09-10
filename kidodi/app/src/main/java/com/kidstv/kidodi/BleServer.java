@@ -133,6 +133,7 @@ public class BleServer {
         }
         if (cmd.startsWith("play:")) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(cmd.substring(5)); return; }
         if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
+        if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
 
         switch (cmd) {
             case "play": PlayerActivity.wakeScreen(); ctrl.play(); break;
