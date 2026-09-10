@@ -49,6 +49,10 @@ public class WearRemoteActivity extends Activity {
     private volatile boolean camWifiOn;   // true while Wi-Fi live frames are arriving (suppress BLE stills)
     private volatile boolean liveRun;
     private Thread liveThread;
+    // digital pan/tilt/zoom over the received frame — bezel = zoom, tap = pan/tilt
+    private float camZoom = 1f;                            // 1.0x – 4.0x
+    private float camCx = 0.5f, camCy = 0.5f;              // viewport centre, normalised 0..1
+    private volatile android.graphics.Bitmap lastCamBmp;  // last full frame, re-rendered on zoom/pan
 
     // volume popup
     private View volOverlay;
@@ -83,6 +87,10 @@ public class WearRemoteActivity extends Activity {
                     if (dx < -pad(40) && Math.abs(vx) > 200) { openCamera(); return true; }     // LEFT -> camera
                 }
                 return false;   // down (quick settings) / right (back) left to the system
+            }
+            @Override public boolean onSingleTapUp(MotionEvent e) {   // tap = pan/tilt on the camera frame
+                if (current == cameraView) { panToward(e.getX(), e.getY()); return true; }
+                return false;   // player taps fall through to the buttons
             }
         });
 
@@ -197,6 +205,7 @@ public class WearRemoteActivity extends Activity {
     private void openCamera() {
         show(cameraView);
         camWifiOn = false;
+        camZoom = 1f; camCx = 0.5f; camCy = 0.5f; lastCamBmp = null;   // reset digital PTZ
         camStatus.setText("Camera · BLE stills");
         send("camble:on");   // reduced-res stills over BLE — always available
         BleService svc = BleService.get();
@@ -207,13 +216,41 @@ public class WearRemoteActivity extends Activity {
     private void closeCamera() {
         send("camble:off");
         stopWifiLive();
+        lastCamBmp = null;   // free the last frame
         show(playerView);
     }
     // A BLE still arrived — paint it only while the camera is open and Wi-Fi live isn't driving the view.
     private void showStill(byte[] jpeg) {
         if (current != cameraView || camWifiOn || jpeg == null || camImg == null) return;
         android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
-        if (bmp != null) { camImg.setImageBitmap(bmp); camStatus.setText("Camera · BLE stills"); }
+        if (bmp != null) { paintFrame(bmp); camStatus.setText("Camera · BLE stills"); }
+    }
+
+    /** Paint a frame through the digital pan/tilt/zoom viewport (crop to the zoomed sub-rect, centred). */
+    private void paintFrame(android.graphics.Bitmap bmp) {
+        lastCamBmp = bmp;
+        if (bmp == null || camImg == null) return;
+        if (camZoom <= 1.01f) { camImg.setImageBitmap(bmp); return; }
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        int cw = Math.max(1, Math.round(w / camZoom)), ch = Math.max(1, Math.round(h / camZoom));
+        int cx = Math.max(0, Math.min(w - cw, Math.round(camCx * w - cw / 2f)));
+        int cy = Math.max(0, Math.min(h - ch, Math.round(camCy * h - ch / 2f)));
+        try { camImg.setImageBitmap(android.graphics.Bitmap.createBitmap(bmp, cx, cy, cw, ch)); }
+        catch (Exception e) { camImg.setImageBitmap(bmp); }
+    }
+    /** A tap nudges the viewport centre toward the tapped point (repeated taps walk around a zoomed frame). */
+    private void panToward(float x, float y) {
+        float vw = Math.max(1, content.getWidth()), vh = Math.max(1, content.getHeight());
+        camCx += ((x / vw) - 0.5f) * (0.6f / camZoom);
+        camCy += ((y / vh) - 0.5f) * (0.6f / camZoom);
+        clampCentre();
+        if (lastCamBmp != null) paintFrame(lastCamBmp);
+    }
+    /** Keep the viewport centre so the (0.5/zoom)-radius window stays inside the frame. */
+    private void clampCentre() {
+        float half = 0.5f / camZoom;
+        camCx = Math.max(half, Math.min(1f - half, camCx));
+        camCy = Math.max(half, Math.min(1f - half, camCy));
     }
 
     private void startWifiLive() {
@@ -232,7 +269,7 @@ public class WearRemoteActivity extends Activity {
                     final android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
                     if (bmp != null) main.post(() -> {
                         camWifiOn = true;
-                        if (current == cameraView) { camImg.setImageBitmap(bmp); camStatus.setText("Camera · Wi-Fi live"); }
+                        if (current == cameraView) { paintFrame(bmp); camStatus.setText("Camera · Wi-Fi live"); }
                     });
                 }
                 c.disconnect();
@@ -444,10 +481,18 @@ public class WearRemoteActivity extends Activity {
                 && (ev.getSource() & InputDevice.SOURCE_ROTARY_ENCODER) != 0) {
             float d = ev.getAxisValue(MotionEvent.AXIS_SCROLL);
             if (d != 0) {
-                boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder
-                send(up ? "volup" : "voldown");
-                volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
-                showVol();
+                boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder / zoom-in
+                if (current == cameraView) {              // bezel = ZOOM while the camera view is up
+                    camZoom = Math.max(1f, Math.min(4f, camZoom + (up ? 0.25f : -0.25f)));
+                    if (camZoom <= 1.01f) { camCx = 0.5f; camCy = 0.5f; }   // recentre at 1x
+                    clampCentre();
+                    if (lastCamBmp != null) paintFrame(lastCamBmp);
+                    if (camStatus != null) camStatus.setText("Zoom " + String.format("%.1f", camZoom) + "x");
+                } else {                                  // bezel = VOLUME on the player (unchanged)
+                    send(up ? "volup" : "voldown");
+                    volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
+                    showVol();
+                }
             }
             return true;
         }
