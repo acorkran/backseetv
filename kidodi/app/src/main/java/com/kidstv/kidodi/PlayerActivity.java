@@ -9,9 +9,11 @@ package com.kidstv.kidodi;
 // ============================================================================
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -22,8 +24,12 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
@@ -64,12 +70,13 @@ public class PlayerActivity extends Activity {
         flash.setVisibility(View.GONE);
         root.addView(flash, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // admin escape: 4 taps in the top-left corner within 2s -> leave kiosk
-        View escape = new View(this);
-        escape.setOnClickListener(v -> onEscapeTap());
-        FrameLayout.LayoutParams elp = new FrameLayout.LayoutParams(dp(72), dp(72));
-        elp.gravity = Gravity.TOP | Gravity.START;
-        root.addView(escape, elp);
+        // admin unlock: a hidden, configurable gesture ANYWHERE on screen (default: 4 four-finger
+        // taps in 3s) -> PIN pad. No "guess the corner" nonsense; the multi-finger press is what
+        // keeps a toddler from tripping it. Tunable via Settings.Global (see AdminGesture).
+        View gestureCatcher = new View(this);
+        gestureCatcher.setOnTouchListener(new AdminGesture(this, this::showPinPad));
+        root.addView(gestureCatcher, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
 
@@ -139,13 +146,7 @@ public class PlayerActivity extends Activity {
 
     @Override protected void onResume() { super.onResume(); enterKiosk(); }
 
-    // --- kid-proof shell: screen-pinning (normal) / inescapable lock (device owner) ---
-    private long escFirst = 0; private int escCount = 0;
-    private void onEscapeTap() {
-        long now = System.currentTimeMillis();
-        if (now - escFirst > 2000) { escFirst = now; escCount = 1; }
-        else if (++escCount >= 4) { escCount = 0; exitKiosk(); }
-    }
+    // --- kid-proof shell: device-owner lock-task + hidden-gesture admin unlock (PIN) ---
     private void enterKiosk() {
         int on = 0;
         try { on = Settings.Global.getInt(getContentResolver(), "kidodi_kiosk", 0); } catch (Exception e) {}
@@ -169,14 +170,97 @@ public class PlayerActivity extends Activity {
             startLockTask();
         } catch (Exception e) {}
     }
-    private void exitKiosk() {
+    /** Admin PIN pad (on-screen digit grid, no soft keyboard). Auto-checks when the entered length
+        matches; wrong clears; cancel/back keeps the kiosk locked. Default PIN 1234, override with
+        `adb shell settings put global kidodi_pin <PIN>`. */
+    private boolean pinShowing = false;
+    private void showPinPad() {
+        if (pinShowing) return;
+        pinShowing = true;
+        final float restore = getWindow().getAttributes().screenBrightness;
+        setBrightness(-1f);   // ensure the pad is visible even if the screen was napped/dim
+        final String pin = currentPin();
+        final StringBuilder entered = new StringBuilder();
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(0xFF101418);
+        col.setPadding(dp(24), dp(24), dp(24), dp(24));
+
+        final TextView disp = new TextView(this);
+        disp.setText("Enter admin PIN");
+        disp.setTextColor(Color.WHITE); disp.setTextSize(24); disp.setGravity(Gravity.CENTER);
+        disp.setPadding(0, dp(12), 0, dp(24));
+        col.addView(disp);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setView(col).setCancelable(true)
+                .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); })
+                .create();
+
+        String[][] rows = {{"1", "2", "3"}, {"4", "5", "6"}, {"7", "8", "9"}, {"Clear", "0", "⌫"}};
+        for (String[] r : rows) {
+            LinearLayout rowv = new LinearLayout(this);
+            rowv.setOrientation(LinearLayout.HORIZONTAL);
+            for (final String key : r) {
+                Button b = new Button(this);
+                b.setText(key); b.setTextSize(22);
+                b.setOnClickListener(v -> {
+                    if ("Clear".equals(key)) entered.setLength(0);
+                    else if ("⌫".equals(key)) { if (entered.length() > 0) entered.setLength(entered.length() - 1); }
+                    else entered.append(key);
+                    StringBuilder mask = new StringBuilder();
+                    for (int i = 0; i < entered.length(); i++) mask.append("● ");
+                    disp.setText(mask.length() > 0 ? mask.toString().trim() : "Enter admin PIN");
+                    if (entered.length() >= pin.length()) {
+                        if (entered.toString().equals(pin)) { pinShowing = false; dlg.dismiss(); unlock(); }
+                        else { entered.setLength(0); disp.setText("Wrong — try again"); }
+                    }
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+                rowv.addView(b, lp);
+            }
+            col.addView(rowv);
+        }
+        dlg.show();
+    }
+
+    private String currentPin() {
+        String p = null;
+        try { p = Settings.Global.getString(getContentResolver(), "kidodi_pin"); } catch (Exception e) {}
+        return (p == null || p.isEmpty()) ? "1234" : p;
+    }
+    private void setBrightness(float b) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = b; getWindow().setAttributes(lp);
+    }
+
+    /** Drop kiosk enforcement and hand to the real launcher. Device owner is KEPT, and re-opening
+        the Kidodi player re-locks (enterKiosk). Reaching here already passed the PIN. */
+    private void unlock() {
         try { stopLockTask(); } catch (Exception e) {}
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
-            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName()))
-                dpm.setStatusBarDisabled(new ComponentName(this, AdminReceiver.class), false);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
+                ComponentName admin = new ComponentName(this, AdminReceiver.class);
+                try { dpm.setStatusBarDisabled(admin, false); } catch (Exception e) {}
+                try { dpm.clearPackagePersistentPreferredActivities(admin, getPackageName()); } catch (Exception e) {}
+            }
         } catch (Exception e) {}
-        try { startActivity(new Intent(this, RouterActivity.class)); } catch (Exception e) {}
+        // hand off to a real (non-Kidodi) home so we don't just bounce back to ourselves
+        Intent home = new Intent(Intent.ACTION_MAIN);
+        home.addCategory(Intent.CATEGORY_HOME);
+        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            for (ResolveInfo ri : getPackageManager().queryIntentActivities(home, 0)) {
+                if (ri.activityInfo != null && !getPackageName().equals(ri.activityInfo.packageName)) {
+                    home.setComponent(new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name));
+                    break;
+                }
+            }
+            startActivity(home);
+        } catch (Exception e) {}
         finish();
     }
 
