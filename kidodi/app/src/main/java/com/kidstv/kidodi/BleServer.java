@@ -156,6 +156,31 @@ public class BleServer {
         if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
         if (cmd.startsWith("hotspot:")) { if ("on".equals(cmd.substring(8).trim())) HotspotService.start(ctx); else HotspotService.stop(ctx); return; }  // host hotspot + show QR
         if (cmd.startsWith("camble:")) { setCamble("on".equals(cmd.substring(7).trim())); return; }  // reduced-res stills over BLE
+        // --- library / queue editing / user playlists (replies are one-shot typed payloads on STATE) ---
+        if (cmd.startsWith("enq:"))     { ctrl.enqueue(pi(cmd.substring(4)), false, false); return; }
+        if (cmd.startsWith("enqnext:")) { ctrl.enqueue(pi(cmd.substring(8)), true, false); return; }
+        if (cmd.startsWith("enqnow:"))  { PlayerActivity.wakeScreen(); ctrl.enqueue(pi(cmd.substring(7)), true, true); return; }
+        if (cmd.startsWith("enqshow:")) { ctrl.enqueueShow(cmd.substring(8).trim()); return; }
+        if (cmd.startsWith("deq:"))     { ctrl.dequeue(pi(cmd.substring(4))); return; }
+        if (cmd.startsWith("shuffle:")) { String v = cmd.substring(8).trim(); ctrl.setShuffle("toggle".equals(v) ? !ctrl.isShuffle() : "on".equals(v)); return; }
+        if (cmd.startsWith("loop:"))    { String v = cmd.substring(5).trim(); ctrl.setLoop("toggle".equals(v) ? !ctrl.isLoop() : "on".equals(v)); return; }
+        if (cmd.startsWith("savequeue:")) { ctrl.saveQueue(cmd.substring(10).trim()); pushPlaylists(); return; }
+        if (cmd.startsWith("delpl:"))   { ctrl.deletePlaylist(cmd.substring(6).trim()); pushPlaylists(); return; }
+        if (cmd.equals("shows") || cmd.startsWith("shows:")) { pushJson(ctrl.libraryJson(cmd.length() > 6 ? pi(cmd.substring(6)) : 0, 430)); return; }
+        if (cmd.startsWith("eps:")) {   // eps:SHOW[:FROM] -> a page of up to 6 episodes (titles ≤60 chars)
+            String rest = cmd.substring(4); int from = 0; int c = rest.lastIndexOf(':');
+            if (c > 0 && rest.substring(c + 1).trim().matches("\\d+")) { from = pi(rest.substring(c + 1)); rest = rest.substring(0, c); }
+            pushJson(ctrl.episodesJson(rest.trim(), from, 6, 60)); return;
+        }
+        // --- connectivity level ---
+        if (cmd.equals("conn")) { pushJson(ctrl.connJson()); return; }
+        if (cmd.startsWith("conn:")) { HotspotService.applyMode(ctx, cmd.substring(5).trim()); pushJson(ctrl.connJson()); return; }
+        if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS -> the TV joins (device owner = silent)
+            String[] sp = cmd.substring(5).split("\t", 2);
+            WifiJoiner.Creds cr = new WifiJoiner.Creds();
+            cr.ssid = sp[0].trim(); cr.pass = sp.length > 1 ? sp[1] : ""; cr.type = cr.pass.isEmpty() ? "nopass" : "WPA";
+            WifiJoiner.join(ctx, cr); return;
+        }
 
         switch (cmd) {
             case "play": PlayerActivity.wakeScreen(); ctrl.play(); break;
@@ -170,8 +195,16 @@ public class BleServer {
             case "power": PlayerActivity.power(); break;        // on/off like the v1 remote
             case "sleep10": ctrl.startSleep(10); break;         // back-compat
             case "wake": ctrl.cancelSleep(); break;
-            case "flash": PlayerActivity.flash(3000); break;
+            case "flash": PlayerActivity.flash(Cfg.getInt(ctx, "kidodi_flash_ms", 3000)); break;   // duration from Settings
         }
+    }
+    private static int pi(String s) { try { return Integer.parseInt(s.trim()); } catch (Exception e) { return -1; } }
+
+    /** One-shot typed payload on the STATE characteristic (library / episodes / conn pages). */
+    private void pushJson(String json) {
+        if (gatt == null || stateChar == null || subs.isEmpty() || json == null) return;
+        stateChar.setValue(json.getBytes());
+        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 
     /** Toggle BLE reduced-res still delivery (ref-counted across clients). While ≥1 client wants it,

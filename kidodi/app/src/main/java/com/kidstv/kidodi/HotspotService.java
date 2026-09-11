@@ -29,19 +29,41 @@ public class HotspotService extends Service {
     public static String currentSsid() { return ssid; }
     public static String currentPass() { return pass; }
 
-    public static void start(Context ctx) {
+    /** Start the hotspot AND pop its QR (the phone-driven "hotspot:on" flow expects the QR on the TV). */
+    public static void start(Context ctx) { start(ctx, true); }
+    public static void start(Context ctx, boolean showQr) {
         grantNearbyWifi(ctx);
-        ctx.getApplicationContext().startService(new Intent(ctx.getApplicationContext(), HotspotService.class));
+        ctx.getApplicationContext().startService(new Intent(ctx.getApplicationContext(), HotspotService.class).putExtra("qr", showQr));
     }
     public static void stop(Context ctx) {
         ctx.getApplicationContext().stopService(new Intent(ctx.getApplicationContext(), HotspotService.class));
     }
 
+    // --- connectivity level (Cfg kidodi_conn): ble | tv_hotspot | remote_hotspot | shared ---------
+    static final String[] MODES = {"ble", "tv_hotspot", "remote_hotspot", "shared"};
+    public static String mode(Context ctx) {
+        String m = Cfg.getStr(ctx, "kidodi_conn", "ble");
+        for (String k : MODES) if (k.equals(m)) return m;
+        return "ble";
+    }
+    /** Persist + apply a level: tv_hotspot keeps the TV's hotspot up (silently — the creds ride in
+        state for remotes to auto-join; Settings has "Show QR"); every other level tears it down. */
+    public static void applyMode(Context ctx, String m) {
+        boolean known = false;
+        for (String k : MODES) if (k.equals(m)) known = true;
+        if (!known) return;
+        Cfg.put(ctx, "kidodi_conn", m);
+        if ("tv_hotspot".equals(m)) { if (!running()) start(ctx, false); }
+        else if (running()) stop(ctx);
+    }
+
     private WifiManager.LocalOnlyHotspotReservation reservation;
+    private boolean showQr = true;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        showQr = intent == null || intent.getBooleanExtra("qr", true);
         if (reservation == null) startHotspot();
         return START_STICKY;
     }
@@ -56,7 +78,7 @@ public class HotspotService extends Service {
                     reservation = res;
                     readCreds(res);
                     Log.i(TAG, "hotspot up: '" + ssid + "'");
-                    if (ssid != null) showQr();
+                    if (ssid != null && showQr) showQr();
                 }
                 @Override public void onStopped() { Log.i(TAG, "hotspot stopped"); ssid = pass = null; }
                 @Override public void onFailed(int reason) { Log.e(TAG, "hotspot failed: " + reason); stopSelf(); }

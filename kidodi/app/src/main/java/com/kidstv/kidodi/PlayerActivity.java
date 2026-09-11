@@ -97,6 +97,7 @@ public class PlayerActivity extends Activity {
         server.start();
         ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
         ble.start();
+        HotspotService.applyMode(this, HotspotService.mode(this));   // connectivity level: keeps the TV hotspot up when chosen
 
         // Physical POWER button = same as the remote's Power: screen off -> nap (pause), screen on -> wake (play).
         // Apps can't intercept the power key itself, but the screen-state broadcasts give the same effect.
@@ -175,7 +176,7 @@ public class PlayerActivity extends Activity {
         if (a != null) a.main.post(() -> a.doFlash(ms));
     }
     private void doFlash(int ms) {
-        ms = Math.max(200, Math.min(4000, ms));
+        ms = Math.max(200, Math.min(15000, ms));   // Settings offers up to 10s
         flashing = true;   // the wake lock fires SCREEN_ON — don't let that count as a "wake" (un-nap)
         // If napped, the display has actually gone to sleep — a brightness change alone shows nothing.
         // Force the screen ON (brief wake lock, auto-released) so the white flash is visible.

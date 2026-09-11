@@ -87,8 +87,43 @@ public class ControlServer {
                     if (m > 0) ctrl.startSleep(m); else ctrl.cancelSleep();
                     body = ok(); break;
                 }
-                case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), 3000)); body = ok(); break;
+                case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), Cfg.getInt(ctx, "kidodi_flash_ms", 3000))); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
+                // --- library / queue editing / user playlists --------------------------------------
+                case "/library": { String show = param(q, "show"); body = show == null ? ctrl.libraryJson() : ctrl.episodesJson(urlDecode(show), 0, Integer.MAX_VALUE, 0); break; }
+                case "/enqueue": {
+                    String show = param(q, "show"), id = param(q, "id");
+                    boolean now = "1".equals(param(q, "now")), next = "1".equals(param(q, "next"));
+                    boolean okk = show != null ? ctrl.enqueueShow(urlDecode(show)) : ctrl.enqueue((int) pf(id, -1), next, now);
+                    if (now) PlayerActivity.wakeScreen();
+                    body = okk ? ok() : "{\"ok\":false,\"error\":\"unknown item\"}"; break;
+                }
+                case "/dequeue": ctrl.dequeue((int) pf(param(q, "i"), -1)); body = ok(); break;
+                case "/shuffle": { String on = param(q, "on"); ctrl.setShuffle(on == null ? !ctrl.isShuffle() : ("1".equals(on) || "true".equals(on))); body = ok(); break; }
+                case "/loop":    { String on = param(q, "on"); ctrl.setLoop(on == null ? !ctrl.isLoop() : ("1".equals(on) || "true".equals(on))); body = ok(); break; }
+                case "/savequeue": { String n = param(q, "name"); body = (n != null && ctrl.saveQueue(urlDecode(n))) ? ok() : "{\"ok\":false,\"error\":\"bad name or empty queue\"}"; break; }
+                case "/delplaylist": {
+                    String n = param(q, "name");
+                    if (n != null && ctrl.deletePlaylist(urlDecode(n))) body = ok();
+                    else { write(c, 400, "{\"ok\":false,\"error\":\"not a user playlist\"}"); return; }
+                    break;
+                }
+                // --- connectivity level (ble | tv_hotspot | remote_hotspot | shared) ----------------
+                case "/conn": {
+                    String m = param(q, "mode");
+                    if (m != null) HotspotService.applyMode(ctx, urlDecode(m));
+                    body = ctrl.connJson(); break;
+                }
+                case "/wifi": {   // the TV joins a network (device owner = silent)
+                    String ssid = param(q, "ssid"), pass = param(q, "pass");
+                    boolean joined = false;
+                    if (ssid != null) {
+                        WifiJoiner.Creds cr = new WifiJoiner.Creds();
+                        cr.ssid = urlDecode(ssid); cr.pass = pass == null ? "" : urlDecode(pass); cr.type = cr.pass.isEmpty() ? "nopass" : "WPA";
+                        joined = WifiJoiner.join(ctx, cr);
+                    }
+                    body = "{\"type\":\"wifi\",\"ok\":" + joined + "}"; break;
+                }
                 case "/snap": SnapshotService.set(ctx, "1".equals(param(q, "on")) || "true".equals(param(q, "on"))); body = ok(); break;
                 case "/hotspot": {   // host a LocalOnlyHotspot (random creds) + show its WIFI QR for a remote to scan+join
                     if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) HotspotService.start(ctx); else HotspotService.stop(ctx);
@@ -196,10 +231,11 @@ public class ControlServer {
     private static float pf(String s, float dflt) { if (s == null) return dflt; try { return Float.parseFloat(s.trim()); } catch (Exception e) { return dflt; } }
     private static String urlDecode(String s) { try { return java.net.URLDecoder.decode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
-    private void write(Socket c, String body) throws Exception {
+    private void write(Socket c, String body) throws Exception { write(c, 200, body); }
+    private void write(Socket c, int status, String body) throws Exception {
         byte[] data = body.getBytes("UTF-8");
         OutputStream os = c.getOutputStream();
-        os.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
+        os.write(("HTTP/1.1 " + status + (status == 200 ? " OK" : " Bad Request") + "\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
                 + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
         os.write(data); os.flush();
     }
