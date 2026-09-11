@@ -130,9 +130,13 @@ public class PlayerController {
             p.setRepeatMode(loop ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
             p.setMediaItems(order);
             p.prepare();
+            keepMute();   // audio-safety: a new media list must never start audible while muted
             p.play();
         });
     }
+    /** Re-assert the mute/volume multiplier (call after any setMediaItems). Cheap insurance so a
+        freshly-built queue can never boot to full volume while muted — the nap-safe invariant. */
+    private void keepMute() { if (p != null && !sleeping) p.setVolume(muted ? 0f : 1f); }
     private static List<MediaItem> shuffled(List<MediaItem> in) { List<MediaItem> out = new ArrayList<>(in); java.util.Collections.shuffle(out); return out; }
 
     /** Jump to item i of the current queue and play. */
@@ -196,7 +200,7 @@ public class PlayerController {
             if (p.getMediaItemCount() == 0) {   // empty player: this becomes the queue
                 q.addAll(items); currentItems = q;
                 p.setRepeatMode(loop ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
-                p.setMediaItems(q); p.prepare(); p.play(); return;
+                p.setMediaItems(q); p.prepare(); keepMute(); p.play(); return;
             }
             int at = afterCurrent ? Math.min(q.size(), p.getCurrentMediaItemIndex() + 1) : q.size();
             q.addAll(at, items); currentItems = q;
@@ -240,6 +244,7 @@ public class PlayerController {
             shuffle = on; currentItems = order;
             p.setMediaItems(order, start, pos);
             p.prepare();
+            keepMute();
             if (wasPlaying) p.play();
         });
     }
