@@ -12,6 +12,12 @@ package com.kidstv.kidodi;
 //  a short linger. When the last user releases, both transports stop and the
 //  service exits. (A 24/7 link is a battery drain: LOW_LATENCY scanning when
 //  the TV is away, 1 Hz wakeups when it's near.)
+//
+//  CONNECTION LEVELS (kidodi_conn, chosen on either side, published by the TV
+//  in state): ble = pure Bluetooth (no Wi-Fi client at all); tv_hotspot = the
+//  TV hosts a hotspot and publishes its creds -> we join it; remote_hotspot =
+//  THIS phone hosts a hotspot and pushes its creds to the TV over BLE ("wifi:"),
+//  the TV joins; shared = both on the same network (nothing automatic).
 // ============================================================================
 
 import android.app.Notification;
@@ -26,8 +32,12 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RemoteService extends Service {
     public interface Listener { void onStatus(String s); void onState(String json); }
@@ -62,25 +72,113 @@ public class RemoteService extends Service {
     private WifiClient wifi;
     private volatile String lastState = "{}", lastStatus = "starting…", transport = "—";
     private volatile java.util.List<String> playlistNames = new java.util.ArrayList<>();
+    private volatile java.util.List<String> userPlaylistNames = new java.util.ArrayList<>();
     private Listener ui;
     private boolean started = false;
     private volatile boolean local = false;   // TV-side admin Remote: loopback HTTP to ourselves, no BLE
 
-    private static boolean isPlaylists(String json) { return json != null && json.contains("\"type\":\"playlists\""); }
-    private static boolean isQueue(String json) { return json != null && json.contains("\"type\":\"queue\""); }
-    private volatile String lastQueue = null;   // the latest one-shot queue payload (BLE window / Wi-Fi list)
-    public String queueJson() { return lastQueue; }
-    public void requestQueue() { lastQueue = null; send("queue"); }
+    // --- typed one-shot payloads (playlists / queue / library / episodes / conn) --------------------
+    // The TV answers query commands on the STATE channel with {"type":...} payloads; they're cached
+    // here by type (never treated as state) so a UI can request + poll. The plain state has no "type".
+    private final Map<String, String> typed = new ConcurrentHashMap<>();
+    private static String typeOf(String json) {
+        if (json == null) return null;
+        int i = json.indexOf("\"type\":\"");
+        if (i < 0) return null;
+        int e = json.indexOf('"', i + 8);
+        return e > 0 ? json.substring(i + 8, e) : null;
+    }
+    /** Clear the cached payload of `type` and send the query; poll typedJson(type) for the answer. */
+    public void requestTyped(String cmd, String type) { typed.remove(type); send(cmd); }
+    public String typedJson(String type) { return typed.get(type); }
+    public String queueJson() { return typed.get("queue"); }
+    public void requestQueue() { requestTyped("queue", "queue"); }
+    public void requestPlaylists() { send("list"); }
+    public void requestShows(int from) { requestTyped(from > 0 ? "shows:" + from : "shows", "library"); }
+    public void requestEpisodes(String show, int from) { requestTyped("eps:" + show + ":" + from, "episodes"); }
+    public void requestConn() { requestTyped("conn", "conn"); }
+    public String libraryJson() { return typed.get("library"); }
+    public String episodesJson() { return typed.get("episodes"); }
+    public String connJson() { return typed.get("conn"); }
+    public java.util.List<String> playlistNames() { return playlistNames; }
+    public java.util.List<String> userPlaylistNames() { return userPlaylistNames; }
+
+    private void onTyped(String type, String json) {
+        typed.put(type, json);
+        if ("playlists".equals(type)) cachePlaylists(json);
+        else if ("conn".equals(type)) {
+            try { JSONObject o = new JSONObject(json); noteConn(o.optString("mode", ""), o.optJSONObject("hotspot")); } catch (Exception ignored) {}
+        }
+    }
     private void cachePlaylists(String json) {
         try {
-            org.json.JSONArray a = new org.json.JSONObject(json).optJSONArray("names");
-            java.util.List<String> out = new java.util.ArrayList<>();
+            JSONObject o = new JSONObject(json);
+            org.json.JSONArray a = o.optJSONArray("names"), u = o.optJSONArray("user");
+            java.util.List<String> out = new java.util.ArrayList<>(), usr = new java.util.ArrayList<>();
             if (a != null) for (int i = 0; i < a.length(); i++) out.add(a.optString(i));
-            playlistNames = out;
+            if (u != null) for (int i = 0; i < u.length(); i++) usr.add(u.optString(i));
+            playlistNames = out; userPlaylistNames = usr;
         } catch (Exception ignored) {}
     }
-    public java.util.List<String> playlistNames() { return playlistNames; }
-    public void requestPlaylists() { send("list"); }
+    /** Route one incoming payload: typed answers go to the cache, everything else is state. */
+    private void onIncoming(String json, String via) {
+        String t = typeOf(json);
+        if (t != null) { onTyped(t, json); return; }
+        lastState = json; transport = via;
+        try {   // the TV publishes its connection level + hotspot creds in state
+            JSONObject o = new JSONObject(json);
+            if (o.has("conn")) noteConn(o.optString("conn", ""), o.optJSONObject("hotspot"));
+        } catch (Exception ignored) {}
+        if (ui != null) ui.onState(json);
+    }
+
+    // --- connection level -------------------------------------------------------------------------
+    private volatile String connMode = "ble";
+    private volatile String hsSsid = null, hsPass = null;   // the TV's hotspot creds, while it runs
+    private String joinedKey = null, pushedKey = null;
+    public String connMode() { return connMode; }
+    /** The TV's published hotspot creds [ssid, pass], or null. */
+    public String[] tvHotspot() { String s = hsSsid, p = hsPass; return (s != null && p != null) ? new String[]{s, p} : null; }
+    /** Called by the UI when the user picks a level here: persist, tell the TV, apply locally. */
+    public void setConnMode(String mode) {
+        if (mode == null || mode.isEmpty()) return;
+        Cfg.put(this, "kidodi_conn", mode);
+        send("conn:" + mode);
+        connMode = mode;
+        applyConnMode();
+    }
+    private void noteConn(String mode, JSONObject hotspot) {
+        if (hotspot != null) { hsSsid = hotspot.optString("ssid", null); hsPass = hotspot.optString("pass", null); }
+        else { hsSsid = null; hsPass = null; }
+        if (mode != null && !mode.isEmpty() && !mode.equals(connMode)) { connMode = mode; Cfg.put(this, "kidodi_conn", mode); }
+        applyConnMode();
+    }
+    /** Phone-side coordination for the current level (never on the TV's own remote). */
+    private void applyConnMode() {
+        if (local) return;
+        String mode = connMode;
+        if ("ble".equals(mode)) {   // pure Bluetooth: no Wi-Fi client, no hotspot of ours
+            if (wifi != null) { try { wifi.stop(); } catch (Exception ignored) {} wifi = null; }
+        } else if (wifi == null && !bleUp()) startWifi(null, 0);
+        if ("tv_hotspot".equals(mode) && hsSsid != null && hsPass != null) {
+            String key = hsSsid + "|" + hsPass;
+            if (!key.equals(joinedKey)) {   // join the TV's hotspot once per creds (non-owner phone: a system prompt)
+                joinedKey = key;
+                WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
+                try { WifiJoiner.join(this, c); } catch (Exception e) { Log.w(TAG, "join tv hotspot: " + e); }
+            }
+        }
+        if ("remote_hotspot".equals(mode)) {
+            if (!HotspotService.running()) { try { HotspotService.start(this); } catch (Exception e) { Log.w(TAG, "hotspot: " + e); } }
+            String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
+            if (s != null && p != null) {
+                String key = s + "|" + p;
+                if (!key.equals(pushedKey)) { pushedKey = key; send("wifi:" + s + "\t" + p); }   // the TV joins us (owner = silent)
+            } else main.postDelayed(this::applyConnMode, 2000);   // creds arrive once the hotspot is up
+        } else if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
+    }
+    /** Push the phone-hosted hotspot creds to the TV again (UI "Send Wi-Fi to TV"). */
+    public void pushOwnHotspot() { pushedKey = null; applyConnMode(); }
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -88,6 +186,7 @@ public class RemoteService extends Service {
         super.onCreate();
         INSTANCE = this;
         startForeground(72, note());
+        connMode = Cfg.getStr(this, "kidodi_conn", "ble");
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -121,17 +220,13 @@ public class RemoteService extends Service {
     private void startLinks() {
         ble = new BleClient(this, new BleClient.Listener() {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
-            public void onState(String json) {
-                if (isPlaylists(json)) { cachePlaylists(json); return; }
-                if (isQueue(json)) { lastQueue = json; return; }
-                lastState = json; transport = "BLE"; if (ui != null) ui.onState(json);
-            }
+            public void onState(String json) { onIncoming(json, "BLE"); }
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
         });
         ble.start();
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
-        // Wi-Fi/mDNS fallback if BLE hasn't connected shortly
-        main.postDelayed(() -> { if (ble != null && !ble.isConnected()) startWifi(null, 0); }, 7000);
+        // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
+        main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
     }
 
     private void startWifi(String fixedHost, int fixedPort) {
@@ -139,9 +234,8 @@ public class RemoteService extends Service {
         wifi = new WifiClient(this, new WifiClient.Listener() {
             public void onStatus(String s) { if (!bleUp()) { lastStatus = s; if (ui != null) ui.onStatus(s); } }
             public void onState(String json) {
-                if (isPlaylists(json)) { cachePlaylists(json); return; }
-                if (isQueue(json)) { lastQueue = json; return; }
-                if (!bleUp()) { lastState = json; transport = local ? "local" : "Wi-Fi"; if (ui != null) ui.onState(json); }
+                if (typeOf(json) != null) { onIncoming(json, local ? "local" : "Wi-Fi"); return; }
+                if (!bleUp()) onIncoming(json, local ? "local" : "Wi-Fi");
             }
         });
         if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
@@ -155,6 +249,7 @@ public class RemoteService extends Service {
         else if (wifi != null) wifi.send(cmd);
     }
     public String state() { return lastState; }
+    public boolean isLocal() { return local; }
 
     // Latest reduced-res camera STILL (BLE-reassembled or Wi-Fi), shared with the AA dash + views.
     private static volatile byte[] sLatestStill = null;
@@ -175,6 +270,7 @@ public class RemoteService extends Service {
         } finally { tmp.stop(); }   // don't leave it polling
     }
     public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? (local ? "local" : "Wi-Fi") : transport); }
+    public boolean bleConnected() { return bleUp(); }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
     @Override public void onDestroy() {

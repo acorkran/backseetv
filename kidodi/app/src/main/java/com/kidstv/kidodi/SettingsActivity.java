@@ -4,15 +4,19 @@ package com.kidstv.kidodi;
 //  TV-side admin settings (behind the unlock gesture + PIN). The kiosk is the
 //  standalone core, so everything a remote can configure is configurable HERE
 //  too, with no phone around: the unlock gesture, the PIN, the kiosk lock,
-//  Wi-Fi (join via QR / host a hotspot + show its QR), the camera stills,
-//  toddler play mode, and a status line. Values persist in app prefs (Cfg);
-//  adb `settings put global kidodi_*` remains a dev-only fallback.
+//  light duration, playback (loop), the connection level (Bluetooth / TV
+//  hotspot / remote hotspot / shared Wi-Fi), the camera stills, toddler play
+//  mode, the optional device-owner setup, and a status line. Values persist in
+//  app prefs (Cfg); adb `settings put global kidodi_*` remains a dev fallback.
+//  Things the running player must apply NOW go over loopback HTTP (:8090).
 // ============================================================================
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.admin.DevicePolicyManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
-import android.graphics.Color;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
@@ -27,7 +31,13 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 public class SettingsActivity extends Activity {
-    private static final int BG = 0xFF101418, CARD = 0xFF1B2128, TXT = 0xFFF2F4F7, SUB = 0xFF9AA4B2;
+    private static final int BG = 0xFF101418, CARD = 0xFF1B2128, TXT = 0xFFF2F4F7, SUB = 0xFF9AA4B2, OK = 0xFF8FD694;
+    static final String DO_CMD = "adb shell dpm set-device-owner com.kidstv.kidodi/.AdminReceiver";
+    static final String[][] CONN_MODES = {
+            {"ble", "Bluetooth only", "Remotes control the TV over Bluetooth: play, playlists, queue, volume, light, sleep, power, and a still image every second or so."},
+            {"tv_hotspot", "TV hotspot", "The TV hosts its own Wi-Fi hotspot (on automatically at this level) and remotes join it. Adds live camera + fast library browsing. Works in the car."},
+            {"remote_hotspot", "Remote hotspot", "A phone hosts the hotspot and hands the details to the TV over Bluetooth (or you scan its QR here). Adds live camera + fast library browsing."},
+            {"shared", "Shared Wi-Fi", "TV and remotes on the same network, e.g. home Wi-Fi. Join the TV by scanning a Wi-Fi QR, or a remote sends the details."}};
     private LinearLayout col;
     private TextView status;
 
@@ -50,8 +60,7 @@ public class SettingsActivity extends Activity {
 
         // --- Unlock gesture --------------------------------------------------------------------
         section("Unlock gesture");
-        final int[] fingerOpts = {2, 3, 4, 5};
-        cycleRow("Fingers", "kidodi_esc_fingers", 4, fingerOpts);
+        cycleRow("Fingers", "kidodi_esc_fingers", 4, new int[]{2, 3, 4, 5});
         strCycleRow("Type", "kidodi_esc_mode", "taps", new String[]{"taps", "swipe"});
         cycleRow("Taps needed", "kidodi_esc_taps", 4, new int[]{2, 3, 4, 5, 6});
         cycleRow("Within (seconds)", "kidodi_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
@@ -64,21 +73,44 @@ public class SettingsActivity extends Activity {
         boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
         note("Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents. Turning it off takes effect on the next launch.");
 
-        // --- Wi-Fi -----------------------------------------------------------------------------
-        section("Wi-Fi");
-        actionRow("Join a Wi-Fi network", "scan QR", () -> startActivity(new Intent(this, QrScanActivity.class)));
-        actionRow("Host a hotspot for remotes", HotspotService.running() ? "turn off" : "turn on", () -> {
+        // --- Playback --------------------------------------------------------------------------
+        section("Playback");
+        cycleRow("Light duration (seconds)", "kidodi_flash_ms", 3000, new int[]{1000, 2000, 3000, 5000, 10000}, 1000);
+        final boolean loop = Cfg.getInt(this, "kidodi_loop", 1) == 1;
+        actionRow("When the queue ends", loop ? "loop forever" : "stop (TV off)", () -> {
+            int n = loop ? 0 : 1;
+            Cfg.put(this, "kidodi_loop", n); loopback("/loop?on=" + n); postRebuild();
+        });
+        note("Loop forever keeps the queue going round; stop turns the TV off after the last item, like the sleep timer. Shuffle is per queue — toggle it from a remote's Up next screen.");
+
+        // --- Connection ------------------------------------------------------------------------
+        section("Connection level");
+        final String mode = Cfg.getStr(this, "kidodi_conn", "ble");
+        for (final String[] m : CONN_MODES) {
+            final boolean on = m[0].equals(mode);
+            Button v = rowShell((on ? "●  " : "○  ") + m[1]);
+            v.setText(on ? "current" : "choose"); v.setTextColor(on ? OK : TXT);
+            v.setOnClickListener(x -> { Cfg.put(this, "kidodi_conn", m[0]); loopback("/conn?mode=" + m[0]); toast("Connection level: " + m[1]); postRebuild(); });
+            note(m[2]);
+        }
+        boolean hsUp = HotspotService.running() && HotspotService.currentSsid() != null;
+        if ("tv_hotspot".equals(mode)) {
+            if (hsUp) {
+                TextView creds = new TextView(this);
+                creds.setText("Hotspot:  " + HotspotService.currentSsid() + "\nPassword:  " + HotspotService.currentPass());
+                creds.setTextColor(OK); creds.setTextSize(15); creds.setPadding(dp(14), dp(8), dp(14), dp(8)); creds.setBackgroundColor(CARD);
+                col.addView(creds);
+            } else note("Hotspot starting… (if it never comes up, the player may need a restart at this level)");
+        }
+        actionRow("Hotspot", hsUp ? "turn off" : "turn on", () -> {
             if (HotspotService.running()) HotspotService.stop(this); else HotspotService.start(this);
             postRebuild();
         });
-        if (HotspotService.running()) actionRow("Show hotspot QR", "show", () -> {
-            String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
-            if (s == null) { toast("Hotspot still starting…"); return; }
-            startActivity(new Intent(this, QrShareActivity.class)
-                    .putExtra(QrShareActivity.EXTRA_PAYLOAD, "WIFI:S:" + s + ";T:WPA;P:" + p + ";;")
-                    .putExtra(QrShareActivity.EXTRA_CAPTION, "Scan with the phone remote to join " + s));
-        });
-        note("Join: point the camera at a Wi-Fi QR (phone: Kidodi remote → Share Wi-Fi). Hotspot: the TV hosts its own network and shows a QR for remotes; live camera works over it.");
+        if (hsUp) actionRow("Show hotspot QR", "show", () -> startActivity(new Intent(this, QrShareActivity.class)
+                .putExtra(QrShareActivity.EXTRA_PAYLOAD, "WIFI:S:" + qrEsc(HotspotService.currentSsid()) + ";T:WPA;P:" + qrEsc(HotspotService.currentPass()) + ";;")
+                .putExtra(QrShareActivity.EXTRA_CAPTION, "Scan with the phone remote to join " + HotspotService.currentSsid())));
+        actionRow("Join a Wi-Fi network", "scan QR", () -> startActivity(new Intent(this, QrScanActivity.class)));
+        note("Join: point the camera at a Wi-Fi QR (phone remote → Connection → Show as QR). Remotes also learn the TV's IP over Bluetooth once it's on a network.");
 
         // --- Camera ----------------------------------------------------------------------------
         section("Camera (still images)");
@@ -92,6 +124,27 @@ public class SettingsActivity extends Activity {
         actionRow("Start play mode", "start", () -> PlayModeActivity.begin(this));
         note("Keyboard-mash style play screen with Piper voices. Exit with the same unlock gesture.");
 
+        // --- Device owner ----------------------------------------------------------------------
+        section("Kiosk mode (device owner)");
+        DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+        final boolean owner = dpm != null && dpm.isDeviceOwnerApp(getPackageName());
+        TextView os = new TextView(this);
+        os.setText(owner ? "✓  This tablet is set up as a Kidodi kiosk (the app is the device owner)."
+                : "○  Not set up as a kiosk — Kidodi runs as a normal player. The optional setup below gives the locked-down TV.");
+        os.setTextColor(owner ? OK : TXT); os.setTextSize(14); os.setPadding(dp(4), dp(4), dp(4), dp(8)); col.addView(os);
+        note("The optional full setup is one-time and needs a computer with adb:\n"
+                + "1.  Use a tablet with NO Google or Samsung account added (remove them, or set the tablet up fresh and skip sign-in).\n"
+                + "2.  Developer options → USB debugging on, plug it in.\n"
+                + "3.  Run:   " + DO_CMD + "\n"
+                + "4.  Open Kidodi, choose \"This is the TV\", then turn on Kiosk lock above.\n"
+                + "What it enables: Kidodi pinned as the home screen, an inescapable lock (Home / Back / Recents blocked), permissions granted silently, "
+                + "screen on/off from the remotes, joining Wi-Fi without prompts. Undo it here any time.");
+        actionRow("Setup command", "copy", () -> {
+            try { ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("kidodi", DO_CMD)); toast("Copied"); }
+            catch (Exception e) { toast("Couldn't copy"); }
+        });
+        if (owner) actionRow("Remove device owner", "remove…", this::confirmRemoveOwner);
+
         // --- Exit ------------------------------------------------------------------------------
         Button back = new Button(this); back.setText("Back to the show"); back.setAllCaps(false); back.setTextSize(18);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60));
@@ -102,9 +155,25 @@ public class SettingsActivity extends Activity {
 
     private void postRebuild() { col.postDelayed(() -> { build(); refreshStatus(); }, 800); }
 
+    private void confirmRemoveOwner() {
+        new AlertDialog.Builder(this).setTitle("Remove device owner?")
+                .setMessage("Kidodi stops being the kiosk on this tablet:\n\n• no home-screen pinning or lock (Home/Back/Recents work again)\n"
+                        + "• permissions and Wi-Fi joins will prompt\n• remotes can't turn the screen off\n\n"
+                        + "The app keeps working as a normal player. Setting it up again needs adb and a tablet with no accounts.")
+                .setPositiveButton("Remove", (d, w) -> {
+                    try {
+                        DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+                        Cfg.put(this, "kidodi_kiosk", 0);
+                        if (dpm != null) dpm.clearDeviceOwnerApp(getPackageName());
+                        toast("Device owner removed"); postRebuild();
+                    } catch (Exception e) { toast("Couldn't remove: " + e.getMessage()); }
+                })
+                .setNegativeButton("Keep", null).show();
+    }
+
     // --- rows ------------------------------------------------------------------------------------
     private void section(String t) {
-        TextView s = new TextView(this); s.setText(t); s.setTextColor(0xFF8FD694); s.setTextSize(15);
+        TextView s = new TextView(this); s.setText(t); s.setTextColor(OK); s.setTextSize(15);
         s.setPadding(0, dp(18), 0, dp(6)); col.addView(s);
     }
     private void note(String t) {
@@ -165,6 +234,16 @@ public class SettingsActivity extends Activity {
                 .setNegativeButton("Cancel", null).show();
     }
 
+    /** Fire-and-forget GET to the running player on loopback (apply a setting now). */
+    private void loopback(final String path) {
+        new Thread(() -> {
+            java.net.HttpURLConnection c = null;
+            try { c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:8090" + path).openConnection(); c.setConnectTimeout(1500); c.setReadTimeout(1500); c.getResponseCode(); }
+            catch (Exception ignored) {} finally { if (c != null) c.disconnect(); }
+        }).start();
+    }
+    private static String qrEsc(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace(":", "\\:").replace("\"", "\\\""); }
+
     private void refreshStatus() {
         new Thread(() -> {
             String ver = "?";
@@ -177,7 +256,8 @@ public class SettingsActivity extends Activity {
                 byte[] buf = new byte[2048]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); in.close();
                 JSONObject o = new JSONObject(bo.toString("UTF-8"));
                 line = "v" + ver + "   ·   IP " + o.optString("ip", "—") + "   ·   " + o.optString("playlist", "")
-                        + "   ·   volume " + Math.round(o.optDouble("volume", 0) * 100) + "%" + (o.optBoolean("muted", false) ? " (muted)" : "");
+                        + "   ·   volume " + Math.round(o.optDouble("volume", 0) * 100) + "%" + (o.optBoolean("muted", false) ? " (muted)" : "")
+                        + (o.has("conn") ? "   ·   " + o.optString("conn").replace('_', ' ') : "");
             } catch (Exception e) { line = "v" + ver + "   ·   player not reachable"; }
             final String s = line;
             runOnUiThread(() -> { if (status != null) status.setText(s); });

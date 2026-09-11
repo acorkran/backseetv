@@ -83,12 +83,16 @@ public class WifiClient {
 
     public void send(String cmd) {
         if (host == null) return;
-        if (cmd.equals("list")) {   // deliver playlist names back via onState (uniform with BLE)
-            new Thread(() -> { String r = http("/playlists"); if (r != null) main.post(() -> l.onState(r)); }).start();
+        final String path = toHttp(cmd);
+        if (isQuery(cmd)) {   // queries answer with a typed payload -> deliver via onState, uniform with BLE
+            new Thread(() -> { String r = http(path); if (r != null) main.post(() -> l.onState(r)); }).start();
             return;
         }
-        final String path = toHttp(cmd);
         new Thread(() -> http(path)).start();
+    }
+    /** Commands whose HTTP response is a {"type":...} payload the UI waits for. */
+    private static boolean isQuery(String cmd) {
+        return cmd.equals("list") || cmd.equals("queue") || cmd.equals("conn") || cmd.startsWith("shows") || cmd.startsWith("eps:");
     }
 
     /** BLE command vocabulary -> the player's HTTP endpoints (must stay in step with ControlServer). */
@@ -99,17 +103,44 @@ public class WifiClient {
         if (cmd.startsWith("snap:")) return "/snap?on=" + onOff(cmd.substring(5));
         if (cmd.startsWith("hotspot:")) return "/hotspot?on=" + onOff(cmd.substring(8));
         if (cmd.startsWith("playmode:")) return "/playmode?on=" + onOff(cmd.substring(9));
+        // library / queue editing / playlists
+        if (cmd.startsWith("eps:")) {   // eps:SHOW:FROM -> HTTP returns the whole show at once
+            String rest = cmd.substring(4); int k = rest.lastIndexOf(':');
+            return "/library?show=" + enc(k > 0 ? rest.substring(0, k) : rest);
+        }
+        if (cmd.startsWith("shows")) return "/library";   // "shows" / "shows:FROM"
+        if (cmd.startsWith("enqnext:")) return "/enqueue?id=" + cmd.substring(8) + "&next=1";
+        if (cmd.startsWith("enqnow:")) return "/enqueue?id=" + cmd.substring(7) + "&now=1";
+        if (cmd.startsWith("enqshow:")) return "/enqueue?show=" + enc(cmd.substring(8));
+        if (cmd.startsWith("enq:")) return "/enqueue?id=" + cmd.substring(4);
+        if (cmd.startsWith("deq:")) return "/dequeue?i=" + cmd.substring(4);
+        if (cmd.startsWith("shuffle:")) return onOffToggle("/shuffle", cmd.substring(8));
+        if (cmd.startsWith("loop:")) return onOffToggle("/loop", cmd.substring(5));
+        if (cmd.startsWith("savequeue:")) return "/savequeue?name=" + enc(cmd.substring(10));
+        if (cmd.startsWith("delpl:")) return "/delplaylist?name=" + enc(cmd.substring(6));
+        // connection level + Wi-Fi hand-off
+        if (cmd.startsWith("conn:")) return "/conn?mode=" + enc(cmd.substring(5));
+        if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS
+            String rest = cmd.substring(5); int t = rest.indexOf('\t');
+            return "/wifi?ssid=" + enc(t >= 0 ? rest.substring(0, t) : rest) + "&pass=" + enc(t >= 0 ? rest.substring(t + 1) : "");
+        }
         switch (cmd) {
+            case "list": return "/playlists";
+            case "conn": return "/conn";
             case "volup": return "/vol?d=0.1";
             case "voldown": return "/vol?d=-0.1";
             case "mute": return "/mute";               // toggle (never "/vol?v=0": that zeroes the real volume)
             case "unmute": return "/mute?on=0";
             case "wake": return "/sleep?min=0";
             case "queue": return "/queue?center=-1&n=4";   // same ±4 window BLE pushes
-            default: return "/" + cmd;   // play, pause, playpause, next, prev, flash, power, queue
+            default: return "/" + cmd;   // play, pause, playpause, next, prev, flash (Cfg duration), power
         }
     }
     private static String onOff(String s) { return "on".equals(s.trim()) ? "1" : "0"; }
+    private static String onOffToggle(String base, String s) {
+        s = s.trim();
+        return "on".equals(s) ? base + "?on=1" : "off".equals(s) ? base + "?on=0" : base;   // toggle = no param
+    }
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
     private String http(String path) {
