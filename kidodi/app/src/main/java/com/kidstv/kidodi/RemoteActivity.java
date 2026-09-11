@@ -15,6 +15,9 @@ import android.net.Uri;
 import android.provider.OpenableColumns;
 import android.widget.ImageView;
 import android.widget.Toast;
+import android.app.AlertDialog;
+import android.text.InputType;
+import android.widget.EditText;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -53,7 +56,11 @@ public class RemoteActivity extends Activity {
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
-    private View picker, queueView;
+    private View picker, queueView, libView, epView, connView;
+    private TextView libChip, connStatus;
+    private LinearLayout connModes, connActions;
+    private boolean lastShuffle, lastLoop = true;
+    private String lastConn = "ble", hsSsid, hsPass;   // the TV's connection level + its published hotspot creds
     private View still; private volatile boolean stillOn;
     // digital PTZ on the camera view: client-side viewport (zoom 1-4x, pan center as image fractions)
     private float ptzZoom = 1f, ptzCx = 0.5f, ptzCy = 0.5f;
@@ -89,6 +96,7 @@ public class RemoteActivity extends Activity {
         linkLabel = new TextView(this);
         linkLabel.setText(""); linkLabel.setTextColor(SUB); linkLabel.setTextSize(12);
         linkLabel.setPadding(0, 0, dp(8), 0);
+        linkLabel.setClickable(true); linkLabel.setOnClickListener(v -> openConnection());   // the Connection screen
         header.addView(linkLabel);
         dot = new View(this);
         GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
@@ -135,9 +143,14 @@ public class RemoteActivity extends Activity {
         plChip.setText("Playlist:  Shuffle All  ▾"); plChip.setTextColor(SUB); plChip.setTextSize(13);
         plChip.setPadding(dp(6), dp(10), dp(6), dp(2)); plChip.setClickable(true);
         plChip.setOnClickListener(v -> openPicker());
-        LinearLayout chips = new LinearLayout(this);   // Playlist ▾  |  Up next ▾
+        LinearLayout chips = new LinearLayout(this);   // Playlist ▾  |  Library ▾  |  Up next ▾
         chips.setOrientation(LinearLayout.HORIZONTAL);
         chips.addView(plChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        libChip = new TextView(this);
+        libChip.setText("Library  ▾"); libChip.setTextColor(SUB); libChip.setTextSize(13);
+        libChip.setPadding(dp(6), dp(10), dp(6), dp(2)); libChip.setClickable(true); libChip.setGravity(Gravity.CENTER);
+        libChip.setOnClickListener(v -> openLibrary());
+        chips.addView(libChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.8f));
         queueChip = new TextView(this);
         queueChip.setText("Up next  ▾"); queueChip.setTextColor(SUB); queueChip.setTextSize(13);
         queueChip.setPadding(dp(6), dp(10), dp(6), dp(2)); queueChip.setClickable(true); queueChip.setGravity(Gravity.END);
@@ -221,7 +234,9 @@ public class RemoteActivity extends Activity {
             ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
             RemoteService svc = RemoteService.get();
             String ws = WearPusher.watchStatus();
-            linkLabel.setText((ready && svc != null ? svc.transport() : "") + (ws.isEmpty() ? "" : "  ·  " + ws));
+            String base = ready && svc != null ? svc.transport() : "connect";
+            linkLabel.setText(base + (ws.isEmpty() ? "" : "  ·  " + ws) + "  ▾");
+            if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
     };
@@ -262,6 +277,12 @@ public class RemoteActivity extends Activity {
             plChip.setText("Playlist:  " + currentPl + "  ▾");
             String ip = o.optString("ip", "");
             if (!ip.isEmpty() && !local) tabletIp = ip;   // local stays on loopback
+            // queue mode + connection level + the TV's hotspot creds (present only while it runs)
+            lastShuffle = o.optBoolean("shuffle", lastShuffle); lastLoop = o.optBoolean("loop", lastLoop);
+            if (o.has("conn")) lastConn = o.optString("conn", lastConn);
+            JSONObject hs = o.optJSONObject("hotspot");
+            hsSsid = hs != null ? hs.optString("ssid", null) : null; hsPass = hs != null ? hs.optString("pass", null) : null;
+            if (connView != null) renderConnStatus();
         } catch (Exception ignored) {}
     }
 
@@ -285,20 +306,31 @@ public class RemoteActivity extends Activity {
         populatePicker(col, 0);
     }
     private void populatePicker(final LinearLayout col, final int attempt) {
-        RemoteService svc = RemoteService.get();
+        final RemoteService svc = RemoteService.get();
         List<String> names = svc != null ? svc.playlistNames() : null;
+        List<String> user = svc != null ? svc.userPlaylistNames() : new java.util.ArrayList<>();
         // keep the header (index 0), rebuild the rows
         while (col.getChildCount() > 1) col.removeViewAt(1);
         if (names != null && !names.isEmpty()) {
+            boolean userHeader = false;
             for (final String name : names) {
-                Button row = new Button(this);
-                row.setAllCaps(false); row.setText(name);
-                row.setTextColor(name.equals(currentPl) ? 0xFF8FD694 : TXT); row.setTextSize(16); row.setGravity(Gravity.CENTER_VERTICAL);
-                GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(14));
-                row.setBackground(g);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
-                lp.setMargins(0, dp(4), 0, dp(4)); row.setLayoutParams(lp);
+                final boolean mine = user.contains(name);
+                if (mine && !userHeader) {   // user-made playlists (saved queues) get their own section
+                    userHeader = true;
+                    TextView s = noteText("Your playlists  ·  long-press to delete"); s.setTextColor(0xFF8FD694); col.addView(s);
+                }
+                Button row = rowBtn(name, name.equals(currentPl) ? 0xFF8FD694 : TXT);
+                row.setTextSize(16);
                 row.setOnClickListener(v -> { send("play:" + name); closePicker(); });
+                if (mine) row.setOnLongClickListener(v -> {
+                    new AlertDialog.Builder(this).setTitle("Delete playlist?").setMessage(name)
+                            .setPositiveButton("Delete", (d, w) -> {
+                                send("delpl:" + name); toast("Deleted \"" + name + "\"");
+                                if (svc != null) main.postDelayed(svc::requestPlaylists, 500);
+                                main.postDelayed(() -> { if (picker != null) populatePicker(col, 0); }, 1200);
+                            }).setNegativeButton("Cancel", null).show();
+                    return true;
+                });
                 col.addView(row);
             }
         } else if (attempt < 8) {
@@ -309,7 +341,8 @@ public class RemoteActivity extends Activity {
     }
     private void closePicker() { if (picker != null) { frame.removeView(picker); picker = null; } }
 
-    // --- "Up next": the current queue in PLAY order (Shuffle All is pre-shuffled), tap a row to jump ---
+    // --- "Up next": the current queue in PLAY order, tap a row to jump. Toolbar: Shuffle / Loop /
+    //     Save as playlist; long-press a row to remove it. Children: 0 header, 1 toolbar, 2+ rows.
     private void openQueue() {
         if (queueView != null) return;
         ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
@@ -317,10 +350,34 @@ public class RemoteActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(16), dp(20), dp(16), dp(16));
         TextView h = new TextView(this);
         h.setText("Up next  ·  " + currentPl); h.setTextColor(TXT); h.setTextSize(20);
-        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
+        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(6));
         col.addView(h);
+        LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
+        Button sh = smallBtn(""), lo = smallBtn(""), save = smallBtn("Save as playlist…");
+        sh.setOnClickListener(v -> { send("shuffle:toggle"); toast(lastShuffle ? "Shuffle off" : "Shuffle on"); main.postDelayed(() -> loadQueue(col), 800); });
+        lo.setOnClickListener(v -> { send("loop:toggle"); toast(lastLoop ? "Will stop at the end (TV off)" : "Looping forever"); main.postDelayed(() -> loadQueue(col), 800); });
+        save.setOnClickListener(v -> saveQueueAs());
+        bar.addView(sh, wlp(1f)); bar.addView(lo, wlp(1.2f)); bar.addView(save, wlp(1.5f));
+        col.addView(bar);
         TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
         sv.addView(col); queueView = sv; frame.addView(queueView);
+        renderQueueBar(col);
+        loadQueue(col);
+    }
+    private LinearLayout.LayoutParams wlp(float w) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(40), w); p.setMargins(dp(2), 0, dp(2), 0); return p; }
+    private Button smallBtn(String text) {
+        Button b = new Button(this); b.setAllCaps(false); b.setText(text); b.setTextSize(12); b.setTextColor(TXT); b.setPadding(dp(4), 0, dp(4), 0);
+        GradientDrawable g = new GradientDrawable(); g.setColor(BTN); g.setCornerRadius(dp(10)); b.setBackground(g);
+        return b;
+    }
+    private void renderQueueBar(LinearLayout col) {
+        if (col.getChildCount() < 2 || !(col.getChildAt(1) instanceof LinearLayout)) return;
+        LinearLayout bar = (LinearLayout) col.getChildAt(1);
+        Button sh = (Button) bar.getChildAt(0), lo = (Button) bar.getChildAt(1);
+        sh.setText(lastShuffle ? "Shuffle: on" : "Shuffle: off"); sh.setTextColor(lastShuffle ? 0xFF8FD694 : TXT);
+        lo.setText(lastLoop ? "Loop forever" : "Stop at end");
+    }
+    private void loadQueue(final LinearLayout col) {
         RemoteService svc = RemoteService.get();
         if (svc != null) svc.requestQueue();   // BLE: a ±4 window around the current item (always available)
         if (tabletIp != null && !tabletIp.isEmpty()) {   // Wi-Fi: a wide window (±80) around the current item
@@ -338,31 +395,49 @@ public class RemoteActivity extends Activity {
     private void populateQueue(final LinearLayout col, final int attempt) {
         RemoteService svc = RemoteService.get();
         String json = svc != null ? svc.queueJson() : null;
-        if (json != null) { if (col.getChildCount() <= 2) renderQueue(col, json); return; }   // don't clobber a wider Wi-Fi render
+        if (json != null) { if (col.getChildCount() <= 3) renderQueue(col, json); return; }   // don't clobber a wider Wi-Fi render
         if (attempt < 12) main.postDelayed(() -> { if (queueView != null) populateQueue(col, attempt + 1); }, 400);
     }
-    private void renderQueue(LinearLayout col, String json) {
+    private void renderQueue(final LinearLayout col, String json) {
         try {
             JSONObject o = new JSONObject(json);
             int from = o.optInt("from", 0), index = o.optInt("index", -1), total = o.optInt("total", 0);
             org.json.JSONArray items = o.optJSONArray("items");
-            while (col.getChildCount() > 1) col.removeViewAt(1);
+            if (o.has("shuffle")) lastShuffle = o.optBoolean("shuffle");
+            if (o.has("loop")) lastLoop = o.optBoolean("loop");
+            renderQueueBar(col);
+            while (col.getChildCount() > 2) col.removeViewAt(2);
             ((TextView) col.getChildAt(0)).setText("Up next  ·  " + o.optString("playlist", currentPl) + "   (" + total + ")");
             if (items == null) return;
             for (int i = 0; i < items.length(); i++) {
                 final int abs = from + i;
-                String name = items.optString(i).replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/');
-                Button row = new Button(this);
-                row.setAllCaps(false); row.setText((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name);
-                row.setTextColor(abs == index ? 0xFF8FD694 : TXT); row.setTextSize(14); row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setMaxLines(2);
-                GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-                lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+                final String name = pretty(items.optString(i));
+                Button row = rowBtn((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name, abs == index ? 0xFF8FD694 : TXT);
                 row.setOnClickListener(v -> { send("jump:" + abs); closeQueue(); });
+                final boolean current = abs == index;
+                row.setOnLongClickListener(v -> {
+                    if (current) { toast("That one's playing now"); return true; }
+                    new AlertDialog.Builder(this).setTitle("Remove from the queue?").setMessage(name)
+                            .setPositiveButton("Remove", (d, w) -> { send("deq:" + abs); main.postDelayed(() -> loadQueue(col), 700); })
+                            .setNegativeButton("Cancel", null).show();
+                    return true;
+                });
                 col.addView(row);
             }
+            col.addView(noteText("Tap to jump  ·  long-press to remove"));
         } catch (Exception ignored) {}
+    }
+    private void saveQueueAs() {
+        final EditText e = field("Playlist name", false);
+        LinearLayout box = new LinearLayout(this); box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(e, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        new AlertDialog.Builder(this).setTitle("Save the queue as a playlist").setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    String n = e.getText().toString().trim();
+                    if (n.isEmpty()) { toast("Give it a name"); return; }
+                    send("savequeue:" + n); toast("Saved as \"" + n + "\"");
+                    RemoteService svc = RemoteService.get(); if (svc != null) main.postDelayed(svc::requestPlaylists, 800);
+                }).setNegativeButton("Cancel", null).show();
     }
     private void closeQueue() { if (queueView != null) { frame.removeView(queueView); queueView = null; } }
     private static String readAll(java.io.InputStream in) throws Exception {
@@ -372,10 +447,335 @@ public class RemoteActivity extends Activity {
     }
     @Override public void onBackPressed() {
         if (still != null) closeStill();
+        else if (epView != null) closeEpisodes();
+        else if (libView != null) closeLibrary();
+        else if (connView != null) closeConnection();
         else if (queueView != null) closeQueue();
         else if (picker != null) closePicker();
         else super.onBackPressed();
     }
+
+    // =====================================================================================
+    //  Shared overlay helpers (library / episodes / connection / queue / picker)
+    // =====================================================================================
+    private ScrollView overlay(String title) {
+        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(16), dp(20), dp(16), dp(16));
+        TextView h = new TextView(this);
+        h.setText(title); h.setTextColor(TXT); h.setTextSize(20);
+        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
+        col.addView(h);
+        TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
+        sv.addView(col); frame.addView(sv);
+        return sv;
+    }
+    private static LinearLayout colOf(View overlay) { return (LinearLayout) ((ScrollView) overlay).getChildAt(0); }
+    private static void clearRows(LinearLayout col, int keep) { while (col.getChildCount() > keep) col.removeViewAt(keep); }
+    private Button rowBtn(String text, int color) {
+        Button row = new Button(this);
+        row.setAllCaps(false); row.setText(text); row.setTextColor(color); row.setTextSize(14); row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMaxLines(2);
+        GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+        return row;
+    }
+    private TextView noteText(String s) { TextView t = new TextView(this); t.setText(s); t.setTextColor(SUB); t.setTextSize(12); t.setPadding(dp(6), dp(6), dp(6), dp(6)); return t; }
+    private EditText field(String hint, boolean password) {
+        EditText e = new EditText(this); e.setHint(hint); e.setTextColor(TXT); e.setHintTextColor(SUB); e.setSingleLine(true);
+        e.setInputType(InputType.TYPE_CLASS_TEXT | (password ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
+        return e;
+    }
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+    private static String pretty(String t) { return t.replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/').trim(); }
+    private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
+
+    /** Typed query ({"type":..} payload): Wi-Fi fast path when the TV's IP is reachable (local mode
+        always), otherwise Bluetooth (the paged protocol). cb runs on the main thread; null = failure. */
+    private void fetchTyped(final String httpPath, final String bleCmd, final String type, final java.util.function.Consumer<JSONObject> cb) {
+        new Thread(() -> {
+            String ip = tabletIp;
+            if (ip != null && !ip.isEmpty()) {
+                java.net.HttpURLConnection c = null;
+                try {
+                    c = openOnWifi("http://" + ip + ":8090" + httpPath);
+                    c.setConnectTimeout(1500); c.setReadTimeout(5000);
+                    if (c.getResponseCode() == 200) {
+                        final JSONObject o = new JSONObject(readAll(c.getInputStream()));
+                        if (type.equals(o.optString("type"))) { main.post(() -> cb.accept(o)); return; }
+                    }
+                } catch (Exception ignored) {} finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
+            }
+            RemoteService svc = RemoteService.get();
+            if (svc == null) { main.post(() -> cb.accept(null)); return; }
+            svc.requestTyped(bleCmd, type);
+            for (int i = 0; i < 25; i++) {
+                try { Thread.sleep(400); } catch (InterruptedException e) { break; }
+                String j = svc.typedJson(type);
+                if (j != null) {
+                    try { final JSONObject o = new JSONObject(j); main.post(() -> cb.accept(o)); }
+                    catch (Exception e) { main.post(() -> cb.accept(null)); }
+                    return;
+                }
+            }
+            main.post(() -> cb.accept(null));
+        }).start();
+    }
+
+    // =====================================================================================
+    //  LIBRARY: browse the TV's shows / episodes and enqueue. HTTP when the TV is reachable
+    //  (loopback on the TV itself), else Bluetooth with the paged "shows" / "eps:" protocol.
+    // =====================================================================================
+    private final java.util.List<String[]> libShows = new java.util.ArrayList<>();   // [name, count]
+    private int libTotal = 0;
+    private void openLibrary() {
+        if (libView != null) return;
+        libShows.clear(); libTotal = 0;
+        libView = overlay("Library");
+        loadShows(colOf(libView), 0);
+    }
+    private void loadShows(final LinearLayout col, final int from) {
+        fetchTyped("/library", from > 0 ? "shows:" + from : "shows", "library", o -> {
+            if (libView == null) return;
+            if (o == null) { clearRows(col, 1); col.addView(noteText("Couldn't reach the TV's library. Is the Bluetooth link up? A Wi-Fi level is faster — tap the connection label up top.")); return; }
+            org.json.JSONArray a = o.optJSONArray("shows");
+            libTotal = o.optInt("total", (a != null ? a.length() : 0) + from);
+            if (a != null) for (int i = 0; i < a.length(); i++) {
+                JSONObject s = a.optJSONObject(i);
+                if (s != null && from + i >= libShows.size()) libShows.add(new String[]{s.optString("name"), String.valueOf(s.optInt("count", 0))});
+            }
+            renderShows(col);
+        });
+    }
+    private void renderShows(final LinearLayout col) {
+        clearRows(col, 1);
+        for (final String[] s : libShows) {
+            LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+            Button open = rowBtn(s[0] + "   ·   " + s[1] + (s[1].equals("1") ? " episode" : " episodes"), TXT);
+            open.setOnClickListener(v -> openEpisodes(s[0]));
+            row.addView(open, new LinearLayout.LayoutParams(0, dp(52), 1f));
+            Button add = smallBtn("Add all"); add.setTextColor(ACCENT);
+            add.setOnClickListener(v -> { send("enqshow:" + s[0]); toast("Added " + s[0] + " to the queue"); });
+            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); alp.setMargins(dp(6), 0, 0, 0);
+            row.addView(add, alp);
+            col.addView(row);
+        }
+        if (libShows.size() < libTotal) { Button more = rowBtn("Load more…  (" + libShows.size() + " of " + libTotal + ")", ACCENT); more.setOnClickListener(v -> loadShows(col, libShows.size())); col.addView(more); }
+        if (libShows.isEmpty()) col.addView(noteText("No shows found on the TV."));
+        else col.addView(noteText("Tap a show for its episodes  ·  Add all queues the whole show"));
+    }
+    private final java.util.List<String[]> epItems = new java.util.ArrayList<>();   // [id, title]
+    private int epTotal = 0; private String epShow;
+    private void openEpisodes(String show) {
+        if (epView != null) return;
+        epShow = show; epItems.clear(); epTotal = 0;
+        epView = overlay("‹  " + show);
+        colOf(epView).getChildAt(0).setClickable(true);
+        colOf(epView).getChildAt(0).setOnClickListener(v -> closeEpisodes());
+        loadEpisodes(colOf(epView), 0);
+    }
+    private void loadEpisodes(final LinearLayout col, final int from) {
+        fetchTyped("/library?show=" + enc(epShow), "eps:" + epShow + ":" + from, "episodes", o -> {
+            if (epView == null) return;
+            if (o == null) { clearRows(col, 1); col.addView(noteText("Couldn't load the episodes. Is the Bluetooth link up?")); return; }
+            org.json.JSONArray a = o.optJSONArray("items");
+            int f = o.optInt("from", 0);
+            epTotal = o.optInt("total", f + (a != null ? a.length() : 0));
+            if (a != null) for (int i = 0; i < a.length(); i++) {
+                JSONObject e = a.optJSONObject(i);
+                if (e != null && f + i >= epItems.size()) epItems.add(new String[]{String.valueOf(e.optInt("id", -1)), e.optString("title")});
+            }
+            renderEpisodes(col);
+        });
+    }
+    private void renderEpisodes(final LinearLayout col) {
+        clearRows(col, 1);
+        for (final String[] e : epItems) {
+            Button row = rowBtn(pretty(e[1]), TXT);
+            row.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(pretty(e[1]))
+                    .setItems(new String[]{"Play now", "Play next", "Add to queue"}, (d, w) -> {
+                        send((w == 0 ? "enqnow:" : w == 1 ? "enqnext:" : "enq:") + e[0]);
+                        toast(w == 0 ? "Playing" : w == 1 ? "Up next" : "Added to the queue");
+                    }).show());
+            col.addView(row);
+        }
+        if (epItems.size() < epTotal) { Button more = rowBtn("Load more…  (" + epItems.size() + " of " + epTotal + ")", ACCENT); more.setOnClickListener(v -> loadEpisodes(col, epItems.size())); col.addView(more); }
+        if (epItems.isEmpty()) col.addView(noteText("No episodes."));
+        else col.addView(noteText("Tap an episode: Play now · Play next · Add to queue"));
+    }
+    private void closeEpisodes() { if (epView != null) { frame.removeView(epView); epView = null; } }
+    private void closeLibrary() { closeEpisodes(); if (libView != null) { frame.removeView(libView); libView = null; } }
+
+    // =====================================================================================
+    //  CONNECTION LEVEL: Bluetooth only / TV hotspot / Remote hotspot / Shared Wi-Fi.
+    //  The level is one setting shared by TV and remotes (kidodi_conn); the TV publishes it
+    //  in state and RemoteService coordinates the joins/pushes. This screen shows status,
+    //  lets you change the level, and offers the manual actions for each.
+    // =====================================================================================
+    static final String[][] CONN_MODES = {
+            {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
+            {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds live camera + fast library browsing."},
+            {"remote_hotspot", "Remote hotspot", "This remote hosts the hotspot and the TV joins it. Adds live camera + fast library browsing."},
+            {"shared", "Shared Wi-Fi", "TV and remotes on the same network (home Wi-Fi). Adds live camera + fast library browsing."}};
+    private volatile String tvReach = "checking…";
+    private void openConnection() {
+        if (connView != null) return;
+        connView = overlay("Connection");
+        LinearLayout col = colOf(connView);
+        clearRows(col, 1);
+        connStatus = noteText(""); connStatus.setTextColor(TXT); connStatus.setTextSize(13); col.addView(connStatus);
+        connModes = new LinearLayout(this); connModes.setOrientation(LinearLayout.VERTICAL); col.addView(connModes);
+        connActions = new LinearLayout(this); connActions.setOrientation(LinearLayout.VERTICAL); col.addView(connActions);
+        Button back = rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
+        RemoteService svc = RemoteService.get();
+        if (svc != null) lastConn = svc.connMode();
+        renderConnStatus(); renderConnModes(); renderConnActions();
+        if (svc != null) svc.requestConn();
+        probeTv();
+    }
+    private void probeTv() {   // is the TV actually reachable over Wi-Fi from here?
+        new Thread(() -> {
+            String ip = tabletIp, r;
+            if (ip == null || ip.isEmpty()) r = "unknown (no IP from the TV yet)";
+            else {
+                java.net.HttpURLConnection c = null;
+                try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1500); c.setReadTimeout(1500); r = c.getResponseCode() == 200 ? "reachable at " + ip : "not reachable (" + ip + ")"; }
+                catch (Exception e) { r = "not reachable (" + ip + ")"; }
+                finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
+            }
+            tvReach = r; main.post(this::renderConnStatus);
+        }).start();
+    }
+    private void renderConnStatus() {
+        if (connStatus == null) return;
+        RemoteService svc = RemoteService.get();
+        StringBuilder sb = new StringBuilder();
+        if (local) sb.append("This is the TV's own remote (loopback).\n");
+        else sb.append("Bluetooth:  ").append(svc != null && svc.bleConnected() ? "connected" : "not connected").append('\n');
+        sb.append("TV over Wi-Fi:  ").append(local ? "yes (this is the TV)" : tvReach).append('\n');
+        sb.append("TV hotspot:  ").append(hsSsid != null ? hsSsid : "off").append('\n');
+        if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off");
+        connStatus.setText(sb.toString().trim());
+    }
+    private void renderConnModes() {
+        if (connModes == null) return;
+        connModes.removeAllViews();
+        for (final String[] m : CONN_MODES) {
+            boolean on = m[0].equals(lastConn);
+            Button b = rowBtn((on ? "●  " : "○  ") + m[1], on ? 0xFF8FD694 : TXT);
+            b.setOnClickListener(v -> setConnMode(m[0]));
+            connModes.addView(b);
+            connModes.addView(noteText(m[2]));
+        }
+    }
+    private void setConnMode(String mode) {
+        lastConn = mode;
+        Cfg.put(this, "kidodi_conn", mode);
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.setConnMode(mode); else send("conn:" + mode);
+        renderConnModes(); renderConnActions();
+        toast("Connection level: " + mode.replace('_', ' '));
+        main.postDelayed(this::probeTv, 4000);
+    }
+    private void renderConnActions() {
+        if (connActions == null) return;
+        connActions.removeAllViews();
+        TextView hdr = noteText("— " + lastConn.replace('_', ' ') + " —"); hdr.setGravity(Gravity.CENTER); connActions.addView(hdr);
+        switch (lastConn) {
+            case "tv_hotspot":
+                if (local) {
+                    connActions.addView(noteText("The TV hosts the hotspot at this level (it turns on automatically). Remotes get the details over Bluetooth, or scan this QR."));
+                    Button qr = rowBtn("Show hotspot QR for a remote to scan", ACCENT);
+                    qr.setOnClickListener(v -> showWifiQr(HotspotService.currentSsid(), HotspotService.currentPass(), "Scan with the phone remote to join the TV"));
+                    connActions.addView(qr);
+                } else {
+                    Button join = rowBtn(hsSsid != null ? "Join TV hotspot  ·  " + hsSsid : "Join TV hotspot  (waiting for the TV to publish it)", ACCENT);
+                    join.setOnClickListener(v -> {
+                        if (hsSsid == null) { toast("The TV hasn't published a hotspot yet — is it on this level?"); return; }
+                        WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
+                        toast(WifiJoiner.join(this, c) ? "Joining " + hsSsid + "… (accept the prompt if asked)" : "Couldn't request the join");
+                        main.postDelayed(this::probeTv, 6000);
+                    });
+                    connActions.addView(join);
+                    Button scan = rowBtn("Scan the TV's QR instead", TXT);
+                    scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
+                    connActions.addView(scan);
+                }
+                break;
+            case "remote_hotspot":
+                if (local) {
+                    connActions.addView(noteText("A remote hosts the hotspot and sends the details over Bluetooth; the TV joins by itself. Or scan the remote's QR here."));
+                    Button scan = rowBtn("Scan the remote's hotspot QR", ACCENT);
+                    scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
+                    connActions.addView(scan);
+                } else {
+                    boolean up = HotspotService.running() && HotspotService.currentSsid() != null;
+                    Button host = rowBtn(up ? "Hotspot on  ·  " + HotspotService.currentSsid() : "Host hotspot for the TV", ACCENT);
+                    host.setOnClickListener(v -> { if (up) toast("Hotspot is running"); else startOwnHotspot(); });
+                    connActions.addView(host);
+                    if (up) {
+                        Button push = rowBtn("Send Wi-Fi details to the TV (Bluetooth)", TXT);
+                        push.setOnClickListener(v -> { RemoteService s = RemoteService.get(); if (s != null) s.pushOwnHotspot(); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000); });
+                        connActions.addView(push);
+                        Button qr = rowBtn("Show QR for the TV to scan", TXT);
+                        qr.setOnClickListener(v -> showWifiQr(HotspotService.currentSsid(), HotspotService.currentPass(), "On the TV: Settings → Connection → Scan"));
+                        connActions.addView(qr);
+                        Button stop = rowBtn("Stop hotspot", TXT);
+                        stop.setOnClickListener(v -> { HotspotService.stop(this); main.postDelayed(() -> { renderConnActions(); renderConnStatus(); }, 800); });
+                        connActions.addView(stop);
+                    } else connActions.addView(noteText("Once it's up, the details go to the TV over Bluetooth automatically."));
+                }
+                break;
+            case "shared":
+                if (local) {
+                    connActions.addView(noteText("Join the TV to your home Wi-Fi: scan a Wi-Fi QR (the phone remote can show one), or let the remote send the details over Bluetooth."));
+                    Button scan = rowBtn("Scan a Wi-Fi QR", ACCENT);
+                    scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
+                    connActions.addView(scan);
+                } else {
+                    connActions.addView(noteText("Put the TV on the same Wi-Fi as this phone. Enter the network below."));
+                    final EditText ssid = field("Wi-Fi name (SSID)", false), pass = field("Password", true);
+                    connActions.addView(ssid); connActions.addView(pass);
+                    Button sendBtn = rowBtn("Send to TV over Bluetooth", ACCENT);
+                    sendBtn.setOnClickListener(v -> {
+                        String s = ssid.getText().toString().trim(), p = pass.getText().toString();
+                        if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; }
+                        send("wifi:" + s + "\t" + p); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000);
+                    });
+                    connActions.addView(sendBtn);
+                    connActions.addView(noteText("Note: this sends the password over Bluetooth unencrypted. Prefer the QR if strangers are in range."));
+                    Button qr = rowBtn("Show as QR for the TV to scan instead", TXT);
+                    qr.setOnClickListener(v -> { String s = ssid.getText().toString().trim(); if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; } showWifiQr(s, pass.getText().toString(), "On the TV: Settings → Connection → Scan"); });
+                    connActions.addView(qr);
+                }
+                break;
+            default:
+                connActions.addView(noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera and fast library browsing need a Wi-Fi level."));
+        }
+    }
+    private void showWifiQr(String ssid, String pass, String caption) {
+        if (ssid == null) { toast("No hotspot running yet"); return; }
+        startActivity(new Intent(this, QrShareActivity.class)
+                .putExtra(QrShareActivity.EXTRA_PAYLOAD, "WIFI:S:" + qrEsc(ssid) + ";T:WPA;P:" + qrEsc(pass == null ? "" : pass) + ";;")
+                .putExtra(QrShareActivity.EXTRA_CAPTION, caption));
+    }
+    private static String qrEsc(String s) { return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace(":", "\\:").replace("\"", "\\\""); }
+    private void startOwnHotspot() {
+        // a LocalOnlyHotspot needs the nearby-devices permission (13+) / location (older) on a non-owner phone
+        String perm = android.os.Build.VERSION.SDK_INT >= 33 ? "android.permission.NEARBY_WIFI_DEVICES" : "android.permission.ACCESS_FINE_LOCATION";
+        if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) { requestPermissions(new String[]{perm}, 44); return; }
+        HotspotService.start(this);
+        toast("Starting hotspot…");
+        main.postDelayed(() -> { renderConnActions(); renderConnStatus(); RemoteService s = RemoteService.get(); if (s != null) s.pushOwnHotspot(); }, 3000);
+    }
+    @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        if (req != 44) return;
+        if (res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) startOwnHotspot();
+        else toast("The hotspot needs the Nearby devices permission");
+    }
+    private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; } }
 
     // --- check-in: STILL IMAGE over BLE (<1fps, "not a feed") OR LIVE view over Wi-Fi (/live MJPEG) ---
     private void openStill() {
@@ -588,6 +988,7 @@ public class RemoteActivity extends Activity {
             if (ip != null && !ip.isEmpty()) { tabletIp = ip; Toast.makeText(this, "TV at " + ip, Toast.LENGTH_SHORT).show(); }
             else if (ssid != null && !ssid.isEmpty()) Toast.makeText(this, "Joining " + ssid + "…", Toast.LENGTH_LONG).show();
             else Toast.makeText(this, "Scanned", Toast.LENGTH_SHORT).show();
+            if (connView != null) main.postDelayed(this::probeTv, 5000);
         }
     }
     private void uploadFile(Uri uri, String host) {
