@@ -216,7 +216,10 @@ public class PlayerController {
             sleepTick = new Runnable() { public void run() {
                 if (!sleeping) return;
                 long left = sleepEnd - System.currentTimeMillis();
-                if (left <= 0) { try { if (p != null) p.setVolume(0f); } catch (Exception ignored) {} pause(); sleeping = false; return; }
+                if (left <= 0) {   // faded out: TV off + display off, exactly like the power button
+                    try { if (p != null) p.setVolume(0f); } catch (Exception ignored) {}
+                    pause(); sleeping = false; PlayerActivity.napNow(); return;
+                }
                 float frac = Math.max(0f, Math.min(1f, (float) left / (sleepMin * 60000f)));
                 try { if (p != null) p.setVolume(sleepFromVol * frac); } catch (Exception ignored) {}
                 main.postDelayed(this, 3000);

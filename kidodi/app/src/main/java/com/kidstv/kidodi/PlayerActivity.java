@@ -140,8 +140,21 @@ public class PlayerActivity extends Activity {
         } catch (Exception ignored) {}
     }
     private void doPower() {
-        if (!napped) { setNapScreen(true); PlayerController.get().pause(); }
+        if (!napped) { setNapScreen(true); PlayerController.get().pause(); sleepDisplay(); }
         else { setNapScreen(false); PlayerController.get().play(); }
+    }
+    /** Sleep-timer end: same as the power button — TV off, display off. */
+    public static void napNow() {
+        final PlayerActivity a = sRef.get();
+        if (a != null) a.main.post(() -> { if (!a.napped) { a.setNapScreen(true); a.sleepDisplay(); } });
+    }
+    /** Physical-power-button parity: actually turn the display OFF (device-owner lockNow; the keyguard is
+        disabled so it wakes straight back into the show). Without owner rights we keep the dim black overlay. */
+    private void sleepDisplay() {
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) dpm.lockNow();
+        } catch (Exception ignored) {}
     }
     private void setNapScreen(boolean nap) {
         napped = nap;
@@ -184,6 +197,7 @@ public class PlayerActivity extends Activity {
             p.screenBrightness = napped ? 0.02f : -1.0f;
             getWindow().setAttributes(p);
             main.postDelayed(() -> flashing = false, 600);   // outlast the wake lock's trailing SCREEN_ON
+            if (napped) main.postDelayed(this::sleepDisplay, 700);   // "3s of white, then off again"
         }, dur);
     }
 
