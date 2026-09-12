@@ -100,16 +100,20 @@ public class RemoteActivity extends Activity {
         TextView h = new TextView(this);
         h.setText("Kidodi"); h.setTextColor(TXT); h.setTextSize(24);
         h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD);
-        header.addView(h, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView gear = new TextView(this);
-        gear.setText("⚙"); gear.setTextColor(SUB); gear.setTextSize(22); gear.setPadding(dp(8), 0, dp(10), 0);
-        gear.setClickable(true); gear.setOnClickListener(v -> openSettings());   // all the TV's settings, from the phone
-        header.addView(gear);
+        header.addView(h, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // linkLabel takes the flexible middle and TRUNCATES if long (a long watch-update status was
+        // squeezing the "Kidodi" title into a vertical stack); title + gear + dot keep their natural size.
         linkLabel = new TextView(this);
         linkLabel.setText(""); linkLabel.setTextColor(SUB); linkLabel.setTextSize(12);
-        linkLabel.setPadding(0, 0, dp(8), 0);
+        linkLabel.setPadding(dp(8), 0, dp(6), 0);
+        linkLabel.setMaxLines(1); linkLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        linkLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         linkLabel.setClickable(true); linkLabel.setOnClickListener(v -> openConnection());   // the Connection screen
-        header.addView(linkLabel);
+        header.addView(linkLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView gear = new TextView(this);
+        gear.setText("⚙"); gear.setTextColor(SUB); gear.setTextSize(22); gear.setPadding(dp(4), 0, dp(10), 0);
+        gear.setClickable(true); gear.setOnClickListener(v -> openSettings());   // all the TV's settings, from the phone
+        header.addView(gear);
         dot = new View(this);
         GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
         dot.setBackground(dg);
