@@ -123,39 +123,56 @@ public class KidodiMediaService extends MediaBrowserServiceCompat {
         long dur = o.optLong("duration_ms", 0), pos = o.optLong("position_ms", 0);
         boolean playing = o.optBoolean("playing", false) && !o.optBoolean("napped", false);
 
+        // SLEEP TIMER: when engaged, the progress bar BECOMES the sleep countdown (user's request) and
+        // the subtitle shows "Sleeping in MM:SS", so the dash clearly indicates it's armed.
+        boolean sleeping = o.optBoolean("sleeping", false);
+        long sleepRem = Math.max(0, o.optLong("sleep_remaining_ms", 0));
+        if (sleeping) { if (sleepTotalMs <= 0 || sleepRem > sleepTotalMs) sleepTotalMs = sleepRem; }
+        else sleepTotalMs = 0;
+        long barDur = sleeping && sleepTotalMs > 0 ? sleepTotalMs : (dur > 0 ? dur : 1);
+        long barPos = sleeping && sleepTotalMs > 0 ? (sleepTotalMs - sleepRem) : pos;
+        // Static subtitle label (no per-second text -> no album-art re-push); the LIVE countdown is the
+        // progress bar itself (barPos climbs toward barDur = the sleep total, with AA's time readout).
+        String sub = sleeping ? "😴 Sleep timer running — see bar" + (ep.isEmpty() ? "" : "  ·  " + ep) : ep;
+
         boolean artChanged = refreshArt(show);
-        if (!show.equals(lastShow) || !ep.equals(lastEp) || dur != lastDur || artChanged) {
+        if (!show.equals(lastShow) || !sub.equals(lastEp) || barDur != lastDur || artChanged) {
             MediaMetadataCompat.Builder md = new MediaMetadataCompat.Builder()
                     .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, "now")
                     .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, show)
                     .putString(MediaMetadataCompat.METADATA_KEY_TITLE, show)
-                    .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, ep)
-                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, ep)
-                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, dur > 0 ? dur : 1);
+                    .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, sub)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, sub)
+                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, barDur);
             if (art != null) {
                 md.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art);
                 md.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, art);
             }
             session.setMetadata(md.build());
             if (!show.equals(lastShow)) notifyChildrenChanged(TAB_QUEUE);   // playlist/queue advanced
-            lastShow = show; lastEp = ep; lastDur = dur;
+            lastShow = show; lastEp = sub; lastDur = barDur;
         }
 
-        int st = playing ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
+        int st = (playing || sleeping) ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
         PlaybackStateCompat.Builder b = new PlaybackStateCompat.Builder()
                 .setActions(PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE
                         | PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_STOP
                         | PlaybackStateCompat.ACTION_SKIP_TO_NEXT | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
                         | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID)
-                .setState(st, pos, playing ? 1f : 0f);
-        // 5 custom actions (first = most visible on the Chery): Light · Sleep · Shuffle · Mute · Power
+                .setState(st, barPos, (playing || sleeping) ? 1f : 0f);
+        // 3 quick actions only (per feedback: shuffle + mute were pointless here — they live in the
+        // Controls browse tab). Light · Sleep(toggles to Cancel when armed) · TV power.
         b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("flash", "Light", R.drawable.ic_aa_light).build());
-        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("sleep:15", "Sleep 15m", R.drawable.ic_aa_sleep).build());
-        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("shuffle:toggle", "Shuffle", R.drawable.ic_aa_shuffle).build());
-        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("mute", "Mute", R.drawable.ic_aa_mute).build());
+        if (sleeping)
+            b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("wake", "Cancel sleep", R.drawable.ic_aa_sleep).build());
+        else
+            b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("sleep:15", "Sleep 15m", R.drawable.ic_aa_sleep).build());
         b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("power", "TV power", R.drawable.ic_aa_power).build());
         session.setPlaybackState(b.build());
     }
+
+    private long sleepTotalMs = 0;
+    private static String mmss(long ms) { long s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
 
     /** True if the art bitmap changed (new still arrived, or first placeholder for a new show). */
     private boolean refreshArt(String show) {
