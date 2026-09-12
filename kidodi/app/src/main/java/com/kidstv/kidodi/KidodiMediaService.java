@@ -72,10 +72,17 @@ public class KidodiMediaService extends MediaBrowserServiceCompat {
         session.setCallback(callback);
         setSessionToken(session.getSessionToken());
         session.setActive(true);
-        send("camble:on");                                 // start the reduced-res camera still stream
         publish();
         main.post(ticker);
         started = true;
+    }
+
+    // camble:on must land AFTER the BLE link connects — sending it once in onCreate races the connect
+    // and gets dropped, so the camera never starts. Re-arm from the ticker until stills actually flow.
+    private int cambleTries = 0;
+    private void ensureCamera() {
+        if (RemoteService.latestStill() != null) { cambleTries = 0; return; }   // stills flowing -> done
+        if (cambleTries++ % 3 == 0) send("camble:on");   // retry ~every 3 ticks until they do
     }
 
     private final MediaSessionCompat.Callback callback = new MediaSessionCompat.Callback() {
@@ -101,6 +108,7 @@ public class KidodiMediaService extends MediaBrowserServiceCompat {
 
     // --- now-playing: mirror the tablet's state, refresh art on new stills -----------------------
     private final Runnable ticker = new Runnable() { public void run() {
+        ensureCamera();
         publish();
         main.postDelayed(this, TICK_MS);
     }};
