@@ -139,23 +139,18 @@ public class RemoteActivity extends Activity {
         root.addView(card);
 
         // playlist chip -> opens the picker
-        plChip = new TextView(this);
-        plChip.setText("Playlist:  Shuffle All  ▾"); plChip.setTextColor(SUB); plChip.setTextSize(13);
-        plChip.setPadding(dp(6), dp(10), dp(6), dp(2)); plChip.setClickable(true);
-        plChip.setOnClickListener(v -> openPicker());
-        LinearLayout chips = new LinearLayout(this);   // Playlist ▾  |  Library ▾  |  Up next ▾
+        // Three tappable PILL buttons (were faint text labels that read as captions, so nobody found
+        // them): Playlist picker · Library browse+enqueue · Up next queue.
+        LinearLayout chips = new LinearLayout(this);
         chips.setOrientation(LinearLayout.HORIZONTAL);
-        chips.addView(plChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        libChip = new TextView(this);
-        libChip.setText("Library  ▾"); libChip.setTextColor(SUB); libChip.setTextSize(13);
-        libChip.setPadding(dp(6), dp(10), dp(6), dp(2)); libChip.setClickable(true); libChip.setGravity(Gravity.CENTER);
-        libChip.setOnClickListener(v -> openLibrary());
-        chips.addView(libChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.8f));
-        queueChip = new TextView(this);
-        queueChip.setText("Up next  ▾"); queueChip.setTextColor(SUB); queueChip.setTextSize(13);
-        queueChip.setPadding(dp(6), dp(10), dp(6), dp(2)); queueChip.setClickable(true); queueChip.setGravity(Gravity.END);
-        queueChip.setOnClickListener(v -> openQueue());
-        chips.addView(queueChip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        plChip = pillChip("♪  Shuffle All", v -> openPicker());
+        libChip = pillChip("☰  Library", v -> openLibrary());
+        queueChip = pillChip("≡  Up next", v -> openQueue());
+        LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f);
+        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        pl.setMargins(0, 0, dp(5), 0); lp2.setMargins(dp(5), 0, dp(5), 0); qp.setMargins(dp(5), 0, 0, 0);
+        chips.addView(plChip, pl); chips.addView(libChip, lp2); chips.addView(queueChip, qp);
         root.addView(chips);
 
         root.addView(spacer(dp(12)));
@@ -274,7 +269,7 @@ public class RemoteActivity extends Activity {
             lastNapped = o.optBoolean("napped", false);
             renderClock();
             currentPl = o.optString("playlist", "Shuffle All");
-            plChip.setText("Playlist:  " + currentPl + "  ▾");
+            plChip.setText("♪  " + currentPl);
             String ip = o.optString("ip", "");
             if (!ip.isEmpty() && !local) tabletIp = ip;   // local stays on loopback
             // queue mode + connection level + the TV's hotspot creds (present only while it runs)
@@ -529,6 +524,19 @@ public class RemoteActivity extends Activity {
     // =====================================================================================
     private final java.util.List<String[]> libShows = new java.util.ArrayList<>();   // [name, count]
     private int libTotal = 0;
+    /** A clearly-tappable pill button for the playlist / library / queue chips. */
+    private TextView pillChip(String label, View.OnClickListener onClick) {
+        TextView t = new TextView(this);
+        t.setText(label); t.setTextColor(TXT); t.setTextSize(14); t.setAllCaps(false);
+        t.setGravity(Gravity.CENTER); t.setMaxLines(1); t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.setPadding(dp(10), dp(12), dp(10), dp(12));
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(BTN); g.setCornerRadius(dp(22));
+        t.setBackground(g);
+        t.setClickable(true); t.setOnClickListener(onClick);
+        return t;
+    }
+
     private void openLibrary() {
         if (libView != null) return;
         libShows.clear(); libTotal = 0;
