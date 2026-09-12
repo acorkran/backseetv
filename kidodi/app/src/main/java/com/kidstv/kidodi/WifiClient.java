@@ -92,7 +92,7 @@ public class WifiClient {
     }
     /** Commands whose HTTP response is a {"type":...} payload the UI waits for. */
     private static boolean isQuery(String cmd) {
-        return cmd.equals("list") || cmd.equals("queue") || cmd.equals("conn") || cmd.startsWith("shows") || cmd.startsWith("eps:");
+        return cmd.equals("list") || cmd.equals("queue") || cmd.equals("conn") || cmd.equals("cfg") || cmd.startsWith("shows") || cmd.startsWith("eps:");
     }
 
     /** BLE command vocabulary -> the player's HTTP endpoints (must stay in step with ControlServer). */
@@ -118,6 +118,13 @@ public class WifiClient {
         if (cmd.startsWith("loop:")) return onOffToggle("/loop", cmd.substring(5));
         if (cmd.startsWith("savequeue:")) return "/savequeue?name=" + enc(cmd.substring(10));
         if (cmd.startsWith("delpl:")) return "/delplaylist?name=" + enc(cmd.substring(6));
+        // config sync
+        if (cmd.equals("cfg")) return "/config";
+        if (cmd.startsWith("cfg:")) {   // cfg:KEY=VALUE
+            String rest = cmd.substring(4); int e = rest.indexOf('=');
+            String k = e > 0 ? rest.substring(0, e) : rest, v = e > 0 ? rest.substring(e + 1) : "";
+            return "/config?set=" + enc(k) + "&value=" + enc(v);
+        }
         // connection level + Wi-Fi hand-off
         if (cmd.startsWith("conn:")) return "/conn?mode=" + enc(cmd.substring(5));
         if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS

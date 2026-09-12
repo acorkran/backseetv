@@ -99,6 +99,10 @@
         <activity android:name=".SettingsActivity" android:exported="false"
             android:theme="@android:style/Theme.Material.NoActionBar"/>
 
+        <!-- About / feature levels (opened from device-owner "requires setup" notices) -->
+        <activity android:name=".AboutActivity" android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"/>
+
         <!-- boot straight into the player (the SHOW is the home screen) -->
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

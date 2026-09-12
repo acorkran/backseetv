@@ -56,7 +56,8 @@ public class RemoteActivity extends Activity {
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
-    private View picker, queueView, libView, epView, connView;
+    private View picker, queueView, libView, epView, connView, settingsView;
+    private org.json.JSONObject cfgVals; private boolean cfgOwner, cfgPinSet;   // mirrored TV settings
     private TextView connStatus;
     // --- tabs: Remote (0) / Playlists (1) / Queue (2) ---
     private LinearLayout tabBar; private FrameLayout content;
@@ -99,6 +100,10 @@ public class RemoteActivity extends Activity {
         h.setText("Kidodi"); h.setTextColor(TXT); h.setTextSize(24);
         h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD);
         header.addView(h, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView gear = new TextView(this);
+        gear.setText("⚙"); gear.setTextColor(SUB); gear.setTextSize(22); gear.setPadding(dp(8), 0, dp(10), 0);
+        gear.setClickable(true); gear.setOnClickListener(v -> openSettings());   // all the TV's settings, from the phone
+        header.addView(gear);
         linkLabel = new TextView(this);
         linkLabel.setText(""); linkLabel.setTextColor(SUB); linkLabel.setTextSize(12);
         linkLabel.setPadding(0, 0, dp(8), 0);
@@ -480,6 +485,7 @@ public class RemoteActivity extends Activity {
         if (still != null) closeStill();
         else if (epView != null) closeEpisodes();
         else if (libView != null) closeLibrary();
+        else if (settingsView != null) closeSettings();
         else if (connView != null) closeConnection();
         else if (curTab != 0) showTab(0);   // a sub-tab -> back to the Remote tab
         else super.onBackPressed();
@@ -819,6 +825,172 @@ public class RemoteActivity extends Activity {
         else toast("The hotspot needs the Nearby devices permission");
     }
     private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; } }
+
+    // =====================================================================================
+    //  Settings — every TV option, mirrored from the phone (reads the TV's /config, writes cfg:K=V).
+    //  Device-owner-only rows are greyed with a "requires device owner" notice on a base-level TV.
+    // =====================================================================================
+    private void openSettings() {
+        if (settingsView != null) return;
+        if (local) { startActivity(new Intent(this, SettingsActivity.class)); return; }   // on the TV: the real screen
+        settingsView = overlay("TV settings");
+        cfgVals = null;
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.requestConfig();
+        loadConfig(0);
+    }
+    private void loadConfig(final int attempt) {
+        if (settingsView == null) return;
+        RemoteService svc = RemoteService.get();
+        String json = svc != null ? svc.configJson() : null;
+        if (json != null) { applyConfigJson(json); renderSettings(); return; }
+        if (attempt < 15) main.postDelayed(() -> loadConfig(attempt + 1), 400);
+        else {
+            LinearLayout col = colOf(settingsView); clearRows(col, 1);
+            col.addView(noteText("Couldn't read the TV's settings — is it connected?"));
+            Button b = rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
+        }
+    }
+    private void applyConfigJson(String json) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(json);
+            cfgOwner = o.optBoolean("device_owner", false);
+            cfgPinSet = o.optBoolean("pin_set", false);
+            cfgVals = o.optJSONObject("values"); if (cfgVals == null) cfgVals = new org.json.JSONObject();
+        } catch (Exception e) { cfgVals = new org.json.JSONObject(); }
+    }
+    private int cfgI(String k, int d) { return cfgVals != null ? cfgVals.optInt(k, d) : d; }
+    private String cfgS(String k, String d) { return cfgVals != null ? cfgVals.optString(k, d) : d; }
+    private void setCfg(String k, String val) {
+        RemoteService svc = RemoteService.get(); if (svc != null) svc.setConfig(k, val);
+        try { if (cfgVals != null) cfgVals.put(k, val.matches("-?\\d+") ? (Object) Integer.valueOf(val) : val); } catch (Exception ignored) {}
+    }
+    private void renderSettings() {
+        if (settingsView == null) return;
+        LinearLayout col = colOf(settingsView); clearRows(col, 1);
+        col.addView(noteText(cfgOwner ? "The TV's settings — change any of them from here."
+                : "The TV's settings. Locked rows need device-owner setup (tap a 🔒 notice to learn more)."));
+
+        sSec(col, "Playback");
+        cfgIntCycle(col, "Light duration (seconds)", "kidodi_flash_ms", new int[]{1000, 2000, 3000, 5000, 10000}, 1000);
+        { final boolean loop = cfgI("kidodi_loop", 1) == 1;
+          Button b = setRow(col, "When the queue ends"); b.setText(loop ? "loop forever" : "stop (TV off)");
+          b.setOnClickListener(v -> { setCfg("kidodi_loop", cfgI("kidodi_loop", 1) == 1 ? "0" : "1"); renderSettings(); }); }
+
+        sSec(col, "Connection level");
+        for (final String[] m : CONN_MODES) {
+            boolean on = m[0].equals(cfgS("kidodi_conn", "ble"));
+            Button b = setRow(col, (on ? "●  " : "○  ") + m[1]); b.setText(on ? "current" : "choose"); b.setTextColor(on ? GOOD : TXT);
+            b.setOnClickListener(v -> { RemoteService svc = RemoteService.get(); if (svc != null) svc.setConnMode(m[0]);
+                try { cfgVals.put("kidodi_conn", m[0]); } catch (Exception ignored) {} renderSettings(); });
+        }
+
+        sSec(col, "Toddler play mode");
+        cfgStrCycle(col, "Sound", "kidodi_playmode_sound", new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"});
+
+        sSec(col, "Unlock gesture");
+        if (cfgOwner) {
+            cfgIntCycle(col, "Fingers", "kidodi_esc_fingers", new int[]{2, 3, 4, 5}, 1);
+            cfgStrCycle(col, "Type", "kidodi_esc_mode", new String[]{"taps", "swipe"}, new String[]{"taps", "swipe"});
+            cfgIntCycle(col, "Taps needed", "kidodi_esc_taps", new int[]{2, 3, 4, 5, 6}, 1);
+            cfgIntCycle(col, "Within (seconds)", "kidodi_esc_window_ms", new int[]{2000, 3000, 5000, 8000}, 1000);
+            cfgStrCycle(col, "Swipe direction", "kidodi_esc_dir", new String[]{"up", "down", "left", "right"}, new String[]{"up", "down", "left", "right"});
+        } else {
+            sDim(col, "Fingers", String.valueOf(cfgI("kidodi_esc_fingers", 4)));
+            sDim(col, "Type", cfgS("kidodi_esc_mode", "taps"));
+            sDim(col, "Taps needed", String.valueOf(cfgI("kidodi_esc_taps", 4)));
+            sDim(col, "Within (seconds)", String.valueOf(cfgI("kidodi_esc_window_ms", 3000) / 1000));
+            sDim(col, "Swipe direction", cfgS("kidodi_esc_dir", "up"));
+            sGated(col);
+        }
+
+        sSec(col, "Lock");
+        if (cfgOwner) {
+            Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
+            final boolean k = cfgI("kidodi_kiosk", 0) == 1;
+            Button kb = setRow(col, "Kiosk lock"); kb.setText(k ? "on" : "off");
+            kb.setOnClickListener(v -> { setCfg("kidodi_kiosk", cfgI("kidodi_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
+        } else {
+            sDim(col, "Admin PIN", "••••");
+            sDim(col, "Kiosk lock", cfgI("kidodi_kiosk", 0) == 1 ? "on" : "off");
+            sGated(col);
+        }
+
+        Button about = rowBtn("About Kidodi & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
+        Button back = rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
+    }
+    private void closeSettings() { if (settingsView != null) { frame.removeView(settingsView); settingsView = null; } }
+
+    private void changeTvPin() {
+        final EditText a = field("New PIN (4+ digits)", true), b2 = field("Repeat new PIN", true);
+        a.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        b2.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(20), dp(10), dp(20), 0);
+        box.addView(a); box.addView(b2);
+        new AlertDialog.Builder(this).setTitle("Change TV admin PIN").setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    String p = a.getText().toString().trim();
+                    if (!p.matches("\\d{4,}")) { toast("PIN must be at least 4 digits"); return; }
+                    if (!p.equals(b2.getText().toString().trim())) { toast("PINs don't match"); return; }
+                    setCfg("kidodi_pin", p); cfgPinSet = true; toast("PIN changed"); renderSettings();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    // --- settings-overlay row helpers ---
+    private void sSec(LinearLayout col, String t) {
+        TextView s = new TextView(this); s.setText(t); s.setTextColor(GOOD); s.setTextSize(15);
+        s.setPadding(0, dp(16), 0, dp(6)); col.addView(s);
+    }
+    private Button setRow(LinearLayout col, String label) {
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+        GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
+        row.setPadding(dp(14), dp(6), dp(8), dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+        TextView l = new TextView(this); l.setText(label); l.setTextColor(TXT); l.setTextSize(15);
+        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button v = new Button(this); v.setAllCaps(false); v.setTextSize(14); v.setMinWidth(dp(108)); v.setTextColor(TXT);
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(BTN); bg.setCornerRadius(dp(10)); v.setBackground(bg);
+        row.addView(v); col.addView(row);
+        return v;
+    }
+    private void cfgIntCycle(LinearLayout col, String label, final String key, final int[] opts, final int div) {
+        final Button v = setRow(col, label);
+        v.setText(String.valueOf(cfgI(key, opts[0]) / div));
+        v.setOnClickListener(x -> {
+            int cur = cfgI(key, opts[0]), nx = opts[0];
+            for (int i = 0; i < opts.length; i++) if (opts[i] == cur) { nx = opts[(i + 1) % opts.length]; break; }
+            setCfg(key, String.valueOf(nx)); v.setText(String.valueOf(nx / div));
+        });
+    }
+    private void cfgStrCycle(LinearLayout col, String label, final String key, final String[] vals, final String[] labels) {
+        final Button v = setRow(col, label);
+        v.setText(sLabel(cfgS(key, vals[0]), vals, labels));
+        v.setOnClickListener(x -> {
+            String cur = cfgS(key, vals[0]), nx = vals[0];
+            for (int i = 0; i < vals.length; i++) if (vals[i].equals(cur)) { nx = vals[(i + 1) % vals.length]; break; }
+            setCfg(key, nx); v.setText(sLabel(nx, vals, labels));
+        });
+    }
+    private static String sLabel(String v, String[] vals, String[] labels) { for (int i = 0; i < vals.length; i++) if (vals[i].equals(v)) return labels[i]; return v; }
+    private void sDim(LinearLayout col, String label, String value) {
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+        GradientDrawable g = new GradientDrawable(); g.setColor(0xFF151A20); g.setCornerRadius(dp(12)); row.setBackground(g);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+        TextView l = new TextView(this); l.setText("🔒  " + label); l.setTextColor(0xFF5A6470); l.setTextSize(15);
+        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView vv = new TextView(this); vv.setText(value); vv.setTextColor(0xFF4A525C); vv.setTextSize(14); row.addView(vv);
+        col.addView(row);
+    }
+    private void sGated(LinearLayout col) {
+        TextView t = new TextView(this);
+        t.setText("🔒  That feature requires device-owner setup.  Tap here to find out more.");
+        t.setTextColor(WARN); t.setTextSize(13); t.setPadding(dp(6), dp(6), dp(6), dp(8)); t.setClickable(true);
+        t.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
+        col.addView(t);
+    }
 
     // --- check-in: STILL IMAGE over BLE (<1fps, "not a feed") OR LIVE view over Wi-Fi (/live MJPEG) ---
     private void openStill() {

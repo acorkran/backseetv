@@ -172,6 +172,17 @@ public class BleServer {
             if (c > 0 && rest.substring(c + 1).trim().matches("\\d+")) { from = pi(rest.substring(c + 1)); rest = rest.substring(0, c); }
             pushJson(ctrl.episodesJson(rest.trim(), from, 6, 60)); return;
         }
+        // --- config sync (every tablet setting, from a remote) ---
+        if (cmd.equals("cfg")) { pushJson(Cfg.configJson(ctx, true)); return; }   // one-shot config payload
+        if (cmd.startsWith("cfg:")) {   // cfg:KEY=VALUE
+            String rest = cmd.substring(4); int e = rest.indexOf('=');
+            if (e > 0) {
+                String k = rest.substring(0, e), v = rest.substring(e + 1);
+                Cfg.applyConfig(ctx, k, v);
+                if ("kidodi_loop".equals(k)) ctrl.setLoop("1".equals(v));   // live-apply loop
+            }
+            return;
+        }
         // --- connectivity level ---
         if (cmd.equals("conn")) { pushJson(ctrl.connJson()); return; }
         if (cmd.startsWith("conn:")) { HotspotService.applyMode(ctx, cmd.substring(5).trim()); pushJson(ctrl.connJson()); return; }
