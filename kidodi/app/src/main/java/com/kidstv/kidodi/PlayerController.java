@@ -519,6 +519,7 @@ public class PlayerController {
             o.put("ip", wifiIp());   // so a remote can fetch /snapshot.jpg directly (BLE carries this; no mDNS needed)
             o.put("shuffle", shuffle);
             o.put("loop", loop);
+            o.put("playmode", PlayerActivity.isPlayModeActive());   // toddler overlay up? (remotes show an on/off toggle)
             o.put("conn", appCtx != null ? HotspotService.mode(appCtx) : "ble");
             o.put("flash_ms", appCtx != null ? Cfg.getInt(appCtx, "kidodi_flash_ms", 3000) : 3000);
             if (HotspotService.running() && HotspotService.currentSsid() != null)   // only while the TV hotspot is up

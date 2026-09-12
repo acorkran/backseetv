@@ -40,6 +40,8 @@ public class WearRemoteActivity extends Activity {
     private GestureDetector gd;
     private TextView status, title, subtitle;
     private Button playPause;
+    private Button playModeBtn;        // Setup page: toggles the toddler overlay (label follows state)
+    private boolean playModeOn;        // last-known toddler-mode state from the tablet
 
     // camera view: reduced-res STILLS over BLE, upgraded to Wi-Fi /live MJPEG when the TV IP is reachable
     private View cameraView;
@@ -469,13 +471,16 @@ public class WearRemoteActivity extends Activity {
         ph.setTypeface(Typeface.DEFAULT_BOLD); ph.setGravity(Gravity.CENTER); ph.setPadding(0, pad(16), 0, pad(8));
         col.addView(ph);
         Button play = new Button(this);
-        play.setAllCaps(false); play.setText("🧸  Toddler play mode");
+        play.setAllCaps(false); play.setText(playModeOn ? "🧸  Stop toddler mode" : "🧸  Toddler play mode");
         play.setTextColor(Color.WHITE); play.setTextSize(15);
         GradientDrawable pg = new GradientDrawable(); pg.setColor(0xFF3A2E4A); pg.setCornerRadius(pad(14));
         play.setBackground(pg);
         LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
         plp.setMargins(0, pad(4), 0, pad(4)); play.setLayoutParams(plp);
-        play.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { send("playmode:on"); show(playerView); }});
+        play.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            send(playModeOn ? "playmode:off" : "playmode:on"); show(playerView);
+        }});
+        playModeBtn = play;
         col.addView(play);
         return sv;
     }
@@ -498,6 +503,8 @@ public class WearRemoteActivity extends Activity {
             if (volOverlay.getVisibility() != View.VISIBLE)
                 volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
             String ip = o.optString("ip", ""); if (!ip.isEmpty()) tabletIp = ip;   // for Wi-Fi /live
+            playModeOn = o.optBoolean("playmode", false);
+            if (playModeBtn != null) playModeBtn.setText(playModeOn ? "🧸  Stop toddler mode" : "🧸  Toddler play mode");
         } catch (Exception ignored) {}
     }
 

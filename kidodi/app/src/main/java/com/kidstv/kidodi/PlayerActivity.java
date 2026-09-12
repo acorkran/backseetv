@@ -131,6 +131,8 @@ public class PlayerActivity extends Activity {
     // --- toddler PLAY MODE: a transparent WebView overlay ON TOP of the running show (the video is the
     //     background). Playback keeps going; the toddler-lock sparkles/letters render over it. Audio is
     //     governed by WebAudioBridge (default gain 0 = silent). Exits via the playground's timed code. --
+    /** True while the toddler play-mode overlay is up (so remotes can show an on/off toggle). */
+    public static boolean isPlayModeActive() { PlayerActivity a = sRef.get(); return a != null && a.playWeb != null; }
     public static void startPlayMode() {
         final PlayerActivity a = sRef.get();
         if (a != null) a.main.post(a::doStartPlayMode);
