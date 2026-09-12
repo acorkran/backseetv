@@ -52,12 +52,17 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private View dot;
-    private TextView linkLabel, title, subtitle, timeText, sleepText, plChip, queueChip;
+    private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
     private View picker, queueView, libView, epView, connView;
-    private TextView libChip, connStatus;
+    private TextView connStatus;
+    // --- tabs: Remote (0) / Playlists (1) / Queue (2) ---
+    private LinearLayout tabBar; private FrameLayout content;
+    private View remoteTab, playlistsTab, queueTab;
+    private final TextView[] tabBtns = new TextView[3]; private int curTab = 0;
+    private LinearLayout plCol, qCol;
     private LinearLayout connModes, connActions;
     private boolean lastShuffle, lastLoop = true;
     private String lastConn = "ble", hsSsid, hsPass;   // the TV's connection level + its published hotspot creds
@@ -80,12 +85,13 @@ public class RemoteActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        frame = new FrameLayout(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
-        root.setPadding(dp(16), dp(20), dp(16), dp(16));
+        root.setPadding(dp(16), dp(20), dp(16), dp(8));
 
-        // --- header: title + connection dot + transport label ---
+        // --- header (visible on every tab): title + connection dot + transport label ---
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -104,9 +110,59 @@ public class RemoteActivity extends Activity {
         header.addView(dot, new LinearLayout.LayoutParams(dp(12), dp(12)));
         root.addView(header);
 
-        root.addView(spacer(dp(14)));
+        // --- tab bar: Remote | Playlists | Queue ---
+        root.addView(spacer(dp(10)));
+        tabBar = new LinearLayout(this); tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBtns[0] = pillChip("Remote", v -> showTab(0));
+        tabBtns[1] = pillChip("Playlists", v -> showTab(1));
+        tabBtns[2] = pillChip("Queue", v -> showTab(2));
+        for (int k = 0; k < 3; k++) {
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            tp.setMargins(k == 0 ? 0 : dp(4), 0, k == 2 ? 0 : dp(4), 0);
+            tabBar.addView(tabBtns[k], tp);
+        }
+        root.addView(tabBar);
+        root.addView(spacer(dp(10)));
 
-        // --- now-playing card ---
+        // --- content: three swappable tab views fill the rest ---
+        content = new FrameLayout(this);
+        remoteTab = buildRemoteTab();
+        playlistsTab = buildPlaylistsTab();
+        queueTab = buildQueueTab();
+        content.addView(remoteTab); content.addView(playlistsTab); content.addView(queueTab);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(frame);
+        showTab(0);
+
+        local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote
+        if (local) { tabletIp = "127.0.0.1"; RemoteService.ensureLocal(this); }
+        else RemoteService.ensure(this);
+        attach();
+    }
+
+    /** Switch tabs: show one view, highlight its pill, and (re)load that tab's data on entry. */
+    private void showTab(int i) {
+        curTab = i;
+        remoteTab.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+        playlistsTab.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
+        queueTab.setVisibility(i == 2 ? View.VISIBLE : View.GONE);
+        for (int k = 0; k < 3; k++) {
+            ((GradientDrawable) tabBtns[k].getBackground()).setColor(k == i ? ACCENT : BTN);
+            tabBtns[k].setTextColor(TXT);
+        }
+        RemoteService svc = RemoteService.get();
+        if (i == 1) { if (svc != null) svc.requestPlaylists(); populatePicker(plCol, 0); }
+        else if (i == 2) { loadQueue(qCol); }
+    }
+
+    // --- TAB 1: Remote — now-playing card + transport + volume + Light/Sleep/Power + Check-in ---
+    private View buildRemoteTab() {
+        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
@@ -125,7 +181,6 @@ public class RemoteActivity extends Activity {
         tcol.addView(title); tcol.addView(subtitle);
         titleRow.addView(tcol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         card.addView(titleRow);
-
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(1000);
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
@@ -138,24 +193,7 @@ public class RemoteActivity extends Activity {
         card.addView(timeText);
         root.addView(card);
 
-        // playlist chip -> opens the picker
-        // Three tappable PILL buttons (were faint text labels that read as captions, so nobody found
-        // them): Playlist picker · Library browse+enqueue · Up next queue.
-        LinearLayout chips = new LinearLayout(this);
-        chips.setOrientation(LinearLayout.HORIZONTAL);
-        plChip = pillChip("♪  Shuffle All", v -> openPicker());
-        libChip = pillChip("☰  Library", v -> openLibrary());
-        queueChip = pillChip("≡  Up next", v -> openQueue());
-        LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f);
-        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        pl.setMargins(0, 0, dp(5), 0); lp2.setMargins(dp(5), 0, dp(5), 0); qp.setMargins(dp(5), 0, 0, 0);
-        chips.addView(plChip, pl); chips.addView(libChip, lp2); chips.addView(queueChip, qp);
-        root.addView(chips);
-
-        root.addView(spacer(dp(12)));
-
-        // --- transport: prev | play/pause | next ---
+        root.addView(spacer(dp(14)));
         LinearLayout tr = new LinearLayout(this);
         tr.setOrientation(LinearLayout.HORIZONTAL);
         tr.setGravity(Gravity.CENTER);
@@ -167,8 +205,6 @@ public class RemoteActivity extends Activity {
         root.addView(tr);
 
         root.addView(spacer(dp(12)));
-
-        // --- volume ---
         LinearLayout vr = new LinearLayout(this);
         vr.setOrientation(LinearLayout.HORIZONTAL);
         vr.setGravity(Gravity.CENTER);
@@ -177,8 +213,6 @@ public class RemoteActivity extends Activity {
         root.addView(vr);
 
         root.addView(spacer(dp(12)));
-
-        // --- action cards: Light | Sleep | Power ---
         LinearLayout ar = new LinearLayout(this);
         ar.setOrientation(LinearLayout.HORIZONTAL);
         ar.addView(actionCard(IconView.SUN, WARN, "Light", "flash"), lp(0, dp(74), dp(5), 1f));
@@ -191,17 +225,10 @@ public class RemoteActivity extends Activity {
         sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(12), 0, 0);
         root.addView(sleepText);
 
-        TextView importBtn = new TextView(this);
-        importBtn.setText("＋  Import a video from this phone");
-        importBtn.setTextColor(ACCENT); importBtn.setTextSize(13); importBtn.setGravity(Gravity.CENTER);
-        importBtn.setPadding(0, dp(16), 0, 0); importBtn.setClickable(true);
-        importBtn.setOnClickListener(v -> pickImport());
-        root.addView(importBtn);
-
         TextView stillBtn = new TextView(this);
         stillBtn.setText("👶  Check-in  ·  still image");
         stillBtn.setTextColor(ACCENT); stillBtn.setTextSize(13); stillBtn.setGravity(Gravity.CENTER);
-        stillBtn.setPadding(0, dp(12), 0, 0); stillBtn.setClickable(true);
+        stillBtn.setPadding(0, dp(16), 0, 0); stillBtn.setClickable(true);
         stillBtn.setOnClickListener(v -> openStill());
         root.addView(stillBtn);
 
@@ -212,14 +239,60 @@ public class RemoteActivity extends Activity {
         scanBtn.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
         root.addView(scanBtn);
 
-        frame = new FrameLayout(this);
-        frame.addView(root);
-        setContentView(frame);
+        sv.addView(root);
+        return sv;
+    }
 
-        local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote
-        if (local) { tabletIp = "127.0.0.1"; RemoteService.ensureLocal(this); }
-        else RemoteService.ensure(this);
-        attach();
+    // --- TAB 2: Playlists — pick a playlist (built-ins + your saved queues) ---
+    private View buildPlaylistsTab() {
+        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(2), dp(2), dp(2), dp(16));
+        plNow = new TextView(this);
+        plNow.setText("Now playing:  Shuffle All"); plNow.setTextColor(SUB); plNow.setTextSize(13);
+        plNow.setPadding(dp(6), 0, 0, dp(8));
+        col.addView(plNow);   // child 0 = header line kept by populatePicker
+        plCol = col; picker = sv;
+        sv.addView(col);
+        return sv;
+    }
+
+    // --- TAB 3: Queue — the play order + building/importing (Add from library, Save, Import) ---
+    private View buildQueueTab() {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL); wrap.setBackgroundColor(BG);
+
+        // build/import bar (top): Add from library · Import a video from this phone
+        LinearLayout build = new LinearLayout(this); build.setOrientation(LinearLayout.HORIZONTAL);
+        build.setPadding(0, 0, 0, dp(6));
+        Button addLib = smallBtn("＋  Add from library"); addLib.setTextColor(ACCENT);
+        addLib.setOnClickListener(v -> openLibrary());
+        Button imp = smallBtn("⬆  Import video"); imp.setTextColor(ACCENT);
+        imp.setOnClickListener(v -> pickImport());
+        build.addView(addLib, wlp(1.4f)); build.addView(imp, wlp(1f));
+        wrap.addView(build);
+
+        // scrollable queue list: [0] header, [1] toolbar(shuffle/loop/save), [2+] rows
+        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setPadding(0, 0, 0, dp(16));
+        TextView hh = new TextView(this);
+        hh.setText("Up next"); hh.setTextColor(TXT); hh.setTextSize(18);
+        hh.setTypeface(hh.getTypeface(), android.graphics.Typeface.BOLD); hh.setPadding(dp(4), 0, 0, dp(6));
+        col.addView(hh);
+        LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
+        Button sh = smallBtn(""), lo = smallBtn(""), save = smallBtn("Save as playlist…");
+        sh.setOnClickListener(v -> { send("shuffle:toggle"); toast(lastShuffle ? "Shuffle off" : "Shuffle on"); main.postDelayed(() -> loadQueue(col), 800); });
+        lo.setOnClickListener(v -> { send("loop:toggle"); toast(lastLoop ? "Will stop at the end (TV off)" : "Looping forever"); main.postDelayed(() -> loadQueue(col), 800); });
+        save.setOnClickListener(v -> saveQueueAs());
+        bar.addView(sh, wlp(1f)); bar.addView(lo, wlp(1.2f)); bar.addView(save, wlp(1.5f));
+        col.addView(bar);
+        TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
+        qCol = col; queueView = sv;
+        sv.addView(col);
+        wrap.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        renderQueueBar(col);
+        return wrap;
     }
 
     // --- service wiring ------------------------------------------------------
@@ -269,7 +342,7 @@ public class RemoteActivity extends Activity {
             lastNapped = o.optBoolean("napped", false);
             renderClock();
             currentPl = o.optString("playlist", "Shuffle All");
-            plChip.setText("♪  " + currentPl);
+            if (plNow != null) plNow.setText("Now playing:  " + currentPl);
             String ip = o.optString("ip", "");
             if (!ip.isEmpty() && !local) tabletIp = ip;   // local stays on loopback
             // queue mode + connection level + the TV's hotspot creds (present only while it runs)
@@ -281,25 +354,7 @@ public class RemoteActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    // --- playlist picker overlay --------------------------------------------
-    private void openPicker() {
-        if (picker != null) return;
-        RemoteService svc = RemoteService.get();
-        if (svc != null) svc.requestPlaylists();   // ask the player for the list
-        ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(BG);
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(16), dp(20), dp(16), dp(16));
-        TextView h = new TextView(this);
-        h.setText("Choose a playlist"); h.setTextColor(TXT); h.setTextSize(22);
-        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
-        col.addView(h);
-        sv.addView(col);
-        picker = sv;
-        frame.addView(picker);
-        populatePicker(col, 0);
-    }
+    // --- Playlists tab: fill plCol with the playlist rows (built-ins + your saved queues) ---
     private void populatePicker(final LinearLayout col, final int attempt) {
         final RemoteService svc = RemoteService.get();
         List<String> names = svc != null ? svc.playlistNames() : null;
@@ -316,7 +371,7 @@ public class RemoteActivity extends Activity {
                 }
                 Button row = rowBtn(name, name.equals(currentPl) ? 0xFF8FD694 : TXT);
                 row.setTextSize(16);
-                row.setOnClickListener(v -> { send("play:" + name); closePicker(); });
+                row.setOnClickListener(v -> { send("play:" + name); showTab(0); });
                 if (mine) row.setOnLongClickListener(v -> {
                     new AlertDialog.Builder(this).setTitle("Delete playlist?").setMessage(name)
                             .setPositiveButton("Delete", (d, w) -> {
@@ -333,31 +388,6 @@ public class RemoteActivity extends Activity {
             col.addView(t);
             main.postDelayed(() -> { if (picker != null) populatePicker(col, attempt + 1); }, 400);   // list arrives async
         }
-    }
-    private void closePicker() { if (picker != null) { frame.removeView(picker); picker = null; } }
-
-    // --- "Up next": the current queue in PLAY order, tap a row to jump. Toolbar: Shuffle / Loop /
-    //     Save as playlist; long-press a row to remove it. Children: 0 header, 1 toolbar, 2+ rows.
-    private void openQueue() {
-        if (queueView != null) return;
-        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
-        final LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(16), dp(20), dp(16), dp(16));
-        TextView h = new TextView(this);
-        h.setText("Up next  ·  " + currentPl); h.setTextColor(TXT); h.setTextSize(20);
-        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(6));
-        col.addView(h);
-        LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
-        Button sh = smallBtn(""), lo = smallBtn(""), save = smallBtn("Save as playlist…");
-        sh.setOnClickListener(v -> { send("shuffle:toggle"); toast(lastShuffle ? "Shuffle off" : "Shuffle on"); main.postDelayed(() -> loadQueue(col), 800); });
-        lo.setOnClickListener(v -> { send("loop:toggle"); toast(lastLoop ? "Will stop at the end (TV off)" : "Looping forever"); main.postDelayed(() -> loadQueue(col), 800); });
-        save.setOnClickListener(v -> saveQueueAs());
-        bar.addView(sh, wlp(1f)); bar.addView(lo, wlp(1.2f)); bar.addView(save, wlp(1.5f));
-        col.addView(bar);
-        TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
-        sv.addView(col); queueView = sv; frame.addView(queueView);
-        renderQueueBar(col);
-        loadQueue(col);
     }
     private LinearLayout.LayoutParams wlp(float w) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(40), w); p.setMargins(dp(2), 0, dp(2), 0); return p; }
     private Button smallBtn(String text) {
@@ -408,7 +438,7 @@ public class RemoteActivity extends Activity {
                 final int abs = from + i;
                 final String name = pretty(items.optString(i));
                 Button row = rowBtn((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name, abs == index ? 0xFF8FD694 : TXT);
-                row.setOnClickListener(v -> { send("jump:" + abs); closeQueue(); });
+                row.setOnClickListener(v -> { send("jump:" + abs); showTab(0); });
                 final boolean current = abs == index;
                 row.setOnLongClickListener(v -> {
                     if (current) { toast("That one's playing now"); return true; }
@@ -434,7 +464,6 @@ public class RemoteActivity extends Activity {
                     RemoteService svc = RemoteService.get(); if (svc != null) main.postDelayed(svc::requestPlaylists, 800);
                 }).setNegativeButton("Cancel", null).show();
     }
-    private void closeQueue() { if (queueView != null) { frame.removeView(queueView); queueView = null; } }
     private static String readAll(java.io.InputStream in) throws Exception {
         java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] b = new byte[4096]; int n;
         while ((n = in.read(b)) > 0) bo.write(b, 0, n);
@@ -445,8 +474,7 @@ public class RemoteActivity extends Activity {
         else if (epView != null) closeEpisodes();
         else if (libView != null) closeLibrary();
         else if (connView != null) closeConnection();
-        else if (queueView != null) closeQueue();
-        else if (picker != null) closePicker();
+        else if (curTab != 0) showTab(0);   // a sub-tab -> back to the Remote tab
         else super.onBackPressed();
     }
 
@@ -1040,6 +1068,7 @@ public class RemoteActivity extends Activity {
         super.onResume();
         RemoteService.acquire(this, "ui");   // the link is on demand: held while this screen is visible
         attach();
+        showTab(0);   // always land on the Remote tab
         main.removeCallbacks(uiTick); main.post(uiTick);
     }
     @Override protected void onPause() {
