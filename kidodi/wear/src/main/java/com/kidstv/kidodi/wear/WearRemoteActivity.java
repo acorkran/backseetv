@@ -505,6 +505,10 @@ public class WearRemoteActivity extends Activity {
             String ip = o.optString("ip", ""); if (!ip.isEmpty()) tabletIp = ip;   // for Wi-Fi /live
             playModeOn = o.optBoolean("playmode", false);
             if (playModeBtn != null) playModeBtn.setText(playModeOn ? "🧸  Stop toddler mode" : "🧸  Toddler play mode");
+            if (o.has("battery") && status != null) {   // TV battery: shown when the link is healthy (status is otherwise "")
+                int bat = o.optInt("battery", -1);
+                if (bat >= 0) status.setText((o.optBoolean("charging", false) ? "⚡ " : "TV 🔋 ") + bat + "%");
+            }
         } catch (Exception ignored) {}
     }
 

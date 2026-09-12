@@ -520,6 +520,14 @@ public class PlayerController {
             o.put("shuffle", shuffle);
             o.put("loop", loop);
             o.put("playmode", PlayerActivity.isPlayModeActive());   // toddler overlay up? (remotes show an on/off toggle)
+            if (appCtx != null) {   // TV battery so remotes can show level + whether it's charging
+                try {
+                    android.os.BatteryManager bm = (android.os.BatteryManager) appCtx.getSystemService(Context.BATTERY_SERVICE);
+                    int lvl = bm != null ? bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) : -1;
+                    if (lvl >= 0 && lvl <= 100) o.put("battery", lvl);
+                    o.put("charging", bm != null && bm.isCharging());
+                } catch (Exception ignored) {}
+            }
             o.put("conn", appCtx != null ? HotspotService.mode(appCtx) : "ble");
             o.put("flash_ms", appCtx != null ? Cfg.getInt(appCtx, "kidodi_flash_ms", 3000) : 3000);
             if (HotspotService.running() && HotspotService.currentSsid() != null)   // only while the TV hotspot is up
