@@ -139,8 +139,9 @@
             </intent-filter>
         </service>
 
-        <!-- Android Auto MEDIA app (the surface that shows while driving). Measurement probe for now. -->
-        <service android:name=".MediaProbeService" android:exported="true">
+        <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
+             now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
+        <service android:name=".KidodiMediaService" android:exported="true">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService"/>
             </intent-filter>
