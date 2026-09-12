@@ -142,7 +142,9 @@ public class PlayerController {
     /** Jump to item i of the current queue and play. */
     public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { p.seekToDefaultPosition(i); p.play(); } }); }
     /** The current queue as JSON: titles in PLAY order + current index. n>0 = a window of center±n (fits BLE); n<=0 = full list. */
-    public String queueJson(int center, int n) {
+    public String queueJson(int center, int n) { return queueJson(center, n, Integer.MAX_VALUE); }
+    /** maxTitle bounds each item title so a BLE window fits ONE MTU (~509 bytes); HTTP passes MAX_VALUE. */
+    public String queueJson(int center, int n, int maxTitle) {
         JSONObject o = new JSONObject();
         try {
             List<MediaItem> items = currentItems;
@@ -150,7 +152,11 @@ public class PlayerController {
             if (center < 0) center = idx;   // default the window around the current item
             int from = n <= 0 ? 0 : Math.max(0, center - n), to = n <= 0 ? total : Math.min(total, center + n + 1);
             org.json.JSONArray a = new org.json.JSONArray();
-            for (int i = from; i < to; i++) a.put(titleOf(items.get(i)));
+            for (int i = from; i < to; i++) {
+                String t = titleOf(items.get(i));
+                if (t.length() > maxTitle) t = t.substring(0, maxTitle);
+                a.put(t);
+            }
             o.put("type", "queue"); o.put("playlist", currentPl); o.put("index", idx); o.put("total", total); o.put("from", from); o.put("items", a);
             o.put("shuffle", shuffle); o.put("loop", loop);
         } catch (Exception ignored) {}

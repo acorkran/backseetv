@@ -290,7 +290,7 @@ public class BleServer {
     /** A window of the queue around the current item (±4 -> fits one MTU); Wi-Fi /queue gives the full list. */
     private void pushQueue() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.queueJson(-1, 4).getBytes());
+        stateChar.setValue(ctrl.queueJson(-1, 3, 34).getBytes());   // ±3 items, titles ≤34 -> fits one MTU
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 
