@@ -77,6 +77,7 @@ public class RemoteActivity extends Activity {
     // Last pushed clock values; the TV pushes on change + a 10s heartbeat (battery), so we tick locally.
     private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol;
     private boolean lastPlaying, lastSleeping, lastNapped; private int tickN;
+    private int lastBattery = -1; private boolean lastCharging;   // TV battery, shown on the now-playing line
     private final Runnable uiTick = new Runnable() { public void run() {
         renderClock();
         if (++tickN % 20 == 0) WearPusher.refreshStatus(RemoteActivity.this);
@@ -331,7 +332,8 @@ public class RemoteActivity extends Activity {
         long el = lastPlaying ? System.currentTimeMillis() - lastStateAt : 0;
         int pos = (int) Math.min(lastDur > 0 ? lastDur : Integer.MAX_VALUE, lastPos + el);
         progress.setProgress(lastDur > 0 ? Math.round(1000f * pos / lastDur) : 0);
-        timeText.setText(lastDur > 0 ? mmss(pos) + " / " + mmss(lastDur) + "     vol " + Math.round(lastVol * 100) + "%" : "");
+        String bat = lastBattery < 0 ? "" : "     " + (lastCharging ? "⚡ " : "🔋 ") + lastBattery + "%";
+        timeText.setText((lastDur > 0 ? mmss(pos) + " / " + mmss(lastDur) + "     vol " + Math.round(lastVol * 100) + "%" : "TV") + bat);
         if (lastSleeping) {
             long s = Math.max(0, lastSleepMs - (System.currentTimeMillis() - lastStateAt)) / 1000;
             sleepText.setText("Sleeping in " + (s / 60) + ":" + String.format("%02d", s % 60));
@@ -352,6 +354,7 @@ public class RemoteActivity extends Activity {
             lastVol = o.optDouble("volume", 0); lastStateAt = System.currentTimeMillis();
             lastSleeping = o.optBoolean("sleeping", false); lastSleepMs = Math.max(0, o.optLong("sleep_remaining_ms", 0));
             lastNapped = o.optBoolean("napped", false);
+            lastBattery = o.optInt("battery", -1); lastCharging = o.optBoolean("charging", false);
             renderClock();
             currentPl = o.optString("playlist", "Shuffle All");
             if (plNow != null) plNow.setText("Now playing:  " + currentPl);
