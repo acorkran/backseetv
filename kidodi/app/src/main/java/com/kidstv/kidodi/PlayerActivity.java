@@ -164,10 +164,11 @@ public class PlayerActivity extends Activity {
         napOverlay.setVisibility(nap ? View.VISIBLE : View.GONE);
         lp.screenBrightness = nap ? 0.02f : -1.0f;   // -1 = system default -> reliably ON again
         getWindow().setAttributes(lp);
-        // Un-napping while the display is physically OFF: un-blacking the overlay isn't enough — light
-        // the display, or it's audio on a dark screen. napped is already false, so the SCREEN_ON the wake
-        // triggers won't double-play through the receiver.
-        if (!nap) wakeDisplay();
+        // FLAG_KEEP_SCREEN_ON fights lockNow() while the show is playing -> the power button was hit-and-
+        // miss (you had to pause first). Drop it when napping so the display can actually sleep; restore
+        // it on wake. Un-napping also lights a physically-off display (else it's audio on a dark screen).
+        if (nap) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else { getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); wakeDisplay(); }
     }
 
     // screen-as-flashlight, called by ControlServer /flash
