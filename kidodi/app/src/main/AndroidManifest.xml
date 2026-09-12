@@ -40,10 +40,9 @@
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 
-        <!-- Android Auto: a template (car) app, not a media app -->
+        <!-- Android Auto: MEDIA app (the only surface a car actually shows). See KidodiMediaService. -->
         <meta-data android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc"/>
-        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="1"/>
 
         <!-- Launcher: one APK, two roles. Routes to player or remote (first-run chooser). -->
         <activity
@@ -130,14 +129,6 @@
             android:exported="false"
             android:foregroundServiceType="camera"/>
 
-        <!-- Android Auto car app (IOT category -> app launcher, not media slot) -->
-        <service android:name=".KidodiCarAppService"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService"/>
-                <category android:name="androidx.car.app.category.IOT"/>
-            </intent-filter>
-        </service>
 
         <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
              now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->

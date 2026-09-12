@@ -15,4 +15,3 @@ dependencyResolutionManagement {
 rootProject.name = "kidodi"
 include ":app"
 include ":wear"
-include ":aatest"

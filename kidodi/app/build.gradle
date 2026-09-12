@@ -43,7 +43,8 @@ dependencies {
     // occur. media3-common (MediaItem/Player) comes transitively; we render into a plain
     // SurfaceView so no media3-ui/theme dependency is needed.
     implementation 'androidx.media3:media3-exoplayer:1.4.1'
-    // Android Auto as a CAR APP (launcher/IOT category) -> doesn't compete for the media slot
+    // (transitively pins a cached lifecycle-runtime; the template AA classes are gone but the dep stays
+    //  to keep the offline build's dependency graph resolvable — it registers no car surface)
     implementation 'androidx.car.app:app:1.4.0'
 
     // Optional camera-monitor plugin: headless front-cam capture for periodically-updated STILL
