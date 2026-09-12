@@ -136,7 +136,7 @@ public class PlayerController {
     }
     /** Re-assert the mute/volume multiplier (call after any setMediaItems). Cheap insurance so a
         freshly-built queue can never boot to full volume while muted — the nap-safe invariant. */
-    private void keepMute() { if (p != null && !sleeping) p.setVolume(muted ? 0f : 1f); }
+    private void keepMute() { if (p != null && !sleeping) p.setVolume(effMult()); }
     private static List<MediaItem> shuffled(List<MediaItem> in) { List<MediaItem> out = new ArrayList<>(in); java.util.Collections.shuffle(out); return out; }
 
     /** Jump to item i of the current queue and play. */
@@ -426,7 +426,7 @@ public class PlayerController {
 
     // --- commands (marshaled to main) --------------------------------------
     public void play()      { on(() -> {
-        if (!sleeping) p.setVolume(muted ? 0f : 1f);   // restore the multiplier (a sleep fade may have zeroed it)
+        if (!sleeping) p.setVolume(effMult());   // restore the multiplier (a sleep fade may have zeroed it)
         if (p.getPlaybackState() == Player.STATE_ENDED) p.seekToDefaultPosition(0);   // loop-off ended: start over
         p.play();
     }); }
@@ -466,7 +466,12 @@ public class PlayerController {
     public void nudge(float d)     { setVolume(vol + d); }
     public void setMuted(boolean m) { muted = m; try { if (prefs != null) prefs.edit().putBoolean("muted", m).apply(); } catch (Exception ignored) {} applyMute(); }
     public boolean isMuted() { return muted; }
-    private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(muted ? 0f : 1f); }); }
+    // Play mode's "sound source" can force the SHOW audio on/off for its duration WITHOUT touching the
+    // persisted mute: null = follow the mute flag, TRUE = audible, FALSE = silent. Restored (null) on exit.
+    private volatile Boolean audioOverride = null;
+    public void overrideShowAudio(Boolean b) { audioOverride = b; applyMute(); }
+    private float effMult() { return audioOverride != null ? (audioOverride ? 1f : 0f) : (muted ? 0f : 1f); }
+    private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(effMult()); }); }
 
     // --- sleep timer (fade volume then pause) ------------------------------
     public void startSleep(final int min) {
@@ -489,7 +494,7 @@ public class PlayerController {
             main.post(sleepTick);
         });
     }
-    public void cancelSleep() { on(() -> { cancelSleepInternal(); if (p != null) p.setVolume(muted ? 0f : 1f); }); }
+    public void cancelSleep() { on(() -> { cancelSleepInternal(); if (p != null) p.setVolume(effMult()); }); }
     private void cancelSleepInternal() { sleeping = false; if (sleepTick != null) main.removeCallbacks(sleepTick); sleepTick = null; }
 
     /** Kept under ~450 bytes: it travels in one BLE MTU (title truncated to 100 chars). */

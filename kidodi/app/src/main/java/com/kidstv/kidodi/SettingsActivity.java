@@ -122,7 +122,10 @@ public class SettingsActivity extends Activity {
         // --- Play mode -------------------------------------------------------------------------
         section("Toddler play mode");
         actionRow("Start play mode", "start", () -> PlayModeActivity.begin(this));
-        note("Keyboard-mash style play screen with Piper voices. Exit with the same unlock gesture.");
+        labelCycleRow("Sound", "kidodi_playmode_sound", "muted",
+                new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"});
+        note("Runs over the show (the video stays the background). Sound: Muted = silent · Letter sounds = "
+                + "the letter voices, show silenced · Video sound = the show keeps playing behind. Exit with the unlock gesture.");
 
         // --- Device owner ----------------------------------------------------------------------
         section("Kiosk mode (device owner)");
@@ -212,6 +215,20 @@ public class SettingsActivity extends Activity {
             for (int i = 0; i < opts.length; i++) if (opts[i].equals(cur)) { next = opts[(i + 1) % opts.length]; break; }
             Cfg.put(this, key, next); v.setText(next);
         });
+    }
+    /** Like strCycleRow but shows a friendly label for each raw value. */
+    private void labelCycleRow(String label, final String key, final String def, final String[] vals, final String[] labels) {
+        final Button v = rowShell(label);
+        v.setText(labelFor(Cfg.getStr(this, key, def), vals, labels));
+        v.setOnClickListener(x -> {
+            String cur = Cfg.getStr(this, key, def), next = vals[0];
+            for (int i = 0; i < vals.length; i++) if (vals[i].equals(cur)) { next = vals[(i + 1) % vals.length]; break; }
+            Cfg.put(this, key, next); v.setText(labelFor(next, vals, labels));
+        });
+    }
+    private static String labelFor(String val, String[] vals, String[] labels) {
+        for (int i = 0; i < vals.length; i++) if (vals[i].equals(val)) return labels[i];
+        return val;
     }
     private void boolRow(final String label, final String key, final int def) {
         final Button v = rowShell(label);

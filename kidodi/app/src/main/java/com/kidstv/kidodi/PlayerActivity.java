@@ -168,13 +168,24 @@ public class PlayerActivity extends Activity {
         w.loadUrl("file:///android_asset/toddlerlock/index.html");
         root.addView(w, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         playWeb = w;
+        applyPlayModeSound();
+    }
+    /** Sound source for play mode (kidodi_playmode_sound, default "muted"): "wav" = the letter clips
+        (show silenced), "video" = the show's audio behind (no clips), "muted" = both silent. The show
+        override is temporary — it never changes the persisted mute; doStopPlayMode restores it. */
+    private void applyPlayModeSound() {
+        String snd = Cfg.getStr(this, "kidodi_playmode_sound", "muted");
+        if ("wav".equals(snd))        { WebAudioBridge.setGain(1f); PlayerController.get().overrideShowAudio(false); }
+        else if ("video".equals(snd)) { WebAudioBridge.setGain(0f); PlayerController.get().overrideShowAudio(true); }
+        else                          { WebAudioBridge.setGain(0f); PlayerController.get().overrideShowAudio(false); }
     }
     private void doStopPlayMode() {
         if (playWeb == null) return;
         try { root.removeView(playWeb); } catch (Exception ignored) {}
         try { playWeb.destroy(); } catch (Exception ignored) {}
         playWeb = null;
-        WebAudioBridge.setGain(0f);   // re-mute the playground audio
+        WebAudioBridge.setGain(0f);                       // silence the playground clips
+        PlayerController.get().overrideShowAudio(null);   // restore the persisted mute
     }
     /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
     public static void wakeScreen() {
