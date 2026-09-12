@@ -47,6 +47,8 @@ public class PlayerActivity extends Activity {
     private ExoPlayer player;
     private ControlServer server;
     private BleServer ble;
+    private FrameLayout root;                              // holds the video + overlays (incl. play mode)
+    private android.webkit.WebView playWeb;               // toddler play-mode overlay (transparent, over the show)
     private View flash;
     private View napOverlay;
     private boolean napped = false;
@@ -60,7 +62,7 @@ public class PlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         SurfaceView surface = new SurfaceView(this);
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
@@ -124,6 +126,55 @@ public class PlayerActivity extends Activity {
     public static void power() {
         final PlayerActivity a = sRef.get();
         if (a != null) a.main.post(a::doPower);
+    }
+
+    // --- toddler PLAY MODE: a transparent WebView overlay ON TOP of the running show (the video is the
+    //     background). Playback keeps going; the toddler-lock sparkles/letters render over it. Audio is
+    //     governed by WebAudioBridge (default gain 0 = silent). Exits via the playground's timed code. --
+    public static void startPlayMode() {
+        final PlayerActivity a = sRef.get();
+        if (a != null) a.main.post(a::doStartPlayMode);
+    }
+    public static void stopPlayMode() {
+        final PlayerActivity a = sRef.get();
+        if (a != null) a.main.post(a::doStopPlayMode);
+    }
+    @SuppressWarnings("SetJavaScriptEnabled")
+    private void doStartPlayMode() {
+        if (playWeb != null || root == null) return;
+        if (napped) { setNapScreen(false); PlayerController.get().play(); }   // can't play over a black nap screen
+        android.webkit.WebView w = new android.webkit.WebView(this);
+        android.webkit.WebSettings s = w.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setAllowFileAccess(true);
+        w.setBackgroundColor(Color.TRANSPARENT);   // let the video show through
+        w.addJavascriptInterface(new WebAudioBridge(this), "AndroidAudio");
+        w.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface public void exit() { main.post(PlayerActivity.this::doStopPlayMode); }
+        }, "AndroidExit");
+        w.setWebViewClient(new android.webkit.WebViewClient() {
+            @Override public void onPageFinished(android.webkit.WebView v, String url) {
+                // straight into the locked playground + make the playground chrome transparent so the show
+                // is the background (sparkles/letters stay; the adult unlock + settings panels stay opaque).
+                v.evaluateJavascript(
+                    "(function(){var st=document.createElement('style');" +
+                    "st.textContent='html,body{background:transparent!important} .lock-overlay{background:transparent!important}';" +
+                    "document.head.appendChild(st);" +
+                    "window.ToddlerLock&&window.ToddlerLock.lock&&window.ToddlerLock.lock();})();", null);
+            }
+        });
+        w.loadUrl("file:///android_asset/toddlerlock/index.html");
+        root.addView(w, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        playWeb = w;
+    }
+    private void doStopPlayMode() {
+        if (playWeb == null) return;
+        try { root.removeView(playWeb); } catch (Exception ignored) {}
+        try { playWeb.destroy(); } catch (Exception ignored) {}
+        playWeb = null;
+        WebAudioBridge.setGain(0f);   // re-mute the playground audio
     }
     /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
     public static void wakeScreen() {
@@ -305,6 +356,7 @@ public class PlayerActivity extends Activity {
         String[][] items = {
                 {"Remote  ·  playlist, up next, controls", "remote"},
                 {"Settings  ·  unlock gesture, PIN, Wi-Fi, camera", "settings"},
+                {"Toddler play mode", "playmode"},
                 {"Exit to launcher", "exit"},
                 {"Back to the show", "back"}};
         for (final String[] it : items) {
@@ -318,6 +370,7 @@ public class PlayerActivity extends Activity {
                 switch (it[1]) {
                     case "remote":   startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true)); break;
                     case "settings": startActivity(new Intent(this, SettingsActivity.class)); break;
+                    case "playmode": startPlayMode(); return;
                     case "exit":     unlock(); return;
                     default: break;
                 }

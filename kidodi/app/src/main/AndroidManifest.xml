@@ -67,13 +67,7 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
 
-        <!-- Optional "play mode": full-screen toddler-lock playground (WebView). -->
-        <activity
-            android:name=".PlayModeActivity"
-            android:exported="false"
-            android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
+        <!-- Play mode is now a transparent WebView overlay inside PlayerActivity (no separate activity). -->
 
         <!-- Remote role: control UI. -->
         <activity

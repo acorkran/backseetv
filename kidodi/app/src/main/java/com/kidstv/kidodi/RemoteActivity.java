@@ -232,6 +232,13 @@ public class RemoteActivity extends Activity {
         stillBtn.setOnClickListener(v -> openStill());
         root.addView(stillBtn);
 
+        TextView playModeBtn = new TextView(this);
+        playModeBtn.setText("🧸  Toddler play mode");
+        playModeBtn.setTextColor(ACCENT); playModeBtn.setTextSize(13); playModeBtn.setGravity(Gravity.CENTER);
+        playModeBtn.setPadding(0, dp(12), 0, 0); playModeBtn.setClickable(true);
+        playModeBtn.setOnClickListener(v -> { send("playmode:on"); toast("Play mode on the TV"); });
+        root.addView(playModeBtn);
+
         TextView scanBtn = new TextView(this);
         scanBtn.setText("⧉  Scan a QR to connect / join Wi-Fi");
         scanBtn.setTextColor(ACCENT); scanBtn.setTextSize(13); scanBtn.setGravity(Gravity.CENTER);

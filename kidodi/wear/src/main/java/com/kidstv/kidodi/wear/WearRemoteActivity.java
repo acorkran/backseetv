@@ -463,6 +463,20 @@ public class WearRemoteActivity extends Activity {
             }});
             col.addView(row);
         }
+
+        TextView ph = new TextView(this);
+        ph.setText("Play"); ph.setTextColor(Color.WHITE); ph.setTextSize(17);
+        ph.setTypeface(Typeface.DEFAULT_BOLD); ph.setGravity(Gravity.CENTER); ph.setPadding(0, pad(16), 0, pad(8));
+        col.addView(ph);
+        Button play = new Button(this);
+        play.setAllCaps(false); play.setText("🧸  Toddler play mode");
+        play.setTextColor(Color.WHITE); play.setTextSize(15);
+        GradientDrawable pg = new GradientDrawable(); pg.setColor(0xFF3A2E4A); pg.setCornerRadius(pad(14));
+        play.setBackground(pg);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
+        plp.setMargins(0, pad(4), 0, pad(4)); play.setLayoutParams(plp);
+        play.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { send("playmode:on"); show(playerView); }});
+        col.addView(play);
         return sv;
     }
 
