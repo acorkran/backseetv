@@ -66,6 +66,10 @@ dependencies {
 
     // Data Layer (phone <-> watch over the Bluetooth companion link): pushes the watch app's update
     implementation 'com.google.android.gms:play-services-wearable:18.2.0'
+
+    // Android Auto MEDIA app (MediaBrowserServiceCompat + MediaSessionCompat) — the surface that
+    // actually shows in the car while driving. Used by MediaProbeService (refresh-rate measurement).
+    implementation 'androidx.media:media:1.7.0'
 }
 
 // ---- Embed the WATCH APK so the phone can push it to the watch over the Data Layer ---------------
