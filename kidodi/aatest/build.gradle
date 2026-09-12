@@ -1,0 +1,47 @@
+plugins { id 'com.android.application' }
+
+// ============================================================================
+//  Android Auto surface BAKE-OFF. One module, one flavor per candidate AA
+//  surface/category -> one installable APK each, with a distinct app label so
+//  we can see in the car which actually appear (parked vs moving):
+//    AA1-Media    = media app (MediaBrowserService)         [control, should show]
+//    AA2-Nav      = template, category NAVIGATION
+//    AA3-Parking  = template, category PARKING
+//    AA4-Charging = template, category CHARGING
+//    AA5-POI      = template, category POI
+//    AA6-IOT      = template, category IOT                  [what v2 used]
+//    AA7-Weather  = template, category WEATHER
+//  Template flavors share one CarAppService (a one-screen "hello"); the media
+//  flavor swaps in a MediaBrowserService via its own manifest + desc.
+// ============================================================================
+
+android {
+    namespace 'com.kidstv.aatest'
+    compileSdk 34
+    defaultConfig { minSdk 26; targetSdk 34; versionCode 1; versionName '1.0' }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError false }
+
+    flavorDimensions 'surface'
+    productFlavors {
+        media    { dimension 'surface'; applicationId 'com.kidstv.aatest.media';    manifestPlaceholders = [appLabel: 'AA1-Media',    carCategory: 'androidx.car.app.category.POI'] }
+        nav      { dimension 'surface'; applicationId 'com.kidstv.aatest.nav';      manifestPlaceholders = [appLabel: 'AA2-Nav',      carCategory: 'androidx.car.app.category.NAVIGATION'] }
+        parking  { dimension 'surface'; applicationId 'com.kidstv.aatest.parking';  manifestPlaceholders = [appLabel: 'AA3-Parking',  carCategory: 'androidx.car.app.category.PARKING'] }
+        charging { dimension 'surface'; applicationId 'com.kidstv.aatest.charging'; manifestPlaceholders = [appLabel: 'AA4-Charging', carCategory: 'androidx.car.app.category.CHARGING'] }
+        poi      { dimension 'surface'; applicationId 'com.kidstv.aatest.poi';      manifestPlaceholders = [appLabel: 'AA5-POI',      carCategory: 'androidx.car.app.category.POI'] }
+        iot      { dimension 'surface'; applicationId 'com.kidstv.aatest.iot';      manifestPlaceholders = [appLabel: 'AA6-IOT',      carCategory: 'androidx.car.app.category.IOT'] }
+        weather  { dimension 'surface'; applicationId 'com.kidstv.aatest.weather';  manifestPlaceholders = [appLabel: 'AA7-Weather',  carCategory: 'androidx.car.app.category.WEATHER'] }
+    }
+}
+
+configurations.all {
+    // car.app pulls guava 31.1 whose jar isn't fully cached for offline transforms; force the version
+    // the wear module already uses (fully cached, drags in cached error_prone/j2objc/checker-qual).
+    resolutionStrategy { force 'com.google.guava:guava:33.2.1-android' }
+}
+
+dependencies {
+    implementation 'androidx.car.app:app:1.4.0'   // template flavors (pulls androidx.annotation)
+    implementation 'androidx.media:media:1.7.0'   // media flavor
+    implementation 'com.google.guava:guava:33.2.1-android'
+}

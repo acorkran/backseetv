@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:label="${appLabel}"
+        android:icon="@android:drawable/ic_media_play"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+
+        <!-- Android Auto descriptor (media flavor overrides res/xml/automotive_app_desc.xml) -->
+        <meta-data android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc"/>
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="1"/>
+
+        <!-- a plain launcher so the app installs + is openable on the phone -->
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- TEMPLATE surface: category set per flavor. The media flavor removes this + adds its own. -->
+        <service android:name=".HelloCarAppService" android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="${carCategory}"/>
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
