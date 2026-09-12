@@ -58,20 +58,38 @@ public class SettingsActivity extends Activity {
         status = new TextView(this); status.setTextColor(SUB); status.setTextSize(13); status.setPadding(0, 0, 0, dp(16));
         col.addView(status);
 
-        // --- Unlock gesture --------------------------------------------------------------------
-        section("Unlock gesture");
-        cycleRow("Fingers", "kidodi_esc_fingers", 4, new int[]{2, 3, 4, 5});
-        strCycleRow("Type", "kidodi_esc_mode", "taps", new String[]{"taps", "swipe"});
-        cycleRow("Taps needed", "kidodi_esc_taps", 4, new int[]{2, 3, 4, 5, 6});
-        cycleRow("Within (seconds)", "kidodi_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
-        strCycleRow("Swipe direction", "kidodi_esc_dir", "up", new String[]{"up", "down", "left", "right"});
-        note("Default: 4 four-finger taps within 3 seconds, anywhere on screen.");
+        DevicePolicyManager dpmTop = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+        final boolean owner = dpmTop != null && dpmTop.isDeviceOwnerApp(getPackageName());
 
-        // --- PIN + kiosk -----------------------------------------------------------------------
+        // --- Unlock gesture (DEVICE-OWNER gated) -----------------------------------------------
+        section("Unlock gesture");
+        if (owner) {
+            cycleRow("Fingers", "kidodi_esc_fingers", 4, new int[]{2, 3, 4, 5});
+            strCycleRow("Type", "kidodi_esc_mode", "taps", new String[]{"taps", "swipe"});
+            cycleRow("Taps needed", "kidodi_esc_taps", 4, new int[]{2, 3, 4, 5, 6});
+            cycleRow("Within (seconds)", "kidodi_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
+            strCycleRow("Swipe direction", "kidodi_esc_dir", "up", new String[]{"up", "down", "left", "right"});
+            note("Default: 4 four-finger taps within 3 seconds, anywhere on screen.");
+        } else {
+            dimRow("Fingers", String.valueOf(Cfg.getInt(this, "kidodi_esc_fingers", 4)));
+            dimRow("Type", Cfg.getStr(this, "kidodi_esc_mode", "taps"));
+            dimRow("Taps needed", String.valueOf(Cfg.getInt(this, "kidodi_esc_taps", 4)));
+            dimRow("Within (seconds)", String.valueOf(Cfg.getInt(this, "kidodi_esc_window_ms", 3000) / 1000));
+            dimRow("Swipe direction", Cfg.getStr(this, "kidodi_esc_dir", "up"));
+            gatedNotice();
+        }
+
+        // --- PIN + kiosk (DEVICE-OWNER gated) --------------------------------------------------
         section("Lock");
-        actionRow("Admin PIN", "change", this::changePin);
-        boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
-        note("Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents. Turning it off takes effect on the next launch.");
+        if (owner) {
+            actionRow("Admin PIN", "change", this::changePin);
+            boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
+            note("Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents. Turning it off takes effect on the next launch.");
+        } else {
+            dimRow("Admin PIN", "•••• ");
+            dimRow("Kiosk lock (device owner)", Cfg.getInt(this, "kidodi_kiosk", 0) == 1 ? "on" : "off");
+            gatedNotice();
+        }
 
         // --- Playback --------------------------------------------------------------------------
         section("Playback");
@@ -129,8 +147,6 @@ public class SettingsActivity extends Activity {
 
         // --- Device owner ----------------------------------------------------------------------
         section("Kiosk mode (device owner)");
-        DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
-        final boolean owner = dpm != null && dpm.isDeviceOwnerApp(getPackageName());
         TextView os = new TextView(this);
         os.setText(owner ? "✓  This tablet is set up as a Kidodi kiosk (the app is the device owner)."
                 : "○  Not set up as a kiosk — Kidodi runs as a normal player. The optional setup below gives the locked-down TV.");
@@ -147,6 +163,7 @@ public class SettingsActivity extends Activity {
             catch (Exception e) { toast("Couldn't copy"); }
         });
         if (owner) actionRow("Remove device owner", "remove…", this::confirmRemoveOwner);
+        actionRow("About Kidodi & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
 
         // --- Exit ------------------------------------------------------------------------------
         Button back = new Button(this); back.setText("Back to the show"); back.setAllCaps(false); back.setTextSize(18);
@@ -229,6 +246,25 @@ public class SettingsActivity extends Activity {
     private static String labelFor(String val, String[] vals, String[] labels) {
         for (int i = 0; i < vals.length; i++) if (vals[i].equals(val)) return labels[i];
         return val;
+    }
+    /** A greyed, non-interactive row (a device-owner feature at base level): shows the value, no click. */
+    private void dimRow(String label, String value) {
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL); row.setBackgroundColor(0xFF15181C); row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
+        TextView l = new TextView(this); l.setText("🔒  " + label); l.setTextColor(0xFF5A6470); l.setTextSize(16);
+        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView vv = new TextView(this); vv.setText(value); vv.setTextColor(0xFF4A525C); vv.setTextSize(15); row.addView(vv);
+        col.addView(row);
+    }
+    /** Inline notice under a gated section: tapping opens the About / feature-levels page. */
+    private void gatedNotice() {
+        TextView t = new TextView(this);
+        t.setText("🔒  That feature requires device-owner setup.  Tap here to find out more.");
+        t.setTextColor(0xFFE0A63D); t.setTextSize(13); t.setPadding(dp(6), dp(6), dp(6), dp(10)); t.setClickable(true);
+        t.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
+        col.addView(t);
     }
     private void boolRow(final String label, final String key, final int def) {
         final Button v = rowShell(label);

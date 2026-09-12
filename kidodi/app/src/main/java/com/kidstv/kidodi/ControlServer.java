@@ -136,6 +136,16 @@ public class ControlServer {
                     } else PlayModeActivity.end();
                     body = ok(); break;
                 }
+                case "/config": {   // read (no set) or write one setting — every tablet option, from a remote
+                    String set = param(q, "set");
+                    if (set != null) {
+                        String val = param(q, "value"); val = (val == null) ? "" : urlDecode(val);
+                        Cfg.applyConfig(ctx, set, val);
+                        if ("kidodi_loop".equals(set)) ctrl.setLoop("1".equals(val));   // live-apply loop (needs the player)
+                        body = ok();
+                    } else body = Cfg.configJson(ctx, true);
+                    break;
+                }
                 case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }

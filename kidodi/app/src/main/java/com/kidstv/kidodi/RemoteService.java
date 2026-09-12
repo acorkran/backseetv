@@ -97,6 +97,10 @@ public class RemoteService extends Service {
     public void requestShows(int from) { requestTyped(from > 0 ? "shows:" + from : "shows", "library"); }
     public void requestEpisodes(String show, int from) { requestTyped("eps:" + show + ":" + from, "episodes"); }
     public void requestConn() { requestTyped("conn", "conn"); }
+    public void requestConfig() { requestTyped("cfg", "config"); }
+    public String configJson() { return typed.get("config"); }
+    /** Write one tablet setting from a remote (mirrors the on-tablet Settings screen). */
+    public void setConfig(String key, String val) { send("cfg:" + key + "=" + val); }
     public String libraryJson() { return typed.get("library"); }
     public String episodesJson() { return typed.get("episodes"); }
     public String connJson() { return typed.get("conn"); }
