@@ -202,6 +202,31 @@
     overlay.appendChild(s); setTimeout(function () { s.remove(); }, 720);
   }
 
+  // ---- one letter clip at a time + colorful gap-fill shapes ----
+  // Mashing used to fire 2-5 letter clips at once (overloaded playback). Now a tap/key speaks a
+  // letter ONLY when no clip is playing; while one plays it drops a random colorful SHAPE instead
+  // (SoundPool gives no completion callback, so we gate on an estimated ~1.3s clip length).
+  var audioBusy = false;
+  function markAudio() { audioBusy = true; setTimeout(function () { audioBusy = false; }, 1300); }
+  var SHAPES = ["circle", "square", "triangle", "star"];
+  function spawnShape(x, y) {
+    if (typeof x !== "number") x = window.innerWidth * (0.15 + Math.random() * 0.7);
+    if (typeof y !== "number") y = window.innerHeight * (0.2 + Math.random() * 0.55);
+    var el = document.createElement("div");
+    el.className = "tl-shape tl-" + rand(SHAPES);
+    var size = 46 + Math.random() * 74;   // ~46-120px
+    el.style.left = x + "px"; el.style.top = y + "px";
+    el.style.width = size + "px"; el.style.height = size + "px";
+    el.style.background = rand(COLORS);
+    el.style.setProperty("--rot", (Math.random() * 50 - 25) + "deg");
+    overlay.appendChild(el); setTimeout(function () { el.remove(); }, 900);
+  }
+  // Fire a spoken letter if free, otherwise a shape. x/y optional (keyboard -> random placement).
+  function fireOrShape(key, x, y) {
+    if (audioBusy) { spawnShape(x, y); return; }
+    showLetter(key); markAudio();
+  }
+
   // ---- fullscreen + keyboard lock (browser-side defence) ----
   function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
   function goFullscreen() {
@@ -223,7 +248,7 @@
   function onKeydown(e) {
     if (inUnlock(e.target)) return;
     if (locked && !isFs()) goFullscreen();
-    showLetter(e.key);
+    fireOrShape(e.key, null, null);   // keyboard still works; gated by the same one-clip-at-a-time rule
     e.preventDefault(); e.stopImmediatePropagation();
   }
   function onPointer(e) { if (locked && !inUnlock(e.target)) sparkle(e.clientX, e.clientY); }
@@ -236,7 +261,7 @@
     if (t && t.closest && t.closest("#unlock-panel, #adult-unlock-btn, #sp-consent")) return;
     if (!isFs()) goFullscreen();
     var L = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".charAt(Math.floor(Math.random() * 26));
-    showLetter(L);
+    fireOrShape(L, e.clientX, e.clientY);   // letter if free, else a colorful shape at the touch point
     if (typeof e.clientX === "number") sparkle(e.clientX, e.clientY);
   }
   var OTHERS = ["keyup", "keypress", "contextmenu", "wheel"];
