@@ -41,7 +41,8 @@ public class BleClient {
     private ScanCallback scanCb;
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic cmdCh, stateCh, imgCh;
-    private byte[] imgBuf; private int imgLen, imgPos;   // chunked-still reassembly
+    private byte[] imgBuf; private int imgLen, imgGot;   // offset-addressed chunked-still reassembly
+    private final java.util.HashSet<Integer> imgSeen = new java.util.HashSet<>();
     private volatile boolean connected = false;
     private volatile boolean stopped = false;
     private volatile boolean scanning = false;
@@ -146,22 +147,32 @@ public class BleClient {
     }
 
     // Reassemble a chunked still: [0x01][int32 BE len][data…] starts a frame; [0x02][data…] continues.
+    // Framed: START=[0x01][total len:4 BE][data@0], DATA=[0x02][byte offset:4 BE][data]. Each chunk carries
+    // its own offset, so out-of-order / duplicate BLE notifications reassemble correctly; a frame is only
+    // delivered once EVERY byte has arrived AND it's a valid JPEG (SOI/EOI) — truncated/corrupt frames drop.
     private void onImgChunk(byte[] v) {
+        if (v == null || v.length < 5) return;
         int type = v[0] & 0xFF;
+        int hdr = ((v[1] & 0xFF) << 24) | ((v[2] & 0xFF) << 16) | ((v[3] & 0xFF) << 8) | (v[4] & 0xFF);
         if (type == 0x01) {
-            if (v.length < 5) { imgBuf = null; return; }
-            imgLen = ((v[1] & 0xFF) << 24) | ((v[2] & 0xFF) << 16) | ((v[3] & 0xFF) << 8) | (v[4] & 0xFF);
-            if (imgLen <= 0 || imgLen > 2_000_000) { imgBuf = null; return; }
-            imgBuf = new byte[imgLen]; imgPos = 0;
-            appendImg(v, 5);
+            if (hdr <= 0 || hdr > 2_000_000) { imgBuf = null; return; }
+            imgBuf = new byte[hdr]; imgLen = hdr; imgGot = 0; imgSeen.clear();
+            placeImg(0, v, v.length - 5);
         } else if (type == 0x02 && imgBuf != null) {
-            appendImg(v, 1);
+            placeImg(hdr, v, v.length - 5);
+        } else return;
+        if (imgBuf != null && imgGot >= imgLen) {
+            byte[] done = imgBuf; imgBuf = null;
+            if (validJpeg(done)) { final byte[] d = done; main.post(() -> l.onStill(d)); }
         }
     }
-    private void appendImg(byte[] v, int off) {
-        int n = Math.min(v.length - off, imgLen - imgPos);
-        if (n > 0) { System.arraycopy(v, off, imgBuf, imgPos, n); imgPos += n; }
-        if (imgBuf != null && imgPos >= imgLen) { final byte[] done = imgBuf; imgBuf = null; main.post(() -> l.onStill(done)); }
+    private void placeImg(int off, byte[] src, int n) {
+        if (imgBuf == null || off < 0 || n <= 0 || off + n > imgBuf.length) return;
+        if (imgSeen.add(off)) { System.arraycopy(src, 5, imgBuf, off, n); imgGot += n; }
+    }
+    private static boolean validJpeg(byte[] b) {
+        int L = b.length;
+        return L > 3 && (b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8 && (b[L - 2] & 0xFF) == 0xFF && (b[L - 1] & 0xFF) == 0xD9;
     }
 
     // Watchdog: the player pushes state on change + a 10s heartbeat. No state for 25s => dead link.

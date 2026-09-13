@@ -245,29 +245,28 @@ public class BleServer {
             byte[] jpeg = SnapshotService.latestLowRes();
             if (jpeg == null) return;
             final int CHUNK = 500;   // centrals request MTU 512 -> ~509 usable; keep a margin
-            int off = 0; boolean first = true;
-            while (off < jpeg.length) {
-                byte[] frame;
-                if (first) {
-                    int n = Math.min(CHUNK - 5, jpeg.length - off);
-                    frame = new byte[5 + n];
-                    frame[0] = 0x01;
-                    frame[1] = (byte) ((jpeg.length >> 24) & 0xFF);
-                    frame[2] = (byte) ((jpeg.length >> 16) & 0xFF);
-                    frame[3] = (byte) ((jpeg.length >> 8) & 0xFF);
-                    frame[4] = (byte) (jpeg.length & 0xFF);
-                    System.arraycopy(jpeg, off, frame, 5, n);
-                    off += n; first = false;
-                } else {
-                    int n = Math.min(CHUNK - 1, jpeg.length - off);
-                    frame = new byte[1 + n];
-                    frame[0] = 0x02;
-                    System.arraycopy(jpeg, off, frame, 1, n);
-                    off += n;
-                }
+            // EVERY chunk carries its byte offset (5-byte header) so the receiver reassembles by position —
+            // robust to out-of-order/duplicate BLE notifications (that was corrupting the still). START also
+            // carries the total length. Retry a notify that the stack rejects (buffer full) instead of dropping.
+            for (int off = 0; off < jpeg.length; ) {
+                int n = Math.min(CHUNK - 5, jpeg.length - off);
+                byte[] frame = new byte[5 + n];
+                int h = off == 0 ? jpeg.length : off;         // START header = total len; DATA header = offset
+                frame[0] = (byte) (off == 0 ? 0x01 : 0x02);
+                frame[1] = (byte) ((h >> 24) & 0xFF); frame[2] = (byte) ((h >> 16) & 0xFF);
+                frame[3] = (byte) ((h >> 8) & 0xFF);  frame[4] = (byte) (h & 0xFF);
+                System.arraycopy(jpeg, off, frame, 5, n);
                 imgChar.setValue(frame);
-                for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, imgChar, false); } catch (Exception ignored) {}
-                try { Thread.sleep(15); } catch (InterruptedException e) { return; }   // pace so the stack doesn't drop chunks
+                for (BluetoothDevice d : new HashSet<>(subs)) {
+                    for (int retry = 0; retry < 12; retry++) {
+                        boolean ok = false;
+                        try { ok = gatt.notifyCharacteristicChanged(d, imgChar, false); } catch (Exception ignored) {}
+                        if (ok) break;
+                        try { Thread.sleep(8); } catch (InterruptedException e) { return; }   // stack buffer full -> back off + retry
+                    }
+                }
+                off += n;
+                try { Thread.sleep(12); } catch (InterruptedException e) { return; }
             }
         } catch (Exception ignored) {}
     }
