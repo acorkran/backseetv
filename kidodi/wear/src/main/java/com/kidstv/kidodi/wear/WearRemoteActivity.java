@@ -1,11 +1,15 @@
 package com.kidstv.kidodi.wear;
 
 // ============================================================================
-//  Kidodi watch remote, Samsung-Music style, fitted to the ROUND face: content
-//  is centered and compact so nothing clips on the curved edges. Show/episode up
-//  top, Prev · big Play/Pause · Next, bottom row Light · Power · Setup. Rotating
-//  bezel = volume, with a transient on-screen volume popup. Setup = sleep-timer
-//  picker. Drives the tablet-player directly over BLE.
+//  Kidodi watch remote, fitted to the ROUND face: content is centered and compact
+//  so nothing clips on the curved edges. HOME is glanceable — TV-battery chip +
+//  show/episode up top, Prev · big Play/Pause · Next, then a 2×3 action grid where
+//  EVERY function has a visible, labelled button: 💡 Light · 🎞 Playlists · 📷
+//  Camera / ⏱ Sleep · 🧸 Toddler · ⏻ Power. Swipe-up (Playlists) / swipe-left
+//  (Camera) stay as bonus shortcuts. The rotating bezel is context-aware: volume on
+//  the player, zoom on the camera, and the sleep-timer value on the Sleep page — a
+//  big number you spin through Off · 5 · 10 · 15 · 30 · 45 · 60 min, then tap Set.
+//  Drives the tablet-player directly over BLE.
 // ============================================================================
 
 import android.app.Activity;
@@ -40,8 +44,13 @@ public class WearRemoteActivity extends Activity {
     private GestureDetector gd;
     private TextView status, title, subtitle;
     private Button playPause;
-    private Button playModeBtn;        // Setup page: toggles the toddler overlay (label follows state)
+    // HOME action grid: the toddler cell is state-aware (label + tint flip with playmode)
+    private LinearLayout toddlerCell; private TextView toddlerLabel;
     private boolean playModeOn;        // last-known toddler-mode state from the tablet
+    // Sleep-timer rotary picker (spun with the bezel; tap the value to step as a no-bezel fallback)
+    private static final int[] SLEEP_STEPS = {0, 5, 10, 15, 30, 45, 60};
+    private int sleepIdx = 3;           // default selection = 15 min
+    private TextView sleepValue, sleepUnit;
 
     // camera view: reduced-res STILLS over BLE, upgraded to Wi-Fi /live MJPEG when the TV IP is reachable
     private View cameraView;
@@ -330,65 +339,97 @@ public class WearRemoteActivity extends Activity {
         return sb.toString();
     }
 
-    // --- player screen (centered + compact to fit the round face) -----------
+    // --- player screen: glanceable top + a 2×3 labelled action grid ----------
     private View buildPlayer() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);   // cluster in the middle where the circle is widest
         col.setFocusableInTouchMode(true);
+        col.setPadding(pad(6), pad(4), pad(6), pad(4));
 
+        // Top chip: the TV battery ("🔋87%"/"⚡87%") when the link is healthy, else the connection status.
         status = new TextView(this);
         status.setText("scanning…"); status.setTextColor(0xFFFFC107);
         status.setGravity(Gravity.CENTER); status.setTextSize(11);
+        GradientDrawable sg = new GradientDrawable(); sg.setCornerRadius(pad(12)); sg.setColor(0xFF1C1E22);
+        status.setBackground(sg); status.setPadding(pad(10), pad(2), pad(10), pad(2));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        slp.bottomMargin = pad(3); status.setLayoutParams(slp);
         col.addView(status);
 
         title = new TextView(this);
-        title.setTextColor(Color.WHITE); title.setTextSize(16); title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.WHITE); title.setTextSize(15); title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER); title.setMaxLines(1); title.setEllipsize(TextUtils.TruncateAt.END);
         col.addView(title);
 
         subtitle = new TextView(this);
-        subtitle.setTextColor(0xFF9AA0A6); subtitle.setTextSize(11); subtitle.setGravity(Gravity.CENTER);
+        subtitle.setTextColor(0xFF9AA0A6); subtitle.setTextSize(10); subtitle.setGravity(Gravity.CENTER);
         subtitle.setMaxLines(1); subtitle.setEllipsize(TextUtils.TruncateAt.END);
-        subtitle.setPadding(0, 0, 0, pad(8));
+        subtitle.setPadding(0, 0, 0, pad(5));
         col.addView(subtitle);
 
         LinearLayout transport = new LinearLayout(this);
         transport.setOrientation(LinearLayout.HORIZONTAL);
         transport.setGravity(Gravity.CENTER);
-        transport.addView(circle("◀◀", "prev", pad(44), 0xFF2C2C2E, 14));
-        playPause = circle("▶", "playpause", pad(62), 0xFF3A3A3C, 24);
+        transport.addView(circle("◀◀", "prev", pad(40), 0xFF2C2C2E, 13));
+        playPause = circle("▶", "playpause", pad(56), 0xFF3A3A3C, 22);
         transport.addView(playPause);
-        transport.addView(circle("▶▶", "next", pad(44), 0xFF2C2C2E, 14));
+        transport.addView(circle("▶▶", "next", pad(40), 0xFF2C2C2E, 13));
         col.addView(transport);
 
-        LinearLayout bottom = new LinearLayout(this);
-        bottom.setOrientation(LinearLayout.HORIZONTAL);
-        bottom.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams brow = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        brow.topMargin = pad(8);
-        bottom.setLayoutParams(brow);
-        bottom.addView(chip("Light", "flash", 0xFF8D6E00));
-        bottom.addView(chip("Power", "power", 0xFF5A2A2A));
-        bottom.addView(chip("Setup", "settings", 0xFF33363B));
-        col.addView(bottom);
+        // Row 1: Light · Playlists · Camera. Every function has a visible button — the swipe
+        // shortcuts (up = Playlists, left = Camera) are now bonuses, not the only way in.
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL); row1.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams r1 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        r1.topMargin = pad(6); row1.setLayoutParams(r1);
+        row1.addView(gridCell("💡", "Light", 0xFF3A3220, new Runnable() { public void run() { send("flash"); } }));
+        row1.addView(gridCell("🎞", "Playlists", 0xFF20303A, new Runnable() { public void run() { openPlaylists(); } }));
+        row1.addView(gridCell("📷", "Camera", 0xFF203A2C, new Runnable() { public void run() { openCamera(); } }));
+        col.addView(row1);
 
-        TextView hint = new TextView(this);   // swipe up (or tap) for the playlist library
-        hint.setText("▲ Playlists"); hint.setTextColor(0xFF6B7075); hint.setTextSize(11);
-        hint.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hlp.topMargin = pad(6); hint.setLayoutParams(hlp);
-        hint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openPlaylists(); } });
-        col.addView(hint);
-
-        TextView camHint = new TextView(this);   // swipe LEFT (or tap) for the camera check-in
-        camHint.setText("◀ Camera"); camHint.setTextColor(0xFF6B7075); camHint.setTextSize(11);
-        camHint.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams chlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        chlp.topMargin = pad(2); camHint.setLayoutParams(chlp);
-        camHint.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openCamera(); } });
-        col.addView(camHint);
+        // Row 2: Sleep · Toddler · Power. Toddler cell is captured so render() can flip its state.
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL); row2.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams r2 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        r2.topMargin = pad(4); row2.setLayoutParams(r2);
+        row2.addView(gridCell("⏱", "Sleep", 0xFF2A2A38, new Runnable() { public void run() { openSleep(); } }));
+        toddlerCell = gridCell("🧸", "Toddler", 0xFF2A2233, new Runnable() { public void run() { send(playModeOn ? "playmode:off" : "playmode:on"); } });
+        toddlerLabel = (TextView) toddlerCell.getChildAt(1);
+        row2.addView(toddlerCell);
+        row2.addView(gridCell("⏻", "Power", 0xFF3A2222, new Runnable() { public void run() { send("power"); } }));
+        col.addView(row2);
+        updateToddlerCell();
         return col;
+    }
+
+    // A 2×3 grid cell: big emoji over a tiny label, rounded tappable background. Sized to the
+    // transport's footprint so three fit across the round face without touching the curve.
+    private LinearLayout gridCell(String emoji, String label, int bg, final Runnable onTap) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL); cell.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(pad(14)); g.setColor(bg);
+        cell.setBackground(g);
+        TextView e = new TextView(this);
+        e.setText(emoji); e.setTextSize(18); e.setGravity(Gravity.CENTER);
+        cell.addView(e);
+        TextView l = new TextView(this);
+        l.setText(label); l.setTextColor(0xFFCED0D3); l.setTextSize(9);
+        l.setGravity(Gravity.CENTER); l.setMaxLines(1);
+        cell.addView(l);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(pad(48), pad(48));
+        lp.setMargins(pad(3), 0, pad(3), 0); cell.setLayoutParams(lp);
+        cell.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { onTap.run(); } });
+        return cell;
+    }
+
+    // Toddler cell reflects the tablet's playmode: filled purple + "On" when active, dim + "Toddler" when off.
+    private void updateToddlerCell() {
+        if (toddlerCell == null) return;
+        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(pad(14));
+        g.setColor(playModeOn ? 0xFF6A4A8A : 0xFF2A2233);
+        toddlerCell.setBackground(g);
+        if (toddlerLabel != null) toddlerLabel.setText(playModeOn ? "On" : "Toddler");
     }
 
     // Note: prev uses "◀" and next uses "▶" (next is same glyph, distinguished by side/position).
@@ -438,55 +479,71 @@ public class WearRemoteActivity extends Activity {
         main.postDelayed(hideVol, 1400);
     }
 
-    // --- settings: sleep-timer picker --------------------------------------
+    // --- Sleep page: a bezel-spun rotary picker (Off · 5 · 10 · 15 · 30 · 45 · 60 min) -------
     private View buildSettings() {
-        ScrollView sv = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(pad(20), pad(44), pad(20), pad(44));
-        sv.addView(col);
+        col.setGravity(Gravity.CENTER);   // centred cluster, safe inside the round face
+        col.setPadding(pad(16), pad(16), pad(16), pad(16));
 
         TextView h = new TextView(this);
-        h.setText("Sleep timer"); h.setTextColor(Color.WHITE); h.setTextSize(17);
-        h.setTypeface(Typeface.DEFAULT_BOLD); h.setGravity(Gravity.CENTER); h.setPadding(0, 0, 0, pad(8));
+        h.setText("⏱  Sleep timer"); h.setTextColor(Color.WHITE); h.setTextSize(14);
+        h.setTypeface(Typeface.DEFAULT_BOLD); h.setGravity(Gravity.CENTER); h.setPadding(0, 0, 0, pad(2));
         col.addView(h);
 
-        int[] mins = {0, 5, 10, 15, 20, 30, 45};
-        for (final int m : mins) {
-            Button row = new Button(this);
-            row.setAllCaps(false); row.setText(m == 0 ? "Off" : m + " min");
-            row.setTextColor(Color.WHITE); row.setTextSize(15);
-            GradientDrawable g = new GradientDrawable(); g.setColor(0xFF202225); g.setCornerRadius(pad(14));
-            row.setBackground(g);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
-            lp.setMargins(0, pad(4), 0, pad(4)); row.setLayoutParams(lp);
-            row.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
-                send(m == 0 ? "wake" : "sleep:" + m); show(playerView);
-            }});
-            col.addView(row);
-        }
-
-        TextView ph = new TextView(this);
-        ph.setText("Play"); ph.setTextColor(Color.WHITE); ph.setTextSize(17);
-        ph.setTypeface(Typeface.DEFAULT_BOLD); ph.setGravity(Gravity.CENTER); ph.setPadding(0, pad(16), 0, pad(8));
-        col.addView(ph);
-        Button play = new Button(this);
-        play.setAllCaps(false); play.setText(playModeOn ? "🧸  Stop toddler mode" : "🧸  Toddler play mode");
-        play.setTextColor(Color.WHITE); play.setTextSize(15);
-        GradientDrawable pg = new GradientDrawable(); pg.setColor(0xFF3A2E4A); pg.setCornerRadius(pad(14));
-        play.setBackground(pg);
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(48));
-        plp.setMargins(0, pad(4), 0, pad(4)); play.setLayoutParams(plp);
-        play.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
-            send(playModeOn ? "playmode:off" : "playmode:on"); show(playerView);
+        // Big value the bezel steps through; tapping it also steps (fallback with no bezel).
+        sleepValue = new TextView(this);
+        sleepValue.setTextColor(0xFF8FD694); sleepValue.setTextSize(42);
+        sleepValue.setTypeface(Typeface.DEFAULT_BOLD); sleepValue.setGravity(Gravity.CENTER);
+        sleepValue.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            sleepIdx = (sleepIdx + 1) % SLEEP_STEPS.length; renderSleep();
         }});
-        playModeBtn = play;
-        col.addView(play);
-        return sv;
+        col.addView(sleepValue);
+
+        sleepUnit = new TextView(this);
+        sleepUnit.setTextColor(0xFF9AA0A6); sleepUnit.setTextSize(11); sleepUnit.setGravity(Gravity.CENTER);
+        sleepUnit.setPadding(0, 0, 0, pad(6));
+        col.addView(sleepUnit);
+
+        TextView hint = new TextView(this);
+        hint.setText("Spin the bezel · tap value"); hint.setTextColor(0xFF6B7075); hint.setTextSize(9);
+        hint.setGravity(Gravity.CENTER); hint.setPadding(0, 0, 0, pad(8));
+        col.addView(hint);
+
+        Button set = new Button(this);
+        set.setAllCaps(false); set.setText("Set"); set.setTextColor(Color.WHITE); set.setTextSize(15);
+        set.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable sg = new GradientDrawable(); sg.setColor(0xFF2E5A34); sg.setCornerRadius(pad(20));
+        set.setBackground(sg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(pad(110), pad(44));
+        set.setLayoutParams(lp);
+        set.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            int m = SLEEP_STEPS[sleepIdx];
+            send(m == 0 ? "wake" : "sleep:" + m); show(playerView);
+        }});
+        col.addView(set);
+
+        renderSleep();
+        return col;
+    }
+
+    // Open the Sleep page fresh (default 15 min), then let the bezel/tap change it.
+    private void openSleep() { sleepIdx = 3; renderSleep(); show(settingsView); }
+
+    private void renderSleep() {
+        if (sleepValue == null) return;
+        int m = SLEEP_STEPS[sleepIdx];
+        sleepValue.setText(m == 0 ? "Off" : String.valueOf(m));
+        if (sleepUnit != null) sleepUnit.setText(m == 0 ? "no timer" : "minutes");
+    }
+    // Bezel step on the Sleep page (clamped, doesn't wrap — tap wraps as the fallback).
+    private void stepSleep(boolean up) {
+        sleepIdx = Math.max(0, Math.min(SLEEP_STEPS.length - 1, sleepIdx + (up ? 1 : -1)));
+        renderSleep();
     }
 
     private void onCmd(String cmd) {
-        if ("settings".equals(cmd)) { show(settingsView); return; }
+        if ("settings".equals(cmd)) { openSleep(); return; }
         send(cmd);
     }
 
@@ -504,7 +561,7 @@ public class WearRemoteActivity extends Activity {
                 volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
             String ip = o.optString("ip", ""); if (!ip.isEmpty()) tabletIp = ip;   // for Wi-Fi /live
             playModeOn = o.optBoolean("playmode", false);
-            if (playModeBtn != null) playModeBtn.setText(playModeOn ? "🧸  Stop toddler mode" : "🧸  Toddler play mode");
+            updateToddlerCell();
             if (o.has("battery") && status != null) {   // TV battery: shown when the link is healthy (status is otherwise "")
                 int bat = o.optInt("battery", -1);
                 if (bat >= 0) status.setText((o.optBoolean("charging", false) ? "⚡ " : "TV 🔋 ") + bat + "%");
@@ -518,13 +575,15 @@ public class WearRemoteActivity extends Activity {
                 && (ev.getSource() & InputDevice.SOURCE_ROTARY_ENCODER) != 0) {
             float d = ev.getAxisValue(MotionEvent.AXIS_SCROLL);
             if (d != 0) {
-                boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder / zoom-in
+                boolean up = d < 0;   // clockwise reads negative here; user expects clockwise = louder / zoom-in / more
                 if (current == cameraView) {              // bezel = ZOOM while the camera view is up
                     camZoom = Math.max(1f, Math.min(4f, camZoom + (up ? 0.25f : -0.25f)));
                     if (camZoom <= 1.01f) { camCx = 0.5f; camCy = 0.5f; }   // recentre at 1x
                     clampCentre();
                     if (lastCamBmp != null) paintFrame(lastCamBmp);
                     if (camStatus != null) camStatus.setText("Zoom " + String.format("%.1f", camZoom) + "x");
+                } else if (current == settingsView) {     // bezel = SLEEP-TIMER value on the Sleep page
+                    stepSleep(up);
                 } else {                                  // bezel = VOLUME on the player (unchanged)
                     send(up ? "volup" : "voldown");
                     volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
@@ -544,18 +603,6 @@ public class WearRemoteActivity extends Activity {
         b.setBackground(g);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(sizePx, sizePx);
         lp.setMargins(pad(5), 0, pad(5), 0); b.setLayoutParams(lp);
-        b.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { onCmd(cmd); } });
-        return b;
-    }
-
-    private Button chip(String label, final String cmd, int bg) {
-        Button b = new Button(this);
-        b.setText(label); b.setAllCaps(false); b.setTextColor(Color.WHITE); b.setTextSize(11);
-        b.setTypeface(Typeface.DEFAULT_BOLD); b.setPadding(0, 0, 0, 0);
-        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(pad(18)); g.setColor(bg);
-        b.setBackground(g);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(pad(48), pad(38));
-        lp.setMargins(pad(3), 0, pad(3), 0); b.setLayoutParams(lp);
         b.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { onCmd(cmd); } });
         return b;
     }
