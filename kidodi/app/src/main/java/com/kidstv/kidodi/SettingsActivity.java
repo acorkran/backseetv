@@ -82,9 +82,13 @@ public class SettingsActivity extends Activity {
         // --- PIN + kiosk (DEVICE-OWNER gated) --------------------------------------------------
         section("Lock");
         if (owner) {
+            labelCycleRow("Unlock style", "kidodi_unlock_style", "pin",
+                    new String[]{"pin", "challenge"}, new String[]{"PIN pad", "Timed code"});
             actionRow("Admin PIN", "change", this::changePin);
             boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
-            note("Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents. Turning it off takes effect on the next launch.");
+            note("Unlock style: PIN pad = type your admin PIN. Timed code = type a random 6-digit code shown on "
+                    + "screen within 30s (a slip or timeout throws a fresh one) — toddler-proof, nothing to remember. "
+                    + "Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents (takes effect next launch).");
         } else {
             dimRow("Admin PIN", "•••• ");
             dimRow("Kiosk lock (device owner)", Cfg.getInt(this, "kidodi_kiosk", 0) == 1 ? "on" : "off");

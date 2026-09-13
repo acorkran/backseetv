@@ -79,7 +79,7 @@ public class PlayerActivity extends Activity {
         // taps in 3s) -> PIN pad. No "guess the corner" nonsense; the multi-finger press is what
         // keeps a toddler from tripping it. Tunable via Settings.Global (see AdminGesture).
         View gestureCatcher = new View(this);
-        gestureCatcher.setOnTouchListener(new AdminGesture(this, this::showPinPad));
+        gestureCatcher.setOnTouchListener(new AdminGesture(this, this::showUnlock));
         root.addView(gestureCatcher, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
@@ -302,6 +302,79 @@ public class PlayerActivity extends Activity {
         matches; wrong clears; cancel/back keeps the kiosk locked. Default PIN 1234, override with
         `adb shell settings put global kidodi_pin <PIN>`. */
     private boolean pinShowing = false;
+    /** Which unlock the hidden gesture opens: the plain PIN pad, or the toddler-proof timed-code
+        challenge (type a random 6-digit code shown on screen within 30s). kidodi_unlock_style. */
+    private void showUnlock() {
+        if ("challenge".equals(Cfg.getStr(this, "kidodi_unlock_style", "pin"))) showChallenge();
+        else showPinPad();
+    }
+
+    /** Timed-code challenge: a random 6-digit code is shown; type it exactly within 30s. A wrong digit
+        or a timeout throws a fresh code. No stored PIN needed — a toddler can't fluke it. */
+    private void showChallenge() {
+        if (pinShowing) return;
+        pinShowing = true;
+        final float restore = getWindow().getAttributes().screenBrightness;
+        setBrightness(-1f);
+        final StringBuilder code = new StringBuilder(), entered = new StringBuilder();
+        final int[] remaining = {30};
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
+        col.setPadding(dp(24), dp(20), dp(24), dp(20));
+        final TextView instr = new TextView(this);
+        instr.setText("Grown-up unlock — type this code"); instr.setTextColor(0xFF9AA4B2); instr.setTextSize(15);
+        instr.setGravity(Gravity.CENTER); instr.setPadding(0, 0, 0, dp(8)); col.addView(instr);
+        final TextView codeView = new TextView(this);
+        codeView.setTextColor(0xFF8FD694); codeView.setTextSize(34); codeView.setGravity(Gravity.CENTER);
+        codeView.setLetterSpacing(0.25f); col.addView(codeView);
+        final TextView disp = new TextView(this);
+        disp.setTextColor(Color.WHITE); disp.setTextSize(22); disp.setGravity(Gravity.CENTER);
+        disp.setPadding(0, dp(6), 0, dp(14)); col.addView(disp);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
+                .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); })
+                .create();
+
+        final Runnable[] tick = new Runnable[1];
+        final Runnable fresh = () -> {
+            code.setLength(0);
+            for (int i = 0; i < 6; i++) code.append((char) ('0' + (int) (Math.random() * 10)));
+            entered.setLength(0);
+            StringBuilder sp = new StringBuilder(); for (int i = 0; i < 6; i++) sp.append(code.charAt(i)).append(' ');
+            codeView.setText(sp.toString().trim());
+            remaining[0] = 30; disp.setText("30s  ·  type it");
+        };
+        tick[0] = () -> {
+            if (!dlg.isShowing()) return;
+            remaining[0]--;
+            if (remaining[0] <= 0) { disp.setText("time up — fresh code"); fresh.run(); }
+            else disp.setText(remaining[0] + "s  ·  " + (entered.length() > 0 ? entered.toString() : "type it"));
+            main.postDelayed(tick[0], 1000);
+        };
+
+        String[][] rows = {{"1", "2", "3"}, {"4", "5", "6"}, {"7", "8", "9"}, {"Clear", "0", "⌫"}};
+        for (String[] r : rows) {
+            LinearLayout rowv = new LinearLayout(this); rowv.setOrientation(LinearLayout.HORIZONTAL);
+            for (final String key : r) {
+                Button b = new Button(this); b.setText(key); b.setTextSize(20);
+                b.setOnClickListener(v -> {
+                    if ("Clear".equals(key)) entered.setLength(0);
+                    else if ("⌫".equals(key)) { if (entered.length() > 0) entered.setLength(entered.length() - 1); }
+                    else if (entered.length() < 6) entered.append(key);
+                    if (entered.length() > 0 && code.indexOf(entered.toString()) != 0) { fresh.run(); disp.setText("oops — fresh code"); return; }
+                    if (entered.toString().contentEquals(code)) { pinShowing = false; main.removeCallbacks(tick[0]); dlg.dismiss(); showAdminMenu(restore); return; }
+                    disp.setText(remaining[0] + "s  ·  " + (entered.length() > 0 ? entered.toString() : "type it"));
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                lp.setMargins(dp(4), dp(4), dp(4), dp(4)); rowv.addView(b, lp);
+            }
+            col.addView(rowv);
+        }
+        dlg.setOnDismissListener(d -> main.removeCallbacks(tick[0]));
+        fresh.run(); main.postDelayed(tick[0], 1000); dlg.show();
+    }
+
     private void showPinPad() {
         if (pinShowing) return;
         pinShowing = true;
