@@ -83,12 +83,15 @@ public class SettingsActivity extends Activity {
         section("Lock");
         if (owner) {
             labelCycleRow("Unlock style", "kidodi_unlock_style", "pin",
-                    new String[]{"pin", "challenge"}, new String[]{"PIN pad", "Timed code"});
+                    new String[]{"pin", "challenge", "pattern"}, new String[]{"PIN pad", "Timed code", "Pattern (experimental)"});
             actionRow("Admin PIN", "change", this::changePin);
+            if ("pattern".equals(Cfg.getStr(this, "kidodi_unlock_style", "pin")))
+                actionRow("Unlock pattern", Cfg.getStr(this, "kidodi_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
             boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
             note("Unlock style: PIN pad = type your admin PIN. Timed code = type a random 6-digit code shown on "
-                    + "screen within 30s (a slip or timeout throws a fresh one) — toddler-proof, nothing to remember. "
-                    + "Kiosk lock pins Kidodi as the home screen and blocks Home/Back/Recents (takes effect next launch).");
+                    + "screen within 30s (toddler-proof, nothing to remember). Pattern = draw a swipe pattern "
+                    + "(experimental; our own, not the phone's system pattern — set it below, and it falls back to the "
+                    + "PIN pad until you do). Kiosk lock pins Kidodi as home + blocks Home/Back/Recents (next launch).");
         } else {
             dimRow("Admin PIN", "•••• ");
             dimRow("Kiosk lock (device owner)", Cfg.getInt(this, "kidodi_kiosk", 0) == 1 ? "on" : "off");
@@ -274,6 +277,26 @@ public class SettingsActivity extends Activity {
         final Button v = rowShell(label);
         v.setText(Cfg.getInt(this, key, def) == 1 ? "on" : "off");
         v.setOnClickListener(x -> { int n = Cfg.getInt(this, key, def) == 1 ? 0 : 1; Cfg.put(this, key, n); v.setText(n == 1 ? "on" : "off"); });
+    }
+
+    /** Draw a new unlock pattern twice to confirm (>= 4 dots), then store it. */
+    private void setPattern() {
+        final String[] first = {null};
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL); box.setGravity(Gravity.CENTER_HORIZONTAL); box.setPadding(dp(16), dp(8), dp(16), dp(8));
+        final TextView t = new TextView(this); t.setText("Draw a new pattern (4+ dots)"); t.setTextColor(TXT); t.setTextSize(16);
+        t.setGravity(Gravity.CENTER); t.setPadding(0, 0, 0, dp(12)); box.addView(t);
+        final PatternView pv = new PatternView(this);
+        box.addView(pv, new LinearLayout.LayoutParams(dp(240), dp(240)));
+        final AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setCancelable(true).create();
+        pv.setOnPattern(p -> {
+            int dots = p.split("-").length;
+            if (dots < 4) { t.setText("Too short — use 4+ dots"); pv.postDelayed(pv::reset, 350); return; }
+            if (first[0] == null) { first[0] = p; t.setText("Draw again to confirm"); pv.postDelayed(pv::reset, 350); }
+            else if (first[0].equals(p)) { Cfg.put(this, "kidodi_pattern", p); toast("Pattern set"); dlg.dismiss(); postRebuild(); }
+            else { first[0] = null; t.setText("Didn't match — draw a new pattern"); pv.postDelayed(pv::reset, 350); }
+        });
+        dlg.show();
     }
 
     private void changePin() {

@@ -35,6 +35,7 @@ class Cfg {
             {"kidodi_kiosk",         "int", "0"},
             {"kidodi_pin",           "str", "1234"},
             {"kidodi_unlock_style",  "str", "pin"},
+            {"kidodi_pattern",       "str", ""},
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
 

@@ -305,8 +305,34 @@ public class PlayerActivity extends Activity {
     /** Which unlock the hidden gesture opens: the plain PIN pad, or the toddler-proof timed-code
         challenge (type a random 6-digit code shown on screen within 30s). kidodi_unlock_style. */
     private void showUnlock() {
-        if ("challenge".equals(Cfg.getStr(this, "kidodi_unlock_style", "pin"))) showChallenge();
-        else showPinPad();
+        String st = Cfg.getStr(this, "kidodi_unlock_style", "pin");
+        if ("challenge".equals(st)) showChallenge();
+        else if ("pattern".equals(st) && !Cfg.getStr(this, "kidodi_pattern", "").isEmpty()) showPattern();
+        else showPinPad();   // fall back to PIN if pattern is selected but none set yet (never lock out)
+    }
+
+    /** (Experimental) our own 3x3 swipe-pattern unlock — checked against the Kidodi-stored pattern. */
+    private void showPattern() {
+        if (pinShowing) return;
+        pinShowing = true;
+        final float restore = getWindow().getAttributes().screenBrightness;
+        setBrightness(-1f);
+        final String stored = Cfg.getStr(this, "kidodi_pattern", "");
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418); col.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.setPadding(dp(24), dp(20), dp(24), dp(20));
+        final TextView disp = new TextView(this);
+        disp.setText("Draw your unlock pattern"); disp.setTextColor(Color.WHITE); disp.setTextSize(20);
+        disp.setGravity(Gravity.CENTER); disp.setPadding(0, 0, 0, dp(16)); col.addView(disp);
+        final PatternView pv = new PatternView(this);
+        col.addView(pv, new LinearLayout.LayoutParams(dp(280), dp(280)));
+        final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
+                .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); }).create();
+        pv.setOnPattern(p -> {
+            if (p.equals(stored)) { pinShowing = false; dlg.dismiss(); showAdminMenu(restore); }
+            else { disp.setText("Wrong — try again"); pv.postDelayed(pv::reset, 350); }
+        });
+        dlg.show();
     }
 
     /** Timed-code challenge: a random 6-digit code is shown; type it exactly within 30s. A wrong digit
