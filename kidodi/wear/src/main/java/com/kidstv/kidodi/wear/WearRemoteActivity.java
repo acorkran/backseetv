@@ -345,7 +345,7 @@ public class WearRemoteActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);   // cluster in the middle where the circle is widest
         col.setFocusableInTouchMode(true);
-        col.setPadding(pad(6), pad(4), pad(6), pad(4));
+        col.setPadding(pad(6), pad(2), pad(6), pad(2));
 
         // Top chip: the TV battery ("🔋87%"/"⚡87%") when the link is healthy, else the connection status.
         status = new TextView(this);
@@ -358,23 +358,23 @@ public class WearRemoteActivity extends Activity {
         col.addView(status);
 
         title = new TextView(this);
-        title.setTextColor(Color.WHITE); title.setTextSize(15); title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.WHITE); title.setTextSize(14); title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER); title.setMaxLines(1); title.setEllipsize(TextUtils.TruncateAt.END);
         col.addView(title);
 
         subtitle = new TextView(this);
-        subtitle.setTextColor(0xFF9AA0A6); subtitle.setTextSize(10); subtitle.setGravity(Gravity.CENTER);
+        subtitle.setTextColor(0xFF9AA0A6); subtitle.setTextSize(9); subtitle.setGravity(Gravity.CENTER);
         subtitle.setMaxLines(1); subtitle.setEllipsize(TextUtils.TruncateAt.END);
-        subtitle.setPadding(0, 0, 0, pad(5));
+        subtitle.setPadding(0, 0, 0, pad(2));
         col.addView(subtitle);
 
         LinearLayout transport = new LinearLayout(this);
         transport.setOrientation(LinearLayout.HORIZONTAL);
         transport.setGravity(Gravity.CENTER);
-        transport.addView(circle("◀◀", "prev", pad(40), 0xFF2C2C2E, 13));
-        playPause = circle("▶", "playpause", pad(56), 0xFF3A3A3C, 22);
+        transport.addView(circle("◀◀", "prev", pad(38), 0xFF2C2C2E, 12));
+        playPause = circle("▶", "playpause", pad(50), 0xFF3A3A3C, 20);
         transport.addView(playPause);
-        transport.addView(circle("▶▶", "next", pad(40), 0xFF2C2C2E, 13));
+        transport.addView(circle("▶▶", "next", pad(38), 0xFF2C2C2E, 12));
         col.addView(transport);
 
         // Row 1: Light · Playlists · Camera. Every function has a visible button — the swipe
@@ -382,7 +382,7 @@ public class WearRemoteActivity extends Activity {
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL); row1.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams r1 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        r1.topMargin = pad(6); row1.setLayoutParams(r1);
+        r1.topMargin = pad(3); row1.setLayoutParams(r1);
         row1.addView(gridCell("💡", "Light", 0xFF3A3220, new Runnable() { public void run() { send("flash"); } }));
         row1.addView(gridCell("🎞", "Playlists", 0xFF20303A, new Runnable() { public void run() { openPlaylists(); } }));
         row1.addView(gridCell("📷", "Camera", 0xFF203A2C, new Runnable() { public void run() { openCamera(); } }));
@@ -400,7 +400,13 @@ public class WearRemoteActivity extends Activity {
         row2.addView(gridCell("⏻", "Power", 0xFF3A2222, new Runnable() { public void run() { send("power"); } }));
         col.addView(row2);
         updateToddlerCell();
-        return col;
+        // Wrap in a ScrollView so the bottom action row is NEVER clipped by the round bezel: fillViewport
+        // keeps the cluster vertically centred when it fits, and a tiny nudge-scroll reveals row 2 if not.
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setVerticalScrollBarEnabled(false);
+        sv.addView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return sv;
     }
 
     // A 2×3 grid cell: big emoji over a tiny label, rounded tappable background. Sized to the
@@ -411,13 +417,13 @@ public class WearRemoteActivity extends Activity {
         GradientDrawable g = new GradientDrawable(); g.setCornerRadius(pad(14)); g.setColor(bg);
         cell.setBackground(g);
         TextView e = new TextView(this);
-        e.setText(emoji); e.setTextSize(18); e.setGravity(Gravity.CENTER);
+        e.setText(emoji); e.setTextSize(17); e.setGravity(Gravity.CENTER);
         cell.addView(e);
         TextView l = new TextView(this);
         l.setText(label); l.setTextColor(0xFFCED0D3); l.setTextSize(9);
         l.setGravity(Gravity.CENTER); l.setMaxLines(1);
         cell.addView(l);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(pad(48), pad(48));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(pad(46), pad(46));
         lp.setMargins(pad(3), 0, pad(3), 0); cell.setLayoutParams(lp);
         cell.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { onTap.run(); } });
         return cell;
