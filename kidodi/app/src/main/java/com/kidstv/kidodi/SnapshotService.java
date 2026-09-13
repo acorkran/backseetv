@@ -47,6 +47,9 @@ public class SnapshotService extends LifecycleService {
     private static int liveCount = 0;                            // # of open /live (MJPEG) consumers
     private static final java.util.Set<String> wanters = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     public static boolean running() { return INSTANCE != null; }
+    /** Whether a SPECIFIC consumer wants capture (e.g. "snap" = the Settings toggle) — independent of
+        other holders like "ble"/"live", so the toggle reflects the user's own choice, not the aggregate. */
+    public static boolean isWanted(String key) { synchronized (wanters) { return wanters.contains(key); } }
     public static byte[] latestSnapshot() { return latest; }      // full-res, for Wi-Fi
     public static byte[] latestLowRes() { return latestLow; }      // reduced-res, for BLE chunks
 

@@ -41,7 +41,7 @@ class AdminGesture implements View.OnTouchListener {
             case MotionEvent.ACTION_DOWN:
                 fingers = gi("kidodi_esc_fingers", 4);
                 mode = gs("kidodi_esc_mode", "taps");
-                dir = gs("kidodi_esc_dir", "up");
+                dir = gs("kidodi_esc_dir", "none");
                 neededTaps = gi("kidodi_esc_taps", 4);
                 window = gi("kidodi_esc_window_ms", 3000);
                 tapMs = gi("kidodi_esc_tap_ms", 800);
@@ -70,6 +70,7 @@ class AdminGesture implements View.OnTouchListener {
     private boolean swipeMatches(String d, float dx, float dy) {
         float t = dp(80);
         switch (d) {
+            case "none":  return Math.abs(dx) > t || Math.abs(dy) > t;   // any direction
             case "down":  return dy >  t && Math.abs(dy) > Math.abs(dx);
             case "left":  return dx < -t && Math.abs(dx) > Math.abs(dy);
             case "right": return dx >  t && Math.abs(dx) > Math.abs(dy);

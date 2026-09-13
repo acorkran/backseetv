@@ -64,12 +64,15 @@ public class SettingsActivity extends Activity {
         // --- Unlock gesture (DEVICE-OWNER gated) -----------------------------------------------
         section("Unlock gesture");
         if (owner) {
-            cycleRow("Fingers", "kidodi_esc_fingers", 4, new int[]{2, 3, 4, 5});
-            strCycleRow("Type", "kidodi_esc_mode", "taps", new String[]{"taps", "swipe"});
-            cycleRow("Taps needed", "kidodi_esc_taps", 4, new int[]{2, 3, 4, 5, 6});
-            cycleRow("Within (seconds)", "kidodi_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
-            strCycleRow("Swipe direction", "kidodi_esc_dir", "up", new String[]{"up", "down", "left", "right"});
-            note("Default: 4 four-finger taps within 3 seconds, anywhere on screen.");
+            intDropdown("Finger contact points", "kidodi_esc_fingers", 4, new int[]{2, 3, 4, 5}, 1);
+            strDropdown("Type", "kidodi_esc_mode", "taps", new String[]{"taps", "swipe"}, new String[]{"Taps", "Swipe"}, null);
+            intDropdown("Taps needed", "kidodi_esc_taps", 4, new int[]{2, 3, 4, 5, 6}, 1);
+            intDropdown("Within (seconds)", "kidodi_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
+            strDropdown("Swipe direction", "kidodi_esc_dir", "none",
+                    new String[]{"none", "up", "down", "left", "right"},
+                    new String[]{"Any direction", "Up", "Down", "Left", "Right"}, null);
+            note("Default: 4 four-finger taps within 3 seconds, anywhere on screen. Taps/within/points apply "
+                    + "to both modes; swipe direction only applies in Swipe mode (Any direction = any way you drag).");
         } else {
             dimRow("Fingers", String.valueOf(Cfg.getInt(this, "kidodi_esc_fingers", 4)));
             dimRow("Type", Cfg.getStr(this, "kidodi_esc_mode", "taps"));
@@ -82,8 +85,9 @@ public class SettingsActivity extends Activity {
         // --- PIN + kiosk (DEVICE-OWNER gated) --------------------------------------------------
         section("Lock");
         if (owner) {
-            labelCycleRow("Unlock style", "kidodi_unlock_style", "pin",
-                    new String[]{"pin", "challenge", "pattern"}, new String[]{"PIN pad", "Timed code", "Pattern (experimental)"});
+            strDropdown("Unlock style", "kidodi_unlock_style", "pin",
+                    new String[]{"pin", "challenge", "pattern"}, new String[]{"PIN pad", "Timed code", "Pattern (experimental)"},
+                    this::postRebuild);
             actionRow("Admin PIN", "change", this::changePin);
             if ("pattern".equals(Cfg.getStr(this, "kidodi_unlock_style", "pin")))
                 actionRow("Unlock pattern", Cfg.getStr(this, "kidodi_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
@@ -100,7 +104,7 @@ public class SettingsActivity extends Activity {
 
         // --- Playback --------------------------------------------------------------------------
         section("Playback");
-        cycleRow("Light duration (seconds)", "kidodi_flash_ms", 3000, new int[]{1000, 2000, 3000, 5000, 10000}, 1000);
+        intDropdown("Light duration (seconds)", "kidodi_flash_ms", 3000, new int[]{1000, 2000, 3000, 5000, 10000}, 1000);
         final boolean loop = Cfg.getInt(this, "kidodi_loop", 1) == 1;
         actionRow("When the queue ends", loop ? "loop forever" : "stop (TV off)", () -> {
             int n = loop ? 0 : 1;
@@ -139,16 +143,17 @@ public class SettingsActivity extends Activity {
 
         // --- Camera ----------------------------------------------------------------------------
         section("Camera (still images)");
-        actionRow("Periodic still snapshots", SnapshotService.running() ? "turn off" : "turn on", () -> {
-            SnapshotService.set(this, !SnapshotService.running()); postRebuild();
+        final boolean snapOn = SnapshotService.isWanted("snap");   // track the Settings toggle itself, not the
+        actionRow("Periodic still snapshots", snapOn ? "turn off" : "turn on", () -> {   // aggregate service state
+            SnapshotService.set(this, !snapOn); postRebuild();     // (which a camera-dash "ble"/"live" holder skewed)
         });
         note("Front camera, updated a few times a second at most. Remotes show the latest still; nothing is recorded.");
 
         // --- Play mode -------------------------------------------------------------------------
         section("Toddler play mode");
         actionRow("Start play mode", "start", () -> PlayModeActivity.begin(this));
-        labelCycleRow("Sound", "kidodi_playmode_sound", "muted",
-                new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"});
+        strDropdown("Sound", "kidodi_playmode_sound", "muted",
+                new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"}, null);
         note("Runs over the show (the video stays the background). Sound: Muted = silent · Letter sounds = "
                 + "the letter voices, show silenced · Video sound = the show keeps playing behind. Exit with the unlock gesture.");
 
@@ -253,6 +258,22 @@ public class SettingsActivity extends Activity {
     private static String labelFor(String val, String[] vals, String[] labels) {
         for (int i = 0; i < vals.length; i++) if (vals[i].equals(val)) return labels[i];
         return val;
+    }
+
+    // --- dropdowns (tap the value -> a list of ALL options; pick one). Replaces the old cycle buttons. ---
+    private void intDropdown(String label, final String key, final int def, final int[] vals, final int div) {
+        final Button v = rowShell(label);
+        final String[] labels = new String[vals.length];
+        for (int i = 0; i < vals.length; i++) labels[i] = String.valueOf(vals[i] / div);
+        v.setText(String.valueOf(Cfg.getInt(this, key, def) / div));
+        v.setOnClickListener(x -> new AlertDialog.Builder(this).setTitle(label)
+                .setItems(labels, (d, w) -> { Cfg.put(this, key, vals[w]); v.setText(labels[w]); }).show());
+    }
+    private void strDropdown(String label, final String key, final String def, final String[] vals, final String[] labels, final Runnable onChange) {
+        final Button v = rowShell(label);
+        v.setText(labelFor(Cfg.getStr(this, key, def), vals, labels));
+        v.setOnClickListener(x -> new AlertDialog.Builder(this).setTitle(label)
+                .setItems(labels, (d, w) -> { Cfg.put(this, key, vals[w]); v.setText(labels[w]); if (onChange != null) onChange.run(); }).show());
     }
     /** A greyed, non-interactive row (a device-owner feature at base level): shows the value, no click. */
     private void dimRow(String label, String value) {
