@@ -52,6 +52,18 @@ body.locked { cursor: none; }
   animation: sparkleFade .72s ease-out forwards; will-change: transform, opacity; }
 @keyframes sparkleFade { 0%{opacity:1;transform:translate(-50%,-50%) scale(.5) rotate(0);} 100%{opacity:0;transform:translate(-50%,-130%) scale(1.5) rotate(45deg);} }
 
+/* ---- gap-fill shapes: a colorful shape drops under a touch while a letter clip is still playing ---- */
+.tl-shape { position: fixed; transform: translate(-50%,-50%) scale(0); pointer-events: none; z-index: 10002;
+  animation: tlPop .9s cubic-bezier(.2,.9,.3,1) forwards; will-change: transform, opacity; box-shadow: 0 4px 22px rgba(0,0,0,.35); }
+.tl-circle { border-radius: 50%; }
+.tl-square { border-radius: 16%; }
+.tl-triangle { clip-path: polygon(50% 0, 100% 100%, 0 100%); box-shadow: none; }
+.tl-star { clip-path: polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); box-shadow: none; }
+@keyframes tlPop { 0%{opacity:0;transform:translate(-50%,-50%) scale(0) rotate(0);}
+  22%{opacity:1;transform:translate(-50%,-50%) scale(1.18) rotate(var(--rot,0deg));}
+  70%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(var(--rot,0deg));}
+  100%{opacity:0;transform:translate(-50%,-64%) scale(1.05) rotate(var(--rot,0deg));} }
+
 /* ---- adult unlock panel ---- */
 .unlock-panel { position: fixed; inset: 0; z-index: 10004; display: flex; flex-direction: column;
   align-items: center; justify-content: center; background: rgba(8,9,12,.97); text-align: center; padding: 24px; }
