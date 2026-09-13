@@ -182,12 +182,13 @@ public class SnapshotService extends LifecycleService {
             ByteArrayOutputStream jpg = new ByteArrayOutputStream();
             out.compress(Bitmap.CompressFormat.JPEG, 60, jpg);
             latest = jpg.toByteArray();
-            // reduced-res copy for BLE chunks (~128px longest side, q40, target <4KB)
-            float ls = Math.min(1f, 128f / Math.max(out.getWidth(), out.getHeight()));
+            // reduced-res copy for BLE chunks (~192px longest side, q55, ~6-8KB). 128px/q40 looked badly
+            // degraded on the watch (blocky, worse in low light); this is clearer and still fits BLE.
+            float ls = Math.min(1f, 192f / Math.max(out.getWidth(), out.getHeight()));
             Bitmap low = Bitmap.createScaledBitmap(out,
                     Math.max(1, Math.round(out.getWidth() * ls)), Math.max(1, Math.round(out.getHeight() * ls)), true);
             ByteArrayOutputStream ljpg = new ByteArrayOutputStream();
-            low.compress(Bitmap.CompressFormat.JPEG, 40, ljpg);
+            low.compress(Bitmap.CompressFormat.JPEG, 55, ljpg);
             latestLow = ljpg.toByteArray();
             if (low != out) low.recycle();
             if (out != rgba) out.recycle();
