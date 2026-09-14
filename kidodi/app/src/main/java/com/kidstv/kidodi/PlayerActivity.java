@@ -305,7 +305,7 @@ public class PlayerActivity extends Activity {
     /** Which unlock the hidden gesture opens: the plain PIN pad, or the toddler-proof timed-code
         challenge (type a random 6-digit code shown on screen within 30s). kidodi_unlock_style. */
     private void showUnlock() {
-        String st = Cfg.getStr(this, "kidodi_unlock_style", "pin");
+        String st = Cfg.getStr(this, "kidodi_unlock_style", "challenge");
         if ("challenge".equals(st)) showChallenge();
         else if ("pattern".equals(st) && !Cfg.getStr(this, "kidodi_pattern", "").isEmpty()) showPattern();
         else showPinPad();   // fall back to PIN if pattern is selected but none set yet (never lock out)

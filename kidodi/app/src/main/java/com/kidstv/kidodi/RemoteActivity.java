@@ -235,26 +235,14 @@ public class RemoteActivity extends Activity {
         sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(12), 0, 0);
         root.addView(sleepText);
 
-        TextView stillBtn = new TextView(this);
-        stillBtn.setText("👶  Check-in  ·  still image");
-        stillBtn.setTextColor(ACCENT); stillBtn.setTextSize(13); stillBtn.setGravity(Gravity.CENTER);
-        stillBtn.setPadding(0, dp(16), 0, 0); stillBtn.setClickable(true);
-        stillBtn.setOnClickListener(v -> openStill());
-        root.addView(stillBtn);
-
-        TextView playModeBtn = new TextView(this);
-        playModeBtn.setText("🧸  Toddler play mode");
-        playModeBtn.setTextColor(ACCENT); playModeBtn.setTextSize(13); playModeBtn.setGravity(Gravity.CENTER);
-        playModeBtn.setPadding(0, dp(12), 0, 0); playModeBtn.setClickable(true);
-        playModeBtn.setOnClickListener(v -> { send("playmode:on"); toast("Play mode on the TV"); });
-        root.addView(playModeBtn);
-
-        TextView scanBtn = new TextView(this);
-        scanBtn.setText("⧉  Scan a QR to connect / join Wi-Fi");
-        scanBtn.setTextColor(ACCENT); scanBtn.setTextSize(13); scanBtn.setGravity(Gravity.CENTER);
-        scanBtn.setPadding(0, dp(12), 0, dp(4)); scanBtn.setClickable(true);
-        scanBtn.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
-        root.addView(scanBtn);
+        // Check-in + Toddler as proper icon cards (matching the Light/Sleep/Power row), not ad-hoc text.
+        // Wi-Fi QR scanning lives in the Connection screen (tap the link label) — it's not a Remote-tab action.
+        LinearLayout xr = new LinearLayout(this);
+        xr.setPadding(dp(6), dp(14), dp(6), dp(4));
+        xr.addView(actionCardRun(IconView.WATCH, GOOD, "Check-in", this::openStill), lp(0, dp(74), dp(5), 1f));
+        xr.addView(actionCardRun(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }),
+                lp(0, dp(74), dp(5), 1f));
+        root.addView(xr);
 
         sv.addView(root);
         return sv;
@@ -913,11 +901,18 @@ public class RemoteActivity extends Activity {
 
         sSec(col, "Lock");
         if (cfgOwner) {
+            // How the adult unlocks (to the menu / settings / exit). Default "Random code" = a timed code to
+            // copy, nothing to remember; "Fixed PIN" uses the Admin PIN below; "Pattern" uses a set pattern
+            // (drawn on the TV). Vary it to keep a clever toddler guessing.
+            cfgStrCycle(col, "Method", "kidodi_unlock_style",
+                    new String[]{"challenge", "pin", "pattern"}, new String[]{"Random code", "Fixed PIN", "Pattern"});
             Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
             final boolean k = cfgI("kidodi_kiosk", 0) == 1;
             Button kb = setRow(col, "Kiosk lock"); kb.setText(k ? "on" : "off");
             kb.setOnClickListener(v -> { setCfg("kidodi_kiosk", cfgI("kidodi_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
         } else {
+            String m = cfgS("kidodi_unlock_style", "challenge");
+            sDim(col, "Method", "challenge".equals(m) ? "Random code" : "pattern".equals(m) ? "Pattern" : "Fixed PIN");
             sDim(col, "Admin PIN", "••••");
             sDim(col, "Kiosk lock", cfgI("kidodi_kiosk", 0) == 1 ? "on" : "off");
             sGated(col);
@@ -1286,6 +1281,19 @@ public class RemoteActivity extends Activity {
         c.setOnClickListener(x -> send(cmd));
         return c;
     }
+    // Same card, but runs an arbitrary action (e.g. open the check-in view) instead of sending a command.
+    private LinearLayout actionCardRun(int mode, int accent, String label, final Runnable onTap) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x33)); g.setCornerRadius(dp(16));
+        g.setStroke(dp(1), withAlpha(accent, 0x66)); c.setBackground(g);
+        IconView ic = new IconView(this, mode, 0x00000000, accent);
+        c.addView(ic, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView l = new TextView(this); l.setText(label); l.setTextColor(TXT); l.setTextSize(12); l.setPadding(0, dp(4), 0, 0);
+        c.addView(l);
+        c.setClickable(true); c.setOnClickListener(x -> onTap.run());
+        return c;
+    }
     private View spacer(int h) { View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h)); return v; }
     private LinearLayout.LayoutParams lp(int w, int h, int m) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(w, h); p.setMargins(m, 0, m, 0); return p; }
     private LinearLayout.LayoutParams lp(int w, int h, int m, float weight) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(w, h, weight); p.setMargins(m, 0, m, 0); return p; }
@@ -1294,7 +1302,7 @@ public class RemoteActivity extends Activity {
 
     // --- Canvas-drawn icons (no font glyphs -> no tofu), ported from v1 -------
     class IconView extends View {
-        static final int POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9, SUN = 10;
+        static final int POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9, SUN = 10, WATCH = 11, BEAR = 12;
         final int mode; int bgCol, iconCol; boolean playing = false;
         final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         final GradientDrawable bgd = new GradientDrawable();
@@ -1344,6 +1352,25 @@ public class RemoteActivity extends Activity {
                     p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.16f)); float t = s;
                     cv.drawLine(cx - t, cy - t * 0.55f, cx + t, cy + t * 0.55f, p);
                     cv.drawLine(cx - t, cy + t * 0.55f, cx + t, cy - t * 0.55f, p); break;
+                case WATCH: {   // a person watching a screen — camera "check-in"
+                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.15f));
+                    cv.drawRoundRect(new RectF(cx - s * 1.15f, cy - s * 1.3f, cx + s * 1.15f, cy - s * 0.15f), dp(3), dp(3), p);   // screen
+                    p.setStyle(Paint.Style.FILL);
+                    cv.drawCircle(cx, cy + s * 0.62f, s * 0.36f, p);                                                              // viewer's head (from behind)
+                    cv.drawArc(new RectF(cx - s * 0.82f, cy + s * 0.85f, cx + s * 0.82f, cy + s * 1.55f), 180f, 180f, true, p);    // shoulders
+                    break; }
+                case BEAR: {    // teddy — toddler play / lock
+                    p.setStyle(Paint.Style.FILL);
+                    cv.drawCircle(cx - s * 0.72f, cy - s * 0.72f, s * 0.4f, p);                                                   // ears
+                    cv.drawCircle(cx + s * 0.72f, cy - s * 0.72f, s * 0.4f, p);
+                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.14f));
+                    cv.drawCircle(cx, cy, s * 0.98f, p);                                                                          // head
+                    cv.drawCircle(cx, cy + s * 0.42f, s * 0.34f, p);                                                              // snout
+                    p.setStyle(Paint.Style.FILL);
+                    cv.drawCircle(cx - s * 0.38f, cy - s * 0.12f, s * 0.13f, p);                                                  // eyes
+                    cv.drawCircle(cx + s * 0.38f, cy - s * 0.12f, s * 0.13f, p);
+                    cv.drawCircle(cx, cy + s * 0.28f, s * 0.14f, p);                                                              // nose
+                    break; }
             }
         }
     }

@@ -34,7 +34,7 @@ class Cfg {
             {"kidodi_esc_dir",       "str", "up"},
             {"kidodi_kiosk",         "int", "0"},
             {"kidodi_pin",           "str", "1234"},
-            {"kidodi_unlock_style",  "str", "pin"},
+            {"kidodi_unlock_style",  "str", "challenge"},   // default: solve a random timed code (no PIN to remember); "pin"/"pattern" are options
             {"kidodi_pattern",       "str", ""},
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
