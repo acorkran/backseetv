@@ -121,6 +121,20 @@ public class SnapshotService extends LifecycleService {
     private ProcessCameraProvider provider;
     private Bitmap rgba;
     private long lastProcess = 0;
+    private volatile int bindRotation = 0;   // display rotation (Surface.ROTATION_*) when the camera was bound
+
+    // Current default-display rotation as a Surface.ROTATION_* (0..3). CameraX delivers the buffer upright
+    // for the rotation at BIND time and never re-rotates on a live flip, so on the sensorLandscape kiosk the
+    // still stays fixed when the tablet flips 90<->270 (looks upside down). We compensate by the delta below.
+    private int displayRotation() {
+        try {
+            android.hardware.display.DisplayManager dm =
+                    (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
+            android.view.Display d = dm != null ? dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) : null;
+            if (d != null) return d.getRotation();
+        } catch (Exception ignored) {}
+        return 0;
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -152,8 +166,9 @@ public class SnapshotService extends LifecycleService {
                         .build();
                 analysis.setAnalyzer(exec, this::analyze);
                 provider.unbindAll();
+                bindRotation = displayRotation();   // reference: the buffer is upright for THIS rotation
                 provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis);
-                Log.i(TAG, "snapshot: front camera bound (headless)");
+                Log.i(TAG, "snapshot: front camera bound (headless), bindRotation=" + bindRotation);
             } catch (Exception e) { Log.e(TAG, "snapshot bind: " + e); }
         }, ContextCompat.getMainExecutor(this));
     }
@@ -173,10 +188,15 @@ public class SnapshotService extends LifecycleService {
             rgba.copyPixelsFromBuffer(buf);
 
             int rot = proxy.getImageInfo().getRotationDegrees();
+            // Track the tablet's live orientation: add the rotation delta since bind (0 or 180 across a
+            // landscape flip) so the still stays upright whichever way the tablet is mounted. Front-cam
+            // mirroring only affects 90/270 deltas, and the kiosk only ever flips by 180, so this is safe.
+            int delta = (((displayRotation() - bindRotation) % 4 + 4) % 4) * 90;
+            int total = (rot + delta) % 360;
             float scale = Math.min(1f, TARGET_PX / Math.max(w, h));
             Matrix m = new Matrix();
             m.postScale(scale, scale);
-            if (rot != 0) m.postRotate(rot);
+            if (total != 0) m.postRotate(total);
             Bitmap out = Bitmap.createBitmap(rgba, 0, 0, w, h, m, true);   // crop padding + scale + upright
 
             ByteArrayOutputStream jpg = new ByteArrayOutputStream();
