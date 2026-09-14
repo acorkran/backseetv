@@ -95,10 +95,14 @@ public class WearRemoteActivity extends Activity {
                 float dy = e1.getY() - e2.getY();   // >0 = up
                 float dx = e2.getX() - e1.getX();   // >0 = right, <0 = left
                 boolean horiz = Math.abs(dx) > Math.abs(dy);
-                // Swipe RIGHT = universal BACK: reverse out of any sub-view (playlists / sleep / camera)
-                // to the player. On a zoomed camera, right-drag pans instead, so don't hijack it there.
-                if (horiz && dx > pad(40) && Math.abs(vx) > 200 && current != playerView
-                        && !(current == cameraView && camZoom > 1.01f)) { goBack(); return true; }
+                // Swipe RIGHT = universal BACK (the system swipe-to-dismiss is turned off in the theme, so
+                // we own it): sub-view -> player, player -> minimise to the watch face. Identical on every
+                // page. On a zoomed camera, right-drag pans instead, so don't hijack it there.
+                if (horiz && dx > pad(40) && Math.abs(vx) > 200) {
+                    if (current == cameraView && camZoom > 1.01f) return false;   // let the pan happen
+                    if (current != playerView) { goBack(); return true; }
+                    moveTaskToBack(true); return true;                            // player: leave the app
+                }
                 if (current != playerView) return false;   // the shortcuts below only act on the player
                 if (Math.abs(dy) >= Math.abs(dx)) {                 // vertical-dominant
                     if (dy > pad(40) && Math.abs(vy) > 200) { openPlaylists(); return true; }   // UP -> playlists
