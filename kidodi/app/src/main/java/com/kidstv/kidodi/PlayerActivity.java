@@ -335,15 +335,20 @@ public class PlayerActivity extends Activity {
         dlg.show();
     }
 
-    /** Timed-code challenge: a random 6-digit code is shown; type it exactly within 30s. A wrong digit
-        or a timeout throws a fresh code. No stored PIN needed — a toddler can't fluke it. */
+    /** Randomized-PIN unlock: a random code of kidodi_chal_len digits is shown; copy it within
+        kidodi_chal_secs seconds and within kidodi_chal_tries wrong attempts. Nothing to remember —
+        a toddler can't read+copy it in time. Out of tries OR time drops back to the locked screen. */
     private void showChallenge() {
         if (pinShowing) return;
         pinShowing = true;
+        final int len   = clampInt(Cfg.getInt(this, "kidodi_chal_len", 6), 4, 8);
+        final int secs  = clampInt(Cfg.getInt(this, "kidodi_chal_secs", 30), 10, 120);
+        final int[] tries = { clampInt(Cfg.getInt(this, "kidodi_chal_tries", 3), 1, 9) };
         final float restore = getWindow().getAttributes().screenBrightness;
         setBrightness(-1f);
         final StringBuilder code = new StringBuilder(), entered = new StringBuilder();
-        final int[] remaining = {30};
+        for (int i = 0; i < len; i++) code.append((char) ('0' + (int) (Math.random() * 10)));
+        final int[] remaining = { secs };
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
@@ -354,6 +359,8 @@ public class PlayerActivity extends Activity {
         final TextView codeView = new TextView(this);
         codeView.setTextColor(0xFF8FD694); codeView.setTextSize(34); codeView.setGravity(Gravity.CENTER);
         codeView.setLetterSpacing(0.25f); col.addView(codeView);
+        StringBuilder sp = new StringBuilder(); for (int i = 0; i < len; i++) sp.append(code.charAt(i)).append(' ');
+        codeView.setText(sp.toString().trim());
         final TextView disp = new TextView(this);
         disp.setTextColor(Color.WHITE); disp.setTextSize(22); disp.setGravity(Gravity.CENTER);
         disp.setPadding(0, dp(6), 0, dp(14)); col.addView(disp);
@@ -362,21 +369,16 @@ public class PlayerActivity extends Activity {
                 .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); })
                 .create();
 
-        final Runnable[] tick = new Runnable[1];
-        final Runnable fresh = () -> {
-            code.setLength(0);
-            for (int i = 0; i < 6; i++) code.append((char) ('0' + (int) (Math.random() * 10)));
-            entered.setLength(0);
-            StringBuilder sp = new StringBuilder(); for (int i = 0; i < 6; i++) sp.append(code.charAt(i)).append(' ');
-            codeView.setText(sp.toString().trim());
-            remaining[0] = 30; disp.setText("30s  ·  type it");
-        };
+        final Runnable[] tick = new Runnable[1], fail = new Runnable[1];
+        final Runnable status = () -> disp.setText(remaining[0] + "s  ·  " + tries[0] + (tries[0] == 1 ? " try" : " tries")
+                + (entered.length() > 0 ? "  ·  " + entered : ""));
+        fail[0] = () -> { pinShowing = false; main.removeCallbacks(tick[0]);
+            try { dlg.dismiss(); } catch (Exception ignored) {} setBrightness(napped ? 0.02f : restore); };
         tick[0] = () -> {
             if (!dlg.isShowing()) return;
             remaining[0]--;
-            if (remaining[0] <= 0) { disp.setText("time up — fresh code"); fresh.run(); }
-            else disp.setText(remaining[0] + "s  ·  " + (entered.length() > 0 ? entered.toString() : "type it"));
-            main.postDelayed(tick[0], 1000);
+            if (remaining[0] <= 0) { disp.setText("time up"); main.postDelayed(fail[0], 700); return; }
+            status.run(); main.postDelayed(tick[0], 1000);
         };
 
         String[][] rows = {{"1", "2", "3"}, {"4", "5", "6"}, {"7", "8", "9"}, {"Clear", "0", "⌫"}};
@@ -385,12 +387,17 @@ public class PlayerActivity extends Activity {
             for (final String key : r) {
                 Button b = new Button(this); b.setText(key); b.setTextSize(20);
                 b.setOnClickListener(v -> {
+                    if (!dlg.isShowing()) return;
                     if ("Clear".equals(key)) entered.setLength(0);
                     else if ("⌫".equals(key)) { if (entered.length() > 0) entered.setLength(entered.length() - 1); }
-                    else if (entered.length() < 6) entered.append(key);
-                    if (entered.length() > 0 && code.indexOf(entered.toString()) != 0) { fresh.run(); disp.setText("oops — fresh code"); return; }
-                    if (entered.toString().contentEquals(code)) { pinShowing = false; main.removeCallbacks(tick[0]); dlg.dismiss(); showAdminMenu(restore); return; }
-                    disp.setText(remaining[0] + "s  ·  " + (entered.length() > 0 ? entered.toString() : "type it"));
+                    else if (entered.length() < len) entered.append(key);
+                    if (entered.length() == len) {                                 // a full attempt
+                        if (entered.toString().contentEquals(code)) { pinShowing = false; main.removeCallbacks(tick[0]); dlg.dismiss(); showAdminMenu(restore); return; }
+                        tries[0]--; entered.setLength(0);
+                        if (tries[0] <= 0) { disp.setText("locked — try again"); main.postDelayed(fail[0], 700); return; }
+                        disp.setText("wrong — " + tries[0] + (tries[0] == 1 ? " try" : " tries") + " left"); return;
+                    }
+                    status.run();
                 });
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
                 lp.setMargins(dp(4), dp(4), dp(4), dp(4)); rowv.addView(b, lp);
@@ -398,8 +405,9 @@ public class PlayerActivity extends Activity {
             col.addView(rowv);
         }
         dlg.setOnDismissListener(d -> main.removeCallbacks(tick[0]));
-        fresh.run(); main.postDelayed(tick[0], 1000); dlg.show();
+        status.run(); main.postDelayed(tick[0], 1000); dlg.show();
     }
+    private static int clampInt(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 
     private void showPinPad() {
         if (pinShowing) return;

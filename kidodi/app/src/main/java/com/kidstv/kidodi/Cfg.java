@@ -36,6 +36,9 @@ class Cfg {
             {"kidodi_pin",           "str", "1234"},
             {"kidodi_unlock_style",  "str", "challenge"},   // default: solve a random timed code (no PIN to remember); "pin"/"pattern" are options
             {"kidodi_pattern",       "str", ""},
+            {"kidodi_chal_len",      "int", "6"},   // Randomized PIN: number of digits shown on screen
+            {"kidodi_chal_secs",     "int", "30"},  // Randomized PIN: seconds allowed to enter it
+            {"kidodi_chal_tries",    "int", "3"},   // Randomized PIN: wrong attempts allowed before it drops back to locked
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
 

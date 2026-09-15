@@ -900,19 +900,29 @@ public class RemoteActivity extends Activity {
         }
 
         sSec(col, "Lock");
+        // How the adult unlocks (to the menu / settings / exit). Randomized PIN = a timed code shown on
+        // screen you copy (nothing to remember); Preset PIN = your own Admin PIN (not shown); Pattern =
+        // a set pattern (drawn on the TV). Vary it to keep a clever toddler guessing.
+        final String[] uv = {"challenge", "pin", "pattern"}, ul = {"Randomized PIN", "Preset PIN", "Pattern"};
         if (cfgOwner) {
-            // How the adult unlocks (to the menu / settings / exit). Default "Random code" = a timed code to
-            // copy, nothing to remember; "Fixed PIN" uses the Admin PIN below; "Pattern" uses a set pattern
-            // (drawn on the TV). Vary it to keep a clever toddler guessing.
-            cfgStrCycle(col, "Method", "kidodi_unlock_style",
-                    new String[]{"challenge", "pin", "pattern"}, new String[]{"Random code", "Fixed PIN", "Pattern"});
+            final String style = cfgS("kidodi_unlock_style", "challenge");
+            Button mrow = setRow(col, "Method"); mrow.setText(sLabel(style, uv, ul));
+            mrow.setOnClickListener(v -> {
+                String cur = cfgS("kidodi_unlock_style", "challenge"), nx = uv[0];
+                for (int i = 0; i < uv.length; i++) if (uv[i].equals(cur)) { nx = uv[(i + 1) % uv.length]; break; }
+                setCfg("kidodi_unlock_style", nx); renderSettings();   // re-render so the sub-settings show/hide
+            });
+            if ("challenge".equals(style)) {   // shown-on-screen random code -> expose its parameters
+                cfgIntCycle(col, "PIN length", "kidodi_chal_len", new int[]{4, 5, 6, 7, 8}, 1);
+                cfgIntCycle(col, "Time to enter (s)", "kidodi_chal_secs", new int[]{15, 30, 45, 60}, 1);
+                cfgIntCycle(col, "Attempts", "kidodi_chal_tries", new int[]{1, 2, 3, 5}, 1);
+            }
             Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
             final boolean k = cfgI("kidodi_kiosk", 0) == 1;
             Button kb = setRow(col, "Kiosk lock"); kb.setText(k ? "on" : "off");
             kb.setOnClickListener(v -> { setCfg("kidodi_kiosk", cfgI("kidodi_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
         } else {
-            String m = cfgS("kidodi_unlock_style", "challenge");
-            sDim(col, "Method", "challenge".equals(m) ? "Random code" : "pattern".equals(m) ? "Pattern" : "Fixed PIN");
+            sDim(col, "Method", sLabel(cfgS("kidodi_unlock_style", "challenge"), uv, ul));
             sDim(col, "Admin PIN", "••••");
             sDim(col, "Kiosk lock", cfgI("kidodi_kiosk", 0) == 1 ? "on" : "off");
             sGated(col);

@@ -85,17 +85,24 @@ public class SettingsActivity extends Activity {
         // --- PIN + kiosk (DEVICE-OWNER gated) --------------------------------------------------
         section("Lock");
         if (owner) {
-            strDropdown("Unlock style", "kidodi_unlock_style", "pin",
-                    new String[]{"pin", "challenge", "pattern"}, new String[]{"PIN pad", "Timed code", "Pattern (experimental)"},
+            final String style = Cfg.getStr(this, "kidodi_unlock_style", "challenge");
+            strDropdown("Unlock method", "kidodi_unlock_style", "challenge",
+                    new String[]{"challenge", "pin", "pattern"}, new String[]{"Randomized PIN", "Preset PIN", "Pattern (experimental)"},
                     this::postRebuild);
+            if ("challenge".equals(style)) {   // sub-settings only when the shown-on-screen random code is used
+                intDropdown("PIN length", "kidodi_chal_len", 6, new int[]{4, 5, 6, 7, 8}, 1);
+                intDropdown("Time to enter (seconds)", "kidodi_chal_secs", 30, new int[]{15, 30, 45, 60}, 1);
+                intDropdown("Attempts allowed", "kidodi_chal_tries", 3, new int[]{1, 2, 3, 5}, 1);
+            }
             actionRow("Admin PIN", "change", this::changePin);
-            if ("pattern".equals(Cfg.getStr(this, "kidodi_unlock_style", "pin")))
+            if ("pattern".equals(style))
                 actionRow("Unlock pattern", Cfg.getStr(this, "kidodi_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
             boolRow("Kiosk lock (device owner)", "kidodi_kiosk", 0);
-            note("Unlock style: PIN pad = type your admin PIN. Timed code = type a random 6-digit code shown on "
-                    + "screen within 30s (toddler-proof, nothing to remember). Pattern = draw a swipe pattern "
-                    + "(experimental; our own, not the phone's system pattern — set it below, and it falls back to the "
-                    + "PIN pad until you do). Kiosk lock pins Kidodi as home + blocks Home/Back/Recents (next launch).");
+            note("Unlock method: Randomized PIN = copy a random code shown on screen, within the time + attempts you set "
+                    + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
+                    + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
+                    + "set it below, falls back to the PIN pad until you do). Kiosk lock pins Kidodi as home + blocks "
+                    + "Home/Back/Recents (next launch).");
         } else {
             dimRow("Admin PIN", "•••• ");
             dimRow("Kiosk lock (device owner)", Cfg.getInt(this, "kidodi_kiosk", 0) == 1 ? "on" : "off");
