@@ -285,8 +285,11 @@ public class PlayerActivity extends Activity {
                 // Samsung's PowerManager silently cancels an app's screen-wake when the app's notifications
                 // are disabled ("Screen__On : Cancel (notifications are disabled)"), which broke a remote
                 // Play / Light from a physically-off display. The kiosk grants itself POST_NOTIFICATIONS.
-                try { dpm.setPermissionGrantState(admin, getPackageName(), "android.permission.POST_NOTIFICATIONS",
-                        DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED); } catch (Exception e) {}
+                // API 33+ only: it doesn't exist earlier (notifications are on by default), and on Android 10 the
+                // grant of the unknown permission blocks in DevicePolicyManager -> onResume froze -> boot ANR.
+                if (android.os.Build.VERSION.SDK_INT >= 33)
+                    try { dpm.setPermissionGrantState(admin, getPackageName(), "android.permission.POST_NOTIFICATIONS",
+                            DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED); } catch (Exception e) {}
                 // the SHOW is the home screen: pin US as the preferred HOME so boot/Home land here (beats v1)
                 try {
                     android.content.IntentFilter home = new android.content.IntentFilter(Intent.ACTION_MAIN);

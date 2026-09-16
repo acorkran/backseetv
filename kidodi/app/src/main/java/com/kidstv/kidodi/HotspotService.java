@@ -6,8 +6,8 @@ package com.kidstv.kidodi;
 //  used to be the dealbreaker. It isn't anymore: we just render those random
 //  creds as a standard WIFI: QR (QrShareActivity) and the remotes scan+join.
 //  The reservation is held by this service; stop() tears the hotspot down.
-//  NOTE: needs NEARBY_WIFI_DEVICES (API 33+) / location (pre-33) + CHANGE_WIFI_STATE;
-//  as device owner we grant NEARBY_WIFI_DEVICES to ourselves so there's no prompt.
+//  NOTE: needs NEARBY_WIFI_DEVICES (API 33+) / location permission + location on (pre-33)
+//  + CHANGE_WIFI_STATE; as device owner we grant these to ourselves so there's no prompt.
 // ============================================================================
 
 import android.app.Service;
@@ -113,16 +113,21 @@ public class HotspotService extends Service {
     }
     private static String esc(String s) { return s == null ? "" : s.replaceAll("([\\\\;,:\"])", "\\\\$1"); }
 
-    /** Device owner grants itself NEARBY_WIFI_DEVICES so startLocalOnlyHotspot needs no prompt. */
+    /** Device owner grants itself what startLocalOnlyHotspot needs so there's no prompt: NEARBY_WIFI_DEVICES
+        on API 33+; below that ACCESS_FINE_LOCATION, and location must be switched on. */
     private static void grantNearbyWifi(Context ctx) {
         try {
-            if (Build.VERSION.SDK_INT < 33) return;
             android.app.admin.DevicePolicyManager dpm =
                     (android.app.admin.DevicePolicyManager) ctx.getSystemService(Context.DEVICE_POLICY_SERVICE);
-            if (dpm != null && dpm.isDeviceOwnerApp(ctx.getPackageName())) {
-                android.content.ComponentName admin = new android.content.ComponentName(ctx, AdminReceiver.class);
-                dpm.setPermissionGrantState(admin, ctx.getPackageName(), "android.permission.NEARBY_WIFI_DEVICES",
-                        android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED);
+            if (dpm == null || !dpm.isDeviceOwnerApp(ctx.getPackageName())) return;
+            android.content.ComponentName admin = new android.content.ComponentName(ctx, AdminReceiver.class);
+            String perm = Build.VERSION.SDK_INT >= 33 ? "android.permission.NEARBY_WIFI_DEVICES" : android.Manifest.permission.ACCESS_FINE_LOCATION;
+            dpm.setPermissionGrantState(admin, ctx.getPackageName(), perm,
+                    android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED);
+            if (Build.VERSION.SDK_INT < 33) {
+                if (Build.VERSION.SDK_INT >= 30) dpm.setLocationEnabled(admin, true);
+                else dpm.setSecureSetting(admin, android.provider.Settings.Secure.LOCATION_MODE,
+                        String.valueOf(android.provider.Settings.Secure.LOCATION_MODE_HIGH_ACCURACY));
             }
         } catch (Exception e) { Log.w(TAG, "grantNearbyWifi: " + e); }
     }

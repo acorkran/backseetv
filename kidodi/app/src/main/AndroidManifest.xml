@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- read the local library off the SD card (grant via appops MANAGE_EXTERNAL_STORAGE allow) -->
+    <!-- read the local library off the SD card (grant via appops MANAGE_EXTERNAL_STORAGE allow).
+         API 29 has no all-files access: legacy READ/WRITE_EXTERNAL_STORAGE + requestLegacyExternalStorage,
+         which the device-owner kiosk grants to itself (Library.grantStorage) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- in-process control server (:8090) + mDNS/NSD advertise so remotes find the player -->
@@ -17,7 +21,8 @@
     <!-- pre-31 BLE -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+    <!-- pre-31 BLE scan + the local-only hotspot below API 33 (NEARBY_WIFI_DEVICES replaces it) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32"/>
     <!-- keep the remote's connection (BLE/wifi) alive in a foreground service (also feeds Android Auto) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
@@ -37,6 +42,7 @@
         android:label="Kidodi"
         android:icon="@android:drawable/ic_media_play"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 

@@ -64,12 +64,31 @@ public final class Library {
         return null;
     }
 
+    /** API 29 has no all-files access: reading the library needs legacy READ/WRITE_EXTERNAL_STORAGE
+        (requestLegacyExternalStorage in the manifest). The device-owner kiosk grants them to itself. */
+    private static void grantStorage(Context ctx) {
+        if (android.os.Build.VERSION.SDK_INT >= 30) return;
+        try {
+            android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager) ctx.getSystemService(Context.DEVICE_POLICY_SERVICE);
+            if (dpm != null && dpm.isDeviceOwnerApp(ctx.getPackageName())) {
+                android.content.ComponentName admin = new android.content.ComponentName(ctx, AdminReceiver.class);
+                for (String p : new String[]{android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE})
+                    dpm.setPermissionGrantState(admin, ctx.getPackageName(), p,
+                            android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED);
+            }
+        } catch (Exception e) { Log.w(TAG, "grantStorage: " + e); }
+    }
+
     /** Candidate "KidsTV" roots across primary + removable volumes (portable, no hardcoded UUID). */
     private static List<File> roots(Context ctx) {
+        grantStorage(ctx);
         LinkedHashSet<File> roots = new LinkedHashSet<>();
         try {
             StorageManager sm = (StorageManager) ctx.getSystemService(Context.STORAGE_SERVICE);
-            if (sm != null) for (StorageVolume v : sm.getStorageVolumes()) {
+            // StorageVolume.getDirectory() is API 30 (NoSuchMethodError on 29, which catch(Exception) misses);
+            // older releases are covered by the external-storage + /storage/* sweep below
+            if (sm != null && android.os.Build.VERSION.SDK_INT >= 30) for (StorageVolume v : sm.getStorageVolumes()) {
                 File d = v.getDirectory();
                 if (d != null) roots.add(new File(d, "KidsTV"));
             }
