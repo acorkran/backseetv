@@ -108,7 +108,7 @@ public class RemoteActivity extends Activity {
         linkLabel.setPadding(dp(8), 0, dp(6), 0);
         linkLabel.setMaxLines(1); linkLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
         linkLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        linkLabel.setClickable(true); linkLabel.setOnClickListener(v -> openConnection());   // the Connection screen
+        linkLabel.setClickable(true); linkLabel.setOnClickListener(v -> showTargetMenu());   // pick a tablet / both / Connection
         header.addView(linkLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView gear = new TextView(this);
         gear.setText("⚙"); gear.setTextColor(SUB); gear.setTextSize(22); gear.setPadding(dp(4), 0, dp(10), 0);
@@ -307,7 +307,11 @@ public class RemoteActivity extends Activity {
             ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
             RemoteService svc = RemoteService.get();
             String ws = WearPusher.watchStatus();
-            String base = ready && svc != null ? svc.transport() : "connect";
+            String tgt = svc != null ? svc.target() : null;
+            String base;
+            if (RemoteService.ALL.equals(tgt)) base = "Both";                              // both in unison
+            else if (tgt != null && svc.connectedTablet() != null) base = svc.connectedTablet();
+            else base = ready && svc != null ? svc.transport() : "connect";
             linkLabel.setText(base + (ws.isEmpty() ? "" : "  ·  " + ws) + "  ▾");
             if (connView != null) renderConnStatus();
         }
@@ -657,6 +661,40 @@ public class RemoteActivity extends Activity {
     //  in state and RemoteService coordinates the joins/pushes. This screen shows status,
     //  lets you change the level, and offers the manual actions for each.
     // =====================================================================================
+    // Top dropdown: pick which tablet this remote drives — one, the other, or BOTH IN UNISON — plus a
+    // way into the Connection screen. The tablet choices appear once a second player has been heard.
+    private void showTargetMenu() {
+        final RemoteService svc = RemoteService.get();
+        if (svc == null) { openConnection(); return; }
+        final java.util.Map<String, String> tabs = svc.tablets();
+        final String cur = svc.target();
+        android.widget.PopupMenu pm = new android.widget.PopupMenu(this, linkLabel);
+        final java.util.HashMap<Integer, String> map = new java.util.HashMap<>();
+        int mid = 1;
+        if (tabs.size() >= 2) {
+            for (java.util.Map.Entry<String, String> e : tabs.entrySet()) {
+                pm.getMenu().add(0, mid, mid, (e.getKey().equals(cur) ? "●  " : "○  ") + e.getValue());
+                map.put(mid, e.getKey()); mid++;
+            }
+            pm.getMenu().add(0, mid, mid, (RemoteService.ALL.equals(cur) ? "●  " : "○  ") + "Both in unison");
+            map.put(mid, RemoteService.ALL); mid++;
+        }
+        final int connId = mid;
+        pm.getMenu().add(0, connId, connId, "Connection…");
+        pm.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
+            if (id == connId) { openConnection(); return true; }
+            final String t = map.get(id);
+            if (t != null) {
+                svc.setTarget(t);
+                toast(RemoteService.ALL.equals(t) ? "Both in unison" : "Using " + tabs.get(t));
+                linkLabel.setText((RemoteService.ALL.equals(t) ? "Both" : tabs.get(t)) + "  ▾");
+            }
+            return true;
+        });
+        pm.show();
+    }
+
     static final String[][] CONN_MODES = {
             {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
             {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds live camera + fast library browsing."},

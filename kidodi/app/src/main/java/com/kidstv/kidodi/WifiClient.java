@@ -122,6 +122,23 @@ public class WifiClient {
         }
         new Thread(() -> http(path)).start();
     }
+    /** "Both in unison": fan a (non-query) command out to EVERY resolved player. A query has no single
+        answer, so it still goes to the one we poll. Falls back to the normal send when nothing resolved. */
+    public void sendAll(String cmd) {
+        if (isQuery(cmd)) { send(cmd); return; }
+        java.util.Collection<String> hp = new java.util.ArrayList<>(hosts.values());
+        if (hp.isEmpty()) { send(cmd); return; }
+        final String path = toHttp(cmd);
+        for (final String h : hp) new Thread(() -> httpTo(h, path)).start();
+    }
+    private void httpTo(String hostPort, String path) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL("http://" + hostPort + path).openConnection();
+            c.setConnectTimeout(2500); c.setReadTimeout(2500);
+            c.getInputStream().close();
+        } catch (Exception ignored) {} finally { if (c != null) c.disconnect(); }
+    }
     /** Commands whose HTTP response is a {"type":...} payload the UI waits for. */
     private static boolean isQuery(String cmd) {
         return cmd.equals("list") || cmd.equals("queue") || cmd.equals("conn") || cmd.equals("cfg") || cmd.startsWith("shows") || cmd.startsWith("eps:");

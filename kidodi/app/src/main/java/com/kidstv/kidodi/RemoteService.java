@@ -163,7 +163,8 @@ public class RemoteService extends Service {
         String mode = connMode;
         if ("ble".equals(mode)) {   // pure Bluetooth: no Wi-Fi client, no hotspot of ours
             if (wifi != null) { try { wifi.stop(); } catch (Exception ignored) {} wifi = null; }
-        } else if (wifi == null && !bleUp()) startWifi(null, 0);
+        } else if (wifi == null) startWifi(null, 0);   // a Wi-Fi tier runs mDNS CONCURRENTLY with BLE so we
+        // discover + can reach EVERY tablet (multi-target / both-in-unison), not just as a BLE fallback
         if ("tv_hotspot".equals(mode) && hsSsid != null && hsPass != null) {
             String key = hsSsid + "|" + hsPass;
             if (!key.equals(joinedKey)) {   // join the TV's hotspot once per creds (non-owner phone: a system prompt)
@@ -225,6 +226,8 @@ public class RemoteService extends Service {
     // Both links used to take whatever player answered first, so a remote in range of two of them could
     // attach to either and swap between them. Every player heard is remembered here; the pick is sticky.
     static final String PREF_TARGET = "kidodi_target";
+    public static final String ALL = "*";   // target = "both in unison": commands fan out to every tablet
+    public boolean isBroadcast() { return ALL.equals(target()); }
     private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
     /** id -> friendly name for every player heard on BLE or mDNS this session. */
     public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
@@ -233,8 +236,12 @@ public class RemoteService extends Service {
     /** Stick to one player: persist it, then re-aim both links. */
     public void setTarget(String id) {
         Cfg.p(this).edit().putString(PREF_TARGET, id == null ? "" : id).apply();
-        if (ble != null) { ble.setTarget(id); ble.stop(); ble.start(); }
-        if (wifi != null) { wifi.setTarget(id); wifi.stop(); wifi = null; startWifi(null, 0); }
+        // "Both in unison" isn't a real player id: poll whoever answers for a representative state, and
+        // fan commands to all via Wi-Fi (BLE can only hold one link, so broadcast needs Wi-Fi up).
+        String linkTarget = ALL.equals(id) ? null : id;
+        if (ble != null) { ble.setTarget(linkTarget); ble.stop(); ble.start(); }
+        if (wifi != null) { wifi.setTarget(linkTarget); wifi.stop(); wifi = null; startWifi(null, 0); }
+        if (ALL.equals(id) && wifi == null) startWifi(null, 0);
     }
     /** Friendly name of the player we're actually attached to, or null. */
     public String connectedTablet() {
@@ -257,6 +264,7 @@ public class RemoteService extends Service {
         });
         ble.setTarget(target());
         ble.start();
+        if (!"ble".equals(connMode)) applyConnMode();   // wifi tier: bring mDNS up now (concurrent), don't wait for the BLE-fallback
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
         main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
@@ -280,6 +288,7 @@ public class RemoteService extends Service {
     private boolean bleUp() { return ble != null && ble.isConnected(); }
 
     public void send(String cmd) {
+        if (isBroadcast() && wifi != null) { wifi.sendAll(cmd); return; }   // both in unison
         if (bleUp()) ble.send(cmd);
         else if (wifi != null) wifi.send(cmd);
     }
