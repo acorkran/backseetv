@@ -15,7 +15,11 @@ import android.os.Looper;
 import android.util.Log;
 
 public class WifiClient {
-    public interface Listener { void onStatus(String s); void onState(String json); }
+    public interface Listener {
+        void onStatus(String s); void onState(String json);
+        /** A player resolved on the LAN (id + friendly name), whether or not we poll it. */
+        void onSeen(String id, String name);
+    }
     static final String TAG = "Kidodi";
     static final String SVC = "_kidodi._tcp.";
 
@@ -28,6 +32,17 @@ public class WifiClient {
     private volatile int port = 8090;
     private volatile boolean stopped = false, connected = false, fixed = false;
     private Runnable poller;
+
+    // WHICH player to poll. Every resolved service used to overwrite `host`, so with two tablets on the
+    // network the remote silently flipped to whichever resolved last. Now non-target players are only
+    // remembered in `hosts`; null target keeps the old first-one-wins behaviour.
+    private volatile String target;
+    private volatile String connectedId;
+    private final java.util.Map<String, String> hosts = new java.util.concurrent.ConcurrentHashMap<>();
+    public void setTarget(String id) { target = (id == null || id.isEmpty()) ? null : id; }
+    public String connectedId() { return connectedId; }
+    /** id -> "host:port" for every player resolved this session (direct HTTP without re-discovery). */
+    public java.util.Map<String, String> hosts() { return new java.util.LinkedHashMap<>(hosts); }
 
     public WifiClient(Context c, Listener l) { this.ctx = c.getApplicationContext(); this.l = l; }
     public boolean isConnected() { return connected; }
@@ -59,12 +74,29 @@ public class WifiClient {
             nsd.resolveService(si, new NsdManager.ResolveListener() {
                 public void onResolveFailed(NsdServiceInfo s, int e) {}
                 public void onServiceResolved(NsdServiceInfo s) {
-                    host = s.getHost() != null ? s.getHost().getHostAddress() : null;
-                    port = s.getPort() > 0 ? s.getPort() : 8090;
-                    if (host != null) { startPolling(); }
+                    String h = s.getHost() != null ? s.getHost().getHostAddress() : null;
+                    int p = s.getPort() > 0 ? s.getPort() : 8090;
+                    if (h == null) return;
+                    String id = attr(s, "id");
+                    String nm = attr(s, "name");
+                    if (nm == null || nm.isEmpty()) nm = s.getServiceName();   // NSD may have renamed it on a clash
+                    if (id != null) { final String i2 = id, n2 = nm; hosts.put(id, h + ":" + p); main.post(() -> l.onSeen(i2, n2)); }
+                    String want = target;
+                    if (want != null && (id == null || !want.equals(id))) return;   // another tablet: remembered, not switched to
+                    host = h; port = p; connectedId = id;
+                    startPolling();
                 }
             });
         } catch (Exception ignored) {}
+    }
+
+    /** A TXT value from the player's mDNS record ("id" / "name"); null when absent. */
+    private static String attr(NsdServiceInfo s, String key) {
+        try {
+            java.util.Map<String, byte[]> a = s.getAttributes();
+            byte[] v = a != null ? a.get(key) : null;
+            return v == null ? null : new String(v, "UTF-8");
+        } catch (Exception e) { return null; }
     }
 
     private void startPolling() {

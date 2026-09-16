@@ -30,12 +30,23 @@ import java.util.List;
 @SuppressLint({"MissingPermission"})
 @SuppressWarnings("deprecation")
 public class BleClient {
-    public interface Listener { void onStatus(String s); void onState(String json); void onStill(byte[] jpeg); }
+    public interface Listener {
+        void onStatus(String s); void onState(String json); void onStill(byte[] jpeg);
+        /** A player was heard advertising (id + friendly name), whether or not we attach to it. */
+        void onSeen(String id, String name);
+    }
     static final String TAG = "Kidodi";
 
     private final Context ctx;
     private final Listener l;
     private final Handler main = new Handler(Looper.getMainLooper());
+
+    // WHICH player to attach to. Null keeps the old "first one that answers" behaviour (single-tablet
+    // setups, and players too old to publish an id); set it and we hold out for that tablet.
+    private volatile String target;
+    private volatile String connectedId;
+    public void setTarget(String id) { target = (id == null || id.isEmpty()) ? null : id; }
+    public String connectedId() { return connectedId; }
 
     private BluetoothLeScanner scanner;
     private ScanCallback scanCb;
@@ -75,7 +86,14 @@ public class BleClient {
         scanCb = new ScanCallback() {
             @Override public void onScanResult(int t, ScanResult r) {
                 if (connected) return;
+                String[] tag = tagOf(r);                     // "<id>:<name>" from the scan response
+                if (tag != null) { final String[] g = tag; main.post(() -> l.onSeen(g[0], g[1])); }
+                String want = target;
+                // Not the tablet we were told to drive? Remember it (above) and keep scanning. Players too
+                // old to publish an id have tag == null, so a set target skips them rather than grabbing one.
+                if (want != null && (tag == null || !want.equals(tag[0]))) return;
                 scanning = false;
+                connectedId = tag != null ? tag[0] : null;
                 status("connecting...");
                 try { scanner.stopScan(this); } catch (Exception ignored) {}
                 gatt = r.getDevice().connectGatt(ctx, false, gattCb, android.bluetooth.BluetoothDevice.TRANSPORT_LE);
@@ -92,6 +110,22 @@ public class BleClient {
             }
         }, FAST_SCAN_MS);
     }
+
+    /** "<id>:<name>" that a player publishes in its BLE scan response (see BleServer.MFG_ID).
+        Null for players old enough not to advertise one — those stay "first to answer". */
+    private static String[] tagOf(ScanResult r) {
+        try {
+            android.bluetooth.le.ScanRecord rec = r.getScanRecord();
+            byte[] d = rec != null ? rec.getManufacturerSpecificData(BleServer.MFG_ID) : null;
+            if (d == null || d.length == 0) return null;
+            String s = new String(d, "UTF-8");
+            int c = s.indexOf(':');
+            String id = c > 0 ? s.substring(0, c) : s;
+            String name = c > 0 ? s.substring(c + 1) : "";
+            return id.isEmpty() ? null : new String[]{id, name};
+        } catch (Exception e) { return null; }
+    }
+
     static final long FAST_SCAN_MS = 8000;
     private long reconnectDelay = 2500;   // backs off to 30s while the TV stays unreachable; resets on connect
 

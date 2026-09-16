@@ -221,12 +221,41 @@ public class RemoteService extends Service {
         stopSelf();
     };
 
+    // --- WHICH tablet (multi-player) ---------------------------------------------------------------
+    // Both links used to take whatever player answered first, so a remote in range of two of them could
+    // attach to either and swap between them. Every player heard is remembered here; the pick is sticky.
+    static final String PREF_TARGET = "kidodi_target";
+    private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
+    /** id -> friendly name for every player heard on BLE or mDNS this session. */
+    public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
+    /** The player we hold out for, or null = whichever answers first (single-tablet setups). */
+    public String target() { String t = Cfg.p(this).getString(PREF_TARGET, ""); return t.isEmpty() ? null : t; }
+    /** Stick to one player: persist it, then re-aim both links. */
+    public void setTarget(String id) {
+        Cfg.p(this).edit().putString(PREF_TARGET, id == null ? "" : id).apply();
+        if (ble != null) { ble.setTarget(id); ble.stop(); ble.start(); }
+        if (wifi != null) { wifi.setTarget(id); wifi.stop(); wifi = null; startWifi(null, 0); }
+    }
+    /** Friendly name of the player we're actually attached to, or null. */
+    public String connectedTablet() {
+        String id = bleUp() ? ble.connectedId() : (wifi != null && wifi.isConnected() ? wifi.connectedId() : null);
+        if (id == null) return null;
+        String n = seenTablets.get(id);
+        return n != null && !n.isEmpty() ? n : id;
+    }
+    private void noteSeen(String id, String name) {
+        if (id == null || id.isEmpty()) return;
+        seenTablets.put(id, name == null || name.isEmpty() ? id : name);
+    }
+
     private void startLinks() {
         ble = new BleClient(this, new BleClient.Listener() {
             public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
             public void onState(String json) { onIncoming(json, "BLE"); }
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
+            public void onSeen(String id, String name) { noteSeen(id, name); }
         });
+        ble.setTarget(target());
         ble.start();
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
@@ -241,8 +270,10 @@ public class RemoteService extends Service {
                 if (typeOf(json) != null) { onIncoming(json, local ? "local" : "Wi-Fi"); return; }
                 if (!bleUp()) onIncoming(json, local ? "local" : "Wi-Fi");
             }
+            public void onSeen(String id, String name) { noteSeen(id, name); }
         });
         if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
+        else wifi.setTarget(target());   // the local admin remote is pinned to loopback, never to an id
         wifi.start();
     }
 
@@ -262,7 +293,11 @@ public class RemoteService extends Service {
     /** For Wi-Fi file import: a ONE-SHOT mDNS discovery of the player's host:port that does NOT
      *  leave a polling transport running. Blocking, off-main; up to ~5s. Returns null if not found. */
     public String playerHttpHost() {
-        WifiClient tmp = new WifiClient(this, new WifiClient.Listener() { public void onStatus(String s) {} public void onState(String s) {} });
+        WifiClient tmp = new WifiClient(this, new WifiClient.Listener() {
+            public void onStatus(String s) {} public void onState(String s) {}
+            public void onSeen(String id, String name) { noteSeen(id, name); }
+        });
+        tmp.setTarget(target());   // upload to the tablet we're driving, not whichever resolves first
         tmp.start();
         try {
             for (int i = 0; i < 50; i++) {

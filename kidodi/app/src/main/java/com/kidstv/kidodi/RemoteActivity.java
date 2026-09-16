@@ -702,9 +702,41 @@ public class RemoteActivity extends Activity {
         if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off");
         connStatus.setText(sb.toString().trim());
     }
+    /** Which tablet this remote drives. Hidden until a second player has been heard: with one tablet
+        there's nothing to choose and the remote keeps attaching to whatever answers first. */
+    private void renderTablets() {
+        final RemoteService svc = RemoteService.get();
+        if (svc == null || local) return;
+        java.util.Map<String, String> found = svc.tablets();
+        final String target = svc.target();
+        if (found.size() < 2 && target == null) return;
+        TextView hdr = noteText("Tablet"); hdr.setTextColor(SUB); connModes.addView(hdr);
+        for (final java.util.Map.Entry<String, String> e : found.entrySet()) {
+            boolean on = e.getKey().equals(target);
+            Button b = rowBtn((on ? "●  " : "○  ") + e.getValue(), on ? 0xFF8FD694 : TXT);
+            b.setOnClickListener(v -> {
+                svc.setTarget(e.getKey());
+                toast("Using " + e.getValue());
+                main.postDelayed(() -> { renderConnModes(); renderConnStatus(); }, 600);
+            });
+            connModes.addView(b);
+        }
+        if (target != null) {
+            Button any = rowBtn("○  Any tablet (first to answer)", TXT);
+            any.setOnClickListener(v -> {
+                svc.setTarget(null);
+                toast("Using any tablet");
+                main.postDelayed(() -> { renderConnModes(); renderConnStatus(); }, 600);
+            });
+            connModes.addView(any);
+        }
+        connModes.addView(noteText("More than one player is in range — pick the one this remote drives."));
+    }
+
     private void renderConnModes() {
         if (connModes == null) return;
         connModes.removeAllViews();
+        renderTablets();
         for (final String[] m : CONN_MODES) {
             boolean on = m[0].equals(lastConn);
             Button b = rowBtn((on ? "●  " : "○  ") + m[1], on ? 0xFF8FD694 : TXT);
