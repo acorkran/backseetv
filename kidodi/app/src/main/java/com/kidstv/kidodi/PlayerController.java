@@ -187,6 +187,16 @@ public class PlayerController {
         List<File> f = libFiles;
         return (id >= 0 && id < f.size()) ? f.get(id) : null;
     }
+    /** Client playback: play a single item from a URL (a host's /media?id=N). Muted-safe — a client
+        streaming from the host must never start audible. Used to verify host/client streaming. */
+    public void playUrl(final String url) {
+        if (url == null || url.isEmpty()) return;
+        on(() -> {
+            if (p == null) return;
+            p.setMediaItems(java.util.Collections.singletonList(MediaItem.fromUri(url)));
+            p.prepare(); keepMute(); p.play();
+        });
+    }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
     public boolean enqueue(final int id, final boolean next, final boolean now) {
         final MediaItem mi = itemFor(id);

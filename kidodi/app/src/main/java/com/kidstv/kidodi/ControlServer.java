@@ -88,6 +88,7 @@ public class ControlServer {
                     if (m > 0) ctrl.startSleep(m); else ctrl.cancelSleep();
                     body = ok(); break;
                 }
+                case "/playurl": { String u = param(q, "url"); if (u != null) { ctrl.playUrl(urlDecode(u)); PlayerActivity.wakeScreen(); body = ok(); } else body = "{\"ok\":false,\"error\":\"no url\"}"; break; }   // client: stream+play a host media URL
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), Cfg.getInt(ctx, "kidodi_flash_ms", 3000))); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 // --- library / queue editing / user playlists --------------------------------------
