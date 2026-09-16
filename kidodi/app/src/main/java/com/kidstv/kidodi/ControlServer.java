@@ -255,9 +255,15 @@ public class ControlServer {
             nsd = (NsdManager) ctx.getSystemService(Context.NSD_SERVICE);
             if (nsd == null) return;
             NsdServiceInfo si = new NsdServiceInfo();
-            si.setServiceName("Kidodi");
+            si.setServiceName(Identity.name(ctx));   // was a fixed "Kidodi": two tablets looked identical on the LAN
             si.setServiceType("_kidodi._tcp");
             si.setPort(PORT);
+            // TXT record so a remote can list + pick a tablet before connecting. NSD renames a clashing
+            // service name ("Kidodi (2)"), so the id — not the name — is what identifies a player.
+            try {
+                si.setAttribute("id", Identity.id(ctx));
+                si.setAttribute("name", Identity.name(ctx));
+            } catch (Exception ignored) {}
             nsdL = new NsdManager.RegistrationListener() {
                 public void onServiceRegistered(NsdServiceInfo s) { Log.i(TAG, "mDNS registered " + s.getServiceName()); }
                 public void onRegistrationFailed(NsdServiceInfo s, int e) { Log.e(TAG, "mDNS reg failed " + e); }

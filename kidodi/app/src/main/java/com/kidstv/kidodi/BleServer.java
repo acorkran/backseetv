@@ -35,6 +35,10 @@ import java.util.Set;
 @SuppressLint("MissingPermission")
 public class BleServer {
     static final String TAG = "Kidodi";
+    /** Scan-response tag "<id>:<name>", read by the remote's BleClient to list tablets WITHOUT connecting.
+        0xFFFF is the SIG's test/development company id; 27 = the 31-byte payload less len+type+company. */
+    public static final int MFG_ID = 0xFFFF;
+    public static final int MFG_MAX = 27;
 
     private final Context ctx;
     private final PlayerController ctrl;
@@ -107,11 +111,21 @@ public class BleServer {
         AdvertiseData d = new AdvertiseData.Builder()
                 .setIncludeDeviceName(false)
                 .addServiceUuid(new ParcelUuid(Ble.SERVICE)).build();
+        // The 31-byte advert is full (a 128-bit service UUID eats it), so WHICH tablet this is rides in
+        // the scan response as "<id>:<name>" — a remote can then list tablets by name without connecting.
+        AdvertiseData scan = null;
+        try {
+            byte[] tag = (Identity.id(ctx) + ":" + Identity.name(ctx)).getBytes("UTF-8");
+            if (tag.length > MFG_MAX) tag = java.util.Arrays.copyOf(tag, MFG_MAX);
+            scan = new AdvertiseData.Builder().setIncludeDeviceName(false)
+                    .addManufacturerData(MFG_ID, tag).build();
+        } catch (Exception e) { Log.w(TAG, "BLE scan-response tag: " + e); }
         advCb = new AdvertiseCallback() {
             @Override public void onStartSuccess(AdvertiseSettings s) { Log.i(TAG, "BLE advertising OK"); }
             @Override public void onStartFailure(int e) { Log.e(TAG, "BLE advertising FAIL " + e); }
         };
-        adv.startAdvertising(s, d, advCb);
+        if (scan != null) adv.startAdvertising(s, d, scan, advCb);
+        else adv.startAdvertising(s, d, advCb);
     }
 
     private final BluetoothGattServerCallback serverCb = new BluetoothGattServerCallback() {

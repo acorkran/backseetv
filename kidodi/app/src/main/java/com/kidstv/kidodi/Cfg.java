@@ -23,6 +23,7 @@ class Cfg {
 
     // {key, type("int"|"str"), default} — the full set a remote can read/write.
     static final String[][] KEYS = {
+            {"kidodi_name",          "str", ""},     // this player's friendly name ("" = fall back to the model); see Identity
             {"kidodi_flash_ms",      "int", "3000"},
             {"kidodi_loop",          "int", "1"},
             {"kidodi_conn",          "str", "ble"},

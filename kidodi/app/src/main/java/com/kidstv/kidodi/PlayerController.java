@@ -504,6 +504,10 @@ public class PlayerController {
             String t = title;
             if (t.length() > 100) t = t.substring(0, 100);
             o.put("engine", "ExoPlayer");
+            if (appCtx != null) {   // WHICH tablet this is: a remote that can hear two of them needs to tell them apart
+                o.put("id", Identity.id(appCtx));
+                o.put("name", Identity.name(appCtx));
+            }
             o.put("playlist", currentPl);
             o.put("count", count);
             o.put("index", idx);
