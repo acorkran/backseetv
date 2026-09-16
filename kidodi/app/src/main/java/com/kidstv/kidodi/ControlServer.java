@@ -60,6 +60,7 @@ public class ControlServer {
             if (path.equals("/upload")) { handleUpload(param(q, "name"), h.toString(), in, c); return; }   // wifi file import
             if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
             if (path.equals("/live")) { handleLive(c); return; }   // MJPEG live feed (Wi-Fi tier)
+            if (path.equals("/media")) { handleMedia(c, param(q, "id"), h.toString()); return; }   // stream a library file by id (Range-capable) for a client tablet
 
             String body;
             switch (path) {
@@ -220,6 +221,62 @@ public class ControlServer {
             SnapshotService.setLive(ctx, false);
             try { c.close(); } catch (Exception ignored) {}
         }
+    }
+
+    // Stream a library file to a client tablet, honouring a Range request so ExoPlayer can seek/scrub.
+    // The id is the library's stable file id (same one /library and /enqueue use).
+    private void handleMedia(Socket c, String idStr, String headers) throws Exception {
+        OutputStream os = c.getOutputStream();
+        java.io.File f = null;
+        try { if (idStr != null) f = ctrl.fileForId(Integer.parseInt(idStr.trim())); } catch (Exception ignored) {}
+        if (f == null || !f.isFile()) {
+            os.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("UTF-8"));
+            os.flush(); return;
+        }
+        long len = f.length(), start = 0, end = len - 1;
+        boolean partial = false;
+        for (String hl : headers.split("\r\n")) {
+            if (hl.toLowerCase().startsWith("range:") && hl.indexOf('=') >= 0) {
+                String r = hl.substring(hl.indexOf('=') + 1).trim();
+                int dash = r.indexOf('-');
+                if (dash >= 0) try {
+                    String s0 = r.substring(0, dash).trim(), s1 = r.substring(dash + 1).trim();
+                    if (!s0.isEmpty()) start = Long.parseLong(s0);
+                    if (!s1.isEmpty()) end = Long.parseLong(s1);
+                    partial = true;
+                } catch (Exception ignored) {}
+                break;
+            }
+        }
+        if (start < 0) start = 0;
+        if (end >= len) end = len - 1;
+        if (start > end) { start = 0; end = len - 1; partial = false; }
+        long clen = end - start + 1;
+        StringBuilder hdr = new StringBuilder();
+        hdr.append(partial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n");
+        if (partial) hdr.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(len).append("\r\n");
+        hdr.append("Content-Type: ").append(mediaType(f.getName())).append("\r\n")
+           .append("Accept-Ranges: bytes\r\n")
+           .append("Content-Length: ").append(clen).append("\r\n")
+           .append("Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+        os.write(hdr.toString().getBytes("UTF-8"));
+        java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
+        try {
+            raf.seek(start);
+            byte[] buf = new byte[64 * 1024];
+            long remaining = clen; int n;
+            while (remaining > 0 && (n = raf.read(buf, 0, (int) Math.min(buf.length, remaining))) > 0) {
+                os.write(buf, 0, n); remaining -= n;
+            }
+            os.flush();
+        } catch (Exception ignored) {   // client seeked/closed mid-stream — normal for video
+        } finally { try { raf.close(); } catch (Exception ignored) {} }
+    }
+    private static String mediaType(String name) {
+        String n = name.toLowerCase();
+        if (n.endsWith(".mkv")) return "video/x-matroska";
+        if (n.endsWith(".mp4") || n.endsWith(".m4v")) return "video/mp4";
+        return "application/octet-stream";
     }
 
     private void writeJpeg(Socket c, byte[] data) throws Exception {

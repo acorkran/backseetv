@@ -181,6 +181,12 @@ public class PlayerController {
         List<File> f = libFiles;
         return (id >= 0 && id < f.size()) ? MediaItem.fromUri(Uri.fromFile(f.get(id))) : null;
     }
+    /** The library file for a stable id, or null. Lets the host serve it over HTTP (/media) so a client
+        tablet can play it by the same id the library manifest advertises. */
+    public File fileForId(int id) {
+        List<File> f = libFiles;
+        return (id >= 0 && id < f.size()) ? f.get(id) : null;
+    }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
     public boolean enqueue(final int id, final boolean next, final boolean now) {
         final MediaItem mi = itemFor(id);
