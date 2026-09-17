@@ -89,6 +89,7 @@ public class ControlServer {
                     body = ok(); break;
                 }
                 case "/playurl": { String u = param(q, "url"); if (u != null) { ctrl.playUrl(urlDecode(u)); PlayerActivity.wakeScreen(); body = ok(); } else body = "{\"ok\":false,\"error\":\"no url\"}"; break; }   // client: stream+play a host media URL
+                case "/sync": { String on = param(q, "on"); ctrl.setSync(on == null ? !ctrl.isSync() : ("1".equals(on) || "true".equals(on))); Cfg.applyConfig(ctx, "kidodi_sync", ctrl.isSync() ? "1" : "0"); PlayerActivity.wakeScreen(); body = ok(); break; }   // follower: mirror the host
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), Cfg.getInt(ctx, "kidodi_flash_ms", 3000))); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 // --- library / queue editing / user playlists --------------------------------------

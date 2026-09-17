@@ -23,6 +23,7 @@ import android.os.Looper;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 
@@ -45,7 +46,7 @@ public class PlayerController {
     private Context appCtx;
 
     // volatile snapshot (written on main, read by the HTTP/BLE threads)
-    private volatile int idx, count, posMs, durMs;
+    private volatile int idx, count, posMs, durMs, curId = -1;
     private volatile boolean playing;
     // Volume model: the user's loudness is the SYSTEM media volume (what actually comes out of the
     // speaker); a separate PERSISTED mute drives the ExoPlayer multiplier (0/1). The bug this fixes:
@@ -68,6 +69,9 @@ public class PlayerController {
     // CLIENT mode (kidodi_host set): the library lives on another tablet; items are host /media URLs keyed
     // by the SAME id the host uses, so a broadcast "play show/episode X" plays the same content on both.
     private volatile Map<Integer, MediaItem> clientItems = null;   // non-null => this player is a client
+    private volatile Map<String, Integer> idOfPath = null;         // host: local file path -> stable id (for "cur")
+    private volatile boolean syncEnabled = false;                  // follower: continuously mirror the host's playback
+    private Runnable syncTick;
 
     public void setNapped(boolean n) { napped = n; }
 
@@ -105,7 +109,7 @@ public class PlayerController {
             }
             final LinkedHashMap<String, List<MediaItem>> user = readUserPlaylists();
             on(() -> {
-                libFiles = files; libShows = showIds;
+                libFiles = files; libShows = showIds; idOfPath = idOf; clientItems = null;
                 playlists.clear();
                 playlists.put("Shuffle All", all);
                 playlists.putAll(built);
@@ -145,13 +149,14 @@ public class PlayerController {
             }
             if (all.isEmpty()) { main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000); return; }
             on(() -> {
-                clientItems = byId; libFiles = new ArrayList<>(); libShows = showIds;
+                clientItems = byId; idOfPath = null; libFiles = new ArrayList<>(); libShows = showIds;
                 playlists.clear();
                 playlists.put("Shuffle All", all);
                 playlists.putAll(built);
                 loop = Cfg.getInt(appCtx, "kidodi_loop", 1) == 1;
                 android.util.Log.i("Kidodi", "client library from " + host + ": " + all.size() + " items, " + built.size() + " shows");
                 if (autoStart) selectPlaylist("Shuffle All");
+                if (Cfg.getInt(appCtx, "kidodi_sync", 0) == 1) setSync(true);   // follower: start mirroring the host
             });
         } catch (Exception e) {
             android.util.Log.w("Kidodi", "client library from " + host + " failed: " + e + " — retrying");
@@ -259,6 +264,70 @@ public class PlayerController {
             p.setMediaItems(java.util.Collections.singletonList(MediaItem.fromUri(url)));
             p.prepare(); keepMute(); p.play();
         });
+    }
+
+    /** Stable library id of the CURRENT item — host: from its file path; client: parsed from the
+        /media?id URL. Lets a follower know exactly what the leader is playing. -1 if unknown. */
+    private int currentLibId() {
+        try {
+            MediaItem m = p != null ? p.getCurrentMediaItem() : null;
+            if (m == null || m.localConfiguration == null) return -1;
+            android.net.Uri u = m.localConfiguration.uri;
+            String us = u.toString();
+            int q = us.indexOf("media?id=");
+            if (q >= 0) return Integer.parseInt(us.substring(q + 9).replaceAll("\\D.*", ""));   // client URL
+            Map<String, Integer> map = idOfPath;
+            if (map != null) { Integer id = map.get(u.getPath()); if (id != null) return id; }   // host file
+        } catch (Exception ignored) {}
+        return -1;
+    }
+
+    // --- SYNCED playback (follower): mirror the host's current item + position; muted, speed-nudged ----
+    public boolean isSync() { return syncEnabled; }
+    public void setSync(boolean on) { syncEnabled = on; if (on) startSyncLoop(); else stopSyncLoop(); }
+    private void startSyncLoop() {
+        if (syncTick != null) return;
+        final String host = Cfg.getStr(appCtx, "kidodi_host", "");
+        if (host == null || host.isEmpty()) { syncEnabled = false; return; }   // only a client can follow
+        syncTick = new Runnable() { public void run() {
+            if (!syncEnabled) { syncTick = null; return; }
+            new Thread(() -> {
+                try {
+                    long t0 = System.currentTimeMillis();
+                    JSONObject s = new JSONObject(httpGet("http://" + host + ":8090/state"));
+                    final int cur = s.optInt("cur", -1);
+                    final boolean lplaying = s.optBoolean("playing", false);
+                    long lpos = (long) s.optDouble("position_ms", 0);
+                    long rtt = System.currentTimeMillis() - t0;
+                    // the leader's position_ms is up to ~500ms stale (its ticker) + the fetch; add a lead so
+                    // the follower targets where the leader will actually BE by the time we apply.
+                    final long est = lpos + (lplaying ? rtt / 2 + 600 : 0);
+                    on(() -> mirror(cur, est, lplaying));
+                } catch (Exception ignored) {}
+            }).start();
+            main.postDelayed(this, 800);
+        }};
+        main.post(syncTick);
+    }
+    private void stopSyncLoop() {
+        if (syncTick != null) { main.removeCallbacks(syncTick); syncTick = null; }
+        on(() -> { try { if (p != null) p.setPlaybackParameters(new PlaybackParameters(1f)); } catch (Exception ignored) {} });
+    }
+    /** One mirror step (main thread): match the leader's item, position (seek on big drift, else nudge
+        speed to converge) and play/pause. Kept muted — a follower's audio would echo the leader. */
+    private void mirror(int cur, long leaderPos, boolean lplaying) {
+        if (p == null || cur < 0) return;
+        if (currentLibId() != cur) {
+            MediaItem mi = itemFor(cur);
+            if (mi != null) { p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); keepMute(); p.seekTo(Math.max(0, leaderPos)); }
+        } else {
+            long drift = p.getCurrentPosition() - leaderPos;   // >0 = we're ahead of the leader
+            if (Math.abs(drift) > 1500) { p.seekTo(Math.max(0, leaderPos)); p.setPlaybackParameters(new PlaybackParameters(1f)); }
+            else { float sp = 1f - drift / 4000f; sp = Math.max(0.94f, Math.min(1.06f, sp)); p.setPlaybackParameters(new PlaybackParameters(sp)); }
+        }
+        if (lplaying && !p.isPlaying()) p.play();
+        else if (!lplaying && p.isPlaying()) p.pause();
+        keepMute();
     }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
     public boolean enqueue(final int id, final boolean next, final boolean now) {
@@ -489,6 +558,7 @@ public class PlayerController {
                 long d = p.getDuration();
                 durMs = d > 0 ? (int) d : 0;
                 title = titleOf(p.getCurrentMediaItem());
+                curId = currentLibId();   // cache on main thread; the control server never touches ExoPlayer
             } catch (Exception ignored) {}
             main.postDelayed(this, 500);
         }};
@@ -541,8 +611,16 @@ public class PlayerController {
      *  device stays silent — that was the nap-run confusion). Lowering never unmutes. */
     public void setVolume(float v) {
         boolean up = v > vol + 0.001f;
+        if (up) unmuteSystemStream();   // a hard-muted STREAM_MUSIC (some devices force it) stays silent at
+                                        // any level; clear it AS WE RAISE — safe, since the level steps up from here
         writeSystemVol(v);
         if (up && muted) setMuted(false);
+    }
+    @SuppressWarnings("deprecation")
+    private void unmuteSystemStream() {
+        if (am == null) return;
+        try { am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0); } catch (Exception ignored) {}
+        try { am.setStreamMute(AudioManager.STREAM_MUSIC, false); } catch (Exception ignored) {}   // deprecated but clears a device-forced mute (e.g. Android 10 Lenovo)
     }
     public void nudge(float d)     { setVolume(vol + d); }
     public void setMuted(boolean m) { muted = m; try { if (prefs != null) prefs.edit().putBoolean("muted", m).apply(); } catch (Exception ignored) {} applyMute(); }
@@ -597,6 +675,7 @@ public class PlayerController {
             o.put("napped", napped);
             o.put("position_ms", posMs);
             o.put("duration_ms", durMs);
+            o.put("cur", curId);   // stable library id of the current item (cached by the ticker) — followers mirror it
             o.put("volume", Math.round(vol * 100) / 100.0);
             o.put("muted", muted);
             o.put("sleeping", sleeping);
