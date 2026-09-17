@@ -47,6 +47,7 @@ public class PlayerController {
 
     // volatile snapshot (written on main, read by the HTTP/BLE threads)
     private volatile int idx, count, posMs, durMs, curId = -1;
+    private volatile long sampleClock;   // elapsedRealtime() when posMs was last sampled (followers extrapolate the leader from it)
     private volatile boolean playing;
     // Volume model: the user's loudness is the SYSTEM media volume (what actually comes out of the
     // speaker); a separate PERSISTED mute drives the ExoPlayer multiplier (0/1). The bug this fixes:
@@ -72,6 +73,13 @@ public class PlayerController {
     private volatile Map<String, Integer> idOfPath = null;         // host: local file path -> stable id (for "cur")
     private volatile boolean syncEnabled = false;                  // follower: continuously mirror the host's playback
     private Runnable syncTick;
+    private Runnable startPending;                                 // a scheduled seek-ahead start waiting to fire
+    // Shared clock (NTP-lite): leaderClock(now) ≈ elapsedRealtime() + clkOffset. Kept fresh by min-RTT probes.
+    private volatile long clkOffset = 0;
+    private volatile boolean clkValid = false;
+    private volatile long clkBestRtt = Long.MAX_VALUE;
+    private static final long START_LEAD = 400;    // ms the follower seeks ahead then waits, so its first frame lands in step
+    private static final long HARD_SEEK_MS = 250;  // drift beyond this = seek; under it = a gentle speed nudge
 
     public void setNapped(boolean n) { napped = n; }
 
@@ -79,6 +87,9 @@ public class PlayerController {
     public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
     /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
     public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
+    /** Re-read the library in CLIENT mode (kidodi_host just set) so a follower can resolve the leader's ids.
+        autoStart=false: don't blast playback — the sync loop drives what plays. */
+    public void reloadForSync(Context ctx) { loadLibrary(ctx, false, 0); }
     private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         appCtx = ctx.getApplicationContext();
         final String host = Cfg.getStr(appCtx, "kidodi_host", "");
@@ -285,49 +296,90 @@ public class PlayerController {
     // --- SYNCED playback (follower): mirror the host's current item + position; muted, speed-nudged ----
     public boolean isSync() { return syncEnabled; }
     public void setSync(boolean on) { syncEnabled = on; if (on) startSyncLoop(); else stopSyncLoop(); }
+
+    // NTP-lite: one probe of the leader's /clock. Keep the offset from the LOWEST-RTT sample (least jitter).
+    private long clockNow() { return android.os.SystemClock.elapsedRealtime(); }
+    private long leaderNow() { return clockNow() + clkOffset; }
+    private void resetClock() { clkOffset = 0; clkValid = false; clkBestRtt = Long.MAX_VALUE; }
+    private void probeClock(String host) {
+        try {
+            long t0 = clockNow();
+            long tL = new JSONObject(httpGet("http://" + host + ":8090/clock")).optLong("t", -1);
+            long t2 = clockNow();
+            if (tL < 0) return;
+            long rtt = t2 - t0;
+            long off = (tL + rtt / 2) - t2;             // leaderClock(@t2) ≈ tL + rtt/2  ⇒  leader = local + off
+            if (!clkValid || rtt <= clkBestRtt) { clkBestRtt = rtt; clkOffset = off; clkValid = true; }
+            else if (rtt < clkBestRtt * 2) { clkOffset += (off - clkOffset) / 4; clkBestRtt += clkBestRtt / 32; }  // track slow drift; let a real higher-RTT re-baseline over time
+        } catch (Exception ignored) {}
+    }
+
     private void startSyncLoop() {
         if (syncTick != null) return;
         final String host = Cfg.getStr(appCtx, "kidodi_host", "");
         if (host == null || host.isEmpty()) { syncEnabled = false; return; }   // only a client can follow
-        syncTick = new Runnable() { public void run() {
+        resetClock();
+        new Thread(() -> { for (int i = 0; i < 6 && syncEnabled; i++) { probeClock(host); try { Thread.sleep(120); } catch (Exception ignored) {} } }).start();
+        syncTick = new Runnable() { long lastClk = 0; public void run() {
             if (!syncEnabled) { syncTick = null; return; }
             new Thread(() -> {
                 try {
-                    long t0 = System.currentTimeMillis();
+                    long n = clockNow();
+                    if (n - lastClk > 5000) { probeClock(host); lastClk = n; }   // keep the offset fresh (drift)
                     JSONObject s = new JSONObject(httpGet("http://" + host + ":8090/state"));
                     final int cur = s.optInt("cur", -1);
                     final boolean lplaying = s.optBoolean("playing", false);
-                    long lpos = (long) s.optDouble("position_ms", 0);
-                    long rtt = System.currentTimeMillis() - t0;
-                    // the leader's position_ms is up to ~500ms stale (its ticker) + the fetch; add a lead so
-                    // the follower targets where the leader will actually BE by the time we apply.
-                    final long est = lpos + (lplaying ? rtt / 2 + 600 : 0);
-                    on(() -> mirror(cur, est, lplaying));
+                    final long lpos = (long) s.optDouble("position_ms", 0);
+                    final long lclock = s.optLong("clock", -1);   // leader's monotonic clock at that position sample
+                    on(() -> mirror(cur, lpos, lclock, lplaying));
                 } catch (Exception ignored) {}
             }).start();
-            main.postDelayed(this, 800);
+            main.postDelayed(this, 350);
         }};
         main.post(syncTick);
     }
     private void stopSyncLoop() {
         if (syncTick != null) { main.removeCallbacks(syncTick); syncTick = null; }
+        if (startPending != null) { main.removeCallbacks(startPending); startPending = null; }
         on(() -> { try { if (p != null) p.setPlaybackParameters(new PlaybackParameters(1f)); } catch (Exception ignored) {} });
     }
-    /** One mirror step (main thread): match the leader's item, position (seek on big drift, else nudge
-        speed to converge) and play/pause. Kept muted — a follower's audio would echo the leader. */
-    private void mirror(int cur, long leaderPos, boolean lplaying) {
-        if (p == null || cur < 0) return;
-        if (currentLibId() != cur) {
-            MediaItem mi = itemFor(cur);
-            if (mi != null) { p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); keepMute(); p.seekTo(Math.max(0, leaderPos)); }
-        } else {
-            long drift = p.getCurrentPosition() - leaderPos;   // >0 = we're ahead of the leader
-            if (Math.abs(drift) > 1500) { p.seekTo(Math.max(0, leaderPos)); p.setPlaybackParameters(new PlaybackParameters(1f)); }
-            else { float sp = 1f - drift / 4000f; sp = Math.max(0.94f, Math.min(1.06f, sp)); p.setPlaybackParameters(new PlaybackParameters(sp)); }
+    /** The leader's position RIGHT NOW, extrapolated from a timestamped sample on the shared clock. */
+    private long expectedPos(long leaderPos, long leaderClock, boolean lplaying) {
+        long e = leaderPos;
+        if (clkValid && leaderClock > 0 && lplaying) {
+            long adv = leaderNow() - leaderClock;          // ms the leader has advanced since it sampled
+            if (adv > 0 && adv < 60000) e += adv;          // guard a wild clock
         }
+        return Math.max(0, e);
+    }
+    /** One mirror step (main thread): match the leader's item + shared-clock position and play/pause. Kept
+        muted — a follower's audio would echo the leader. First frame is aligned by a seek-ahead start:
+        seek START_LEAD past the leader, wait that long, then play, so we begin exactly where it will be. */
+    private void mirror(int cur, long leaderPos, long leaderClock, boolean lplaying) {
+        if (p == null || cur < 0) return;
+        if (startPending != null) { keepMute(); return; }   // a scheduled start is mid-flight; don't fight it
+        final long expected = expectedPos(leaderPos, leaderClock, lplaying);
+        if (currentLibId() != cur) {                         // wrong item -> switch + scheduled seek-ahead start
+            MediaItem mi = itemFor(cur);
+            if (mi != null) {
+                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); keepMute();
+                if (lplaying) { p.seekTo(expected + START_LEAD); p.pause(); schedulePlayAfter(START_LEAD); }
+                else { p.seekTo(expected); p.pause(); }
+            }
+            keepMute(); return;
+        }
+        long drift = p.getCurrentPosition() - expected;      // >0 = we're ahead of the leader
+        if (Math.abs(drift) > HARD_SEEK_MS) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
+        else { float sp = 1f - drift / 6000f; sp = Math.max(0.985f, Math.min(1.015f, sp)); p.setPlaybackParameters(new PlaybackParameters(sp)); }
         if (lplaying && !p.isPlaying()) p.play();
         else if (!lplaying && p.isPlaying()) p.pause();
         keepMute();
+    }
+    /** Wait `ms` (the seek-ahead lead) then start — by then the leader has reached the frame we seeked to. */
+    private void schedulePlayAfter(long ms) {
+        if (startPending != null) main.removeCallbacks(startPending);
+        startPending = () -> { startPending = null; if (syncEnabled && p != null) { keepMute(); p.play(); } };
+        main.postDelayed(startPending, Math.max(0, ms));
     }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
     public boolean enqueue(final int id, final boolean next, final boolean now) {
@@ -555,6 +607,7 @@ public class PlayerController {
                 idx = p.getCurrentMediaItemIndex();
                 count = p.getMediaItemCount();
                 posMs = (int) p.getCurrentPosition();
+                sampleClock = android.os.SystemClock.elapsedRealtime();   // stamp the position for followers to extrapolate
                 long d = p.getDuration();
                 durMs = d > 0 ? (int) d : 0;
                 title = titleOf(p.getCurrentMediaItem());
@@ -676,6 +729,7 @@ public class PlayerController {
             o.put("position_ms", posMs);
             o.put("duration_ms", durMs);
             o.put("cur", curId);   // stable library id of the current item (cached by the ticker) — followers mirror it
+            o.put("clock", sampleClock);   // leader's monotonic clock when position_ms was sampled (synced-playback extrapolation)
             o.put("volume", Math.round(vol * 100) / 100.0);
             o.put("muted", muted);
             o.put("sleeping", sleeping);

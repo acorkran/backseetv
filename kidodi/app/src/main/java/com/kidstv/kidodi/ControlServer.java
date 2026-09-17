@@ -61,6 +61,7 @@ public class ControlServer {
             if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
             if (path.equals("/live")) { handleLive(c); return; }   // MJPEG live feed (Wi-Fi tier)
             if (path.equals("/media")) { handleMedia(c, param(q, "id"), h.toString()); return; }   // stream a library file by id (Range-capable) for a client tablet
+            if (path.equals("/clock")) { write(c, "{\"t\":" + android.os.SystemClock.elapsedRealtime() + "}"); return; }   // leader's monotonic clock (NTP-lite offset for synced playback)
 
             String body;
             switch (path) {
@@ -89,7 +90,18 @@ public class ControlServer {
                     body = ok(); break;
                 }
                 case "/playurl": { String u = param(q, "url"); if (u != null) { ctrl.playUrl(urlDecode(u)); PlayerActivity.wakeScreen(); body = ok(); } else body = "{\"ok\":false,\"error\":\"no url\"}"; break; }   // client: stream+play a host media URL
-                case "/sync": { String on = param(q, "on"); ctrl.setSync(on == null ? !ctrl.isSync() : ("1".equals(on) || "true".equals(on))); Cfg.applyConfig(ctx, "kidodi_sync", ctrl.isSync() ? "1" : "0"); PlayerActivity.wakeScreen(); body = ok(); break; }   // follower: mirror the host
+                case "/sync": {   // follower: mirror the host. &host=<ip> joins a group (point at the leader + reload as a client)
+                    String on = param(q, "on");
+                    boolean want = on == null ? !ctrl.isSync() : ("1".equals(on) || "true".equals(on));
+                    String host = param(q, "host");
+                    if (want && host != null && !host.isEmpty()) {
+                        Cfg.applyConfig(ctx, "kidodi_host", urlDecode(host));
+                        ctrl.reloadForSync(ctx);   // enter client mode so itemFor(cur) resolves the leader's library
+                    }
+                    ctrl.setSync(want);
+                    Cfg.applyConfig(ctx, "kidodi_sync", ctrl.isSync() ? "1" : "0");
+                    PlayerActivity.wakeScreen(); body = ok(); break;
+                }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), Cfg.getInt(ctx, "kidodi_flash_ms", 3000))); body = ok(); break;
                 case "/power": PlayerActivity.power(); body = ok(); break;
                 // --- library / queue editing / user playlists --------------------------------------

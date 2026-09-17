@@ -226,8 +226,60 @@ public class RemoteService extends Service {
     // Both links used to take whatever player answered first, so a remote in range of two of them could
     // attach to either and swap between them. Every player heard is remembered here; the pick is sticky.
     static final String PREF_TARGET = "kidodi_target";   // comma-separated ids to control; "" (or "*") = ALL
+    static final String PREF_SYNCGROUP = "kidodi_syncgroup";   // leader id when a synced group is armed; "" = off
     public static final String ALL = "*";
     private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
+    private final Map<String, String> deviceIps = new ConcurrentHashMap<>();   // id -> LAN ip (from BLE state); merged with wifi hosts
+
+    /** A device's LAN ip so we can HTTP its ControlServer directly (arm/disarm a sync group). */
+    public String deviceIp(String id) {
+        if (id == null) return null;
+        String ip = deviceIps.get(id);
+        if (ip != null && !ip.isEmpty()) return ip;
+        if (wifi != null) { String hp = wifi.hosts().get(id); if (hp != null) { int c = hp.indexOf(':'); return c > 0 ? hp.substring(0, c) : hp; } }
+        return null;
+    }
+    // ---- Synced group: one leader plays with audio, the rest mirror it muted in lock-step ----------------
+    public boolean isSyncGroup() { return !Cfg.p(this).getString(PREF_SYNCGROUP, "").isEmpty(); }
+    public String syncLeaderId() { String s = Cfg.p(this).getString(PREF_SYNCGROUP, ""); return s.isEmpty() ? null : s; }
+    public String syncLeaderName() { String id = syncLeaderId(); if (id == null) return null; String n = seenTablets.get(id); return n != null ? n : id; }
+    /** Arm/disarm a synced group over the CURRENT screen selection. Leader = the first selected (its state is
+        what the remote shows); the rest become muted followers streaming from + mirroring the leader. */
+    public void setSyncGroup(boolean on) {
+        if (!on) {   // disarm: tell everyone we can reach to stop following (idempotent, so hit all known ids)
+            String leader = syncLeaderId();
+            java.util.HashSet<String> all = new java.util.HashSet<>(seenTablets.keySet()); all.addAll(deviceIps.keySet());
+            for (String id : all) if (!id.equals(leader)) httpArm(deviceIp(id), "/sync?on=0");
+            Cfg.p(this).edit().putString(PREF_SYNCGROUP, "").apply();
+            aimLinks();
+            return;
+        }
+        java.util.List<String> order = new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets());
+        if (order.size() < 2) return;                       // need a leader + at least one follower
+        String leader = order.get(0);
+        String leaderIp = deviceIp(leader);
+        if (leaderIp == null || leaderIp.isEmpty()) return; // can't arm without the leader's ip
+        httpArm(leaderIp, "/sync?on=0");                    // the leader plays normally (audio source)
+        for (int i = 1; i < order.size(); i++) {
+            String fip = deviceIp(order.get(i));
+            if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp);
+        }
+        Cfg.p(this).edit().putString(PREF_SYNCGROUP, leader).apply();
+        aimLinks();                                         // control now drives the leader; followers mirror
+    }
+    /** Fire-and-forget GET to a tablet's ControlServer (used to arm/disarm sync). */
+    private void httpArm(final String ip, final String path) {
+        if (ip == null || ip.isEmpty()) return;
+        new Thread(() -> { try {
+            java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + ip + ":8090" + path).openConnection();
+            cn.setConnectTimeout(2500); cn.setReadTimeout(2500); cn.getInputStream().close();
+        } catch (Exception ignored) {} }).start();
+    }
+    /** Who commands actually go to: the leader alone when a group is armed, else the raw selection. */
+    private java.util.Set<String> effectiveTargets() {
+        if (isSyncGroup()) { String L = syncLeaderId(); if (L != null) { java.util.HashSet<String> s = new java.util.HashSet<>(); s.add(L); return s; } }
+        return targets();
+    }
     /** id -> friendly name for every player heard on BLE or mDNS this session. */
     public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
     /** The SELECTED players to control (checkbox multi-select). Empty = ALL heard. */
@@ -253,7 +305,7 @@ public class RemoteService extends Service {
     }
     /** Re-aim BLE (drives the selected set) + Wi-Fi (polls the representative + reaches Wi-Fi-only screens). */
     private void aimLinks() {
-        java.util.Set<String> sel = targets();
+        java.util.Set<String> sel = effectiveTargets();   // a synced group aims everything at the leader
         String rep = sel.isEmpty() ? null : sel.iterator().next();   // whose state the UI shows
         if (ble != null) { ble.setDrive(sel); ble.setStateId(rep); ble.start(); }
         if (wifi != null) wifi.setTarget(rep);
@@ -261,6 +313,7 @@ public class RemoteService extends Service {
     }
     /** Friendly name of the representative player, or a count when several are selected. */
     public String connectedTablet() {
+        if (isSyncGroup()) { String n = syncLeaderName(); return n != null ? "Synced · " + n : "Synced"; }
         java.util.Set<String> sel = targets();
         if (!sel.isEmpty() && sel.size() > 1) return sel.size() + " screens";
         String id = bleUp() ? ble.connectedId() : (wifi != null && wifi.isConnected() ? wifi.connectedId() : null);
@@ -279,6 +332,7 @@ public class RemoteService extends Service {
             public void onState(String json) { onIncoming(json, "BLE"); }
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
             public void onSeen(String id, String name) { noteSeen(id, name); }
+            public void onDeviceIp(String id, String ip) { if (id != null && ip != null && !ip.isEmpty()) deviceIps.put(id, ip); }
         });
         java.util.Set<String> sel = targets();
         ble.setDrive(sel);
@@ -315,8 +369,9 @@ public class RemoteService extends Service {
             return;
         }
         // A control command goes to EVERY selected screen: BLE to the tablets it holds links to, Wi-Fi to
-        // the rest (e.g. a TV that doesn't advertise BLE). Empty selection = ALL heard screens.
-        java.util.Set<String> sel = targets();
+        // the rest (e.g. a TV that doesn't advertise BLE). Empty selection = ALL heard screens. A synced
+        // group collapses this to the leader alone (the followers mirror it themselves).
+        java.util.Set<String> sel = effectiveTargets();
         java.util.Set<String> bleIds = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
         if (ble != null) ble.send(cmd);
         if (wifi != null) {

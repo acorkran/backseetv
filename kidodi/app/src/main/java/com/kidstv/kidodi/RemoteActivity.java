@@ -658,6 +658,7 @@ public class RemoteActivity extends Activity {
     // The header label: which screens are selected — a name, "N screens", or "All".
     private String targetLabel(RemoteService svc, boolean ready) {
         if (svc == null) return "connect";
+        if (svc.isSyncGroup()) return "Synced";
         java.util.Set<String> sel = svc.targets();
         if (sel.isEmpty()) return "All";
         if (sel.size() == 1) { String n = svc.tablets().get(sel.iterator().next()); return n != null ? n : (ready ? svc.transport() : "connect"); }
@@ -692,6 +693,16 @@ public class RemoteActivity extends Activity {
                 if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());   // never zero screens -> treat as All
                 svc.setTargets(ns); refreshTargets(col, svc);
             }));
+        }
+        // Sync group: when 2+ screens exist, offer lock-step playback (one plays with audio, the rest mirror
+        // it muted). Arming picks the first selected screen as the leader; the others follow it.
+        if (svc.tablets().size() >= 2) {
+            View sdiv = new View(this); sdiv.setBackgroundColor(0x22FFFFFF);
+            col.addView(sdiv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            TextView sh = new TextView(this); sh.setText("Play in lock-step"); sh.setTextColor(SUB); sh.setTextSize(11);
+            sh.setPadding(dp(16), dp(8), dp(16), dp(2)); col.addView(sh);
+            final boolean sg = svc.isSyncGroup();
+            col.addView(checkRow("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshTargets(col, svc); }));
         }
         View div = new View(this); div.setBackgroundColor(0x22FFFFFF);
         col.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
