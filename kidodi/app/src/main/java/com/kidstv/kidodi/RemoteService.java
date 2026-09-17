@@ -233,6 +233,10 @@ public class RemoteService extends Service {
     public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
     /** The player we hold out for, or null = whichever answers first (single-tablet setups). */
     public String target() { String t = Cfg.p(this).getString(PREF_TARGET, ""); return t.isEmpty() ? null : t; }
+    /** What the LINKS (BLE/Wi-Fi) hold out for. In broadcast mode ("*") that's null — the links still
+        connect/poll a representative tablet for state, and commands fan to all via Wi-Fi hosts(). Passing
+        "*" straight to a link makes it hold out for a nonexistent id and connect to nothing. */
+    private String linkTarget() { String t = target(); return ALL.equals(t) ? null : t; }
     /** Stick to one player: persist it, then re-aim both links. */
     public void setTarget(String id) {
         Cfg.p(this).edit().putString(PREF_TARGET, id == null ? "" : id).apply();
@@ -262,9 +266,10 @@ public class RemoteService extends Service {
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
-        ble.setTarget(target());
+        ble.setTarget(linkTarget());
         ble.start();
         if (!"ble".equals(connMode)) applyConnMode();   // wifi tier: bring mDNS up now (concurrent), don't wait for the BLE-fallback
+        if (isBroadcast() && wifi == null) startWifi(null, 0);   // "both in unison" always needs Wi-Fi (BLE holds one link)
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
         main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
@@ -281,7 +286,7 @@ public class RemoteService extends Service {
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
         if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
-        else wifi.setTarget(target());   // the local admin remote is pinned to loopback, never to an id
+        else wifi.setTarget(linkTarget());   // "*" -> null (poll a representative; broadcast fans via hosts())
         wifi.start();
     }
 
