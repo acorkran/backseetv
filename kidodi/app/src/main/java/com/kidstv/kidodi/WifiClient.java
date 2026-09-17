@@ -39,6 +39,10 @@ public class WifiClient {
     private volatile String target;
     private volatile String connectedId;
     private final java.util.Map<String, String> hosts = new java.util.concurrent.ConcurrentHashMap<>();
+    // NsdManager can't resolve two services at once (the 2nd fails silently) — with two tablets that left
+    // only ONE in `hosts`, so "both in unison" reached only one. Resolve strictly one at a time.
+    private final java.util.ArrayDeque<NsdServiceInfo> toResolve = new java.util.ArrayDeque<>();
+    private boolean resolving = false;
     public void setTarget(String id) { target = (id == null || id.isEmpty()) ? null : id; }
     public String connectedId() { return connectedId; }
     /** id -> "host:port" for every player resolved this session (direct HTTP without re-discovery). */
@@ -57,7 +61,7 @@ public class WifiClient {
             nsd = (NsdManager) ctx.getSystemService(Context.NSD_SERVICE);
             if (nsd == null) { status("no mDNS"); return; }
             disco = new NsdManager.DiscoveryListener() {
-                public void onServiceFound(NsdServiceInfo si) { if (si.getServiceType().contains("_kidodi")) resolve(si); }
+                public void onServiceFound(NsdServiceInfo si) { if (si.getServiceType().contains("_kidodi")) { synchronized (toResolve) { toResolve.add(si); } pumpResolve(); } }
                 public void onServiceLost(NsdServiceInfo si) {}
                 public void onDiscoveryStarted(String t) {}
                 public void onDiscoveryStopped(String t) {}
@@ -69,25 +73,36 @@ public class WifiClient {
         } catch (Exception e) { status("wifi err"); }
     }
 
-    private void resolve(NsdServiceInfo si) {
+    /** Resolve queued services strictly one at a time (NsdManager rejects concurrent resolves). */
+    private void pumpResolve() {
+        final NsdServiceInfo si;
+        synchronized (toResolve) {
+            if (resolving || toResolve.isEmpty() || stopped) return;
+            resolving = true; si = toResolve.poll();
+        }
         try {
             nsd.resolveService(si, new NsdManager.ResolveListener() {
-                public void onResolveFailed(NsdServiceInfo s, int e) {}
-                public void onServiceResolved(NsdServiceInfo s) {
-                    String h = s.getHost() != null ? s.getHost().getHostAddress() : null;
-                    int p = s.getPort() > 0 ? s.getPort() : 8090;
-                    if (h == null) return;
-                    String id = attr(s, "id");
-                    String nm = attr(s, "name");
-                    if (nm == null || nm.isEmpty()) nm = s.getServiceName();   // NSD may have renamed it on a clash
-                    if (id != null) { final String i2 = id, n2 = nm; hosts.put(id, h + ":" + p); main.post(() -> l.onSeen(i2, n2)); }
-                    String want = target;
-                    if (want != null && (id == null || !want.equals(id))) return;   // another tablet: remembered, not switched to
-                    host = h; port = p; connectedId = id;
-                    startPolling();
+                public void onResolveFailed(NsdServiceInfo s, int e) {
+                    if (e == NsdManager.FAILURE_ALREADY_ACTIVE) { synchronized (toResolve) { toResolve.add(s); } }   // retry after the current one
+                    next();
                 }
+                public void onServiceResolved(NsdServiceInfo s) { handleResolved(s); next(); }
+                private void next() { synchronized (toResolve) { resolving = false; } main.postDelayed(WifiClient.this::pumpResolve, 150); }
             });
-        } catch (Exception ignored) {}
+        } catch (Exception e) { synchronized (toResolve) { resolving = false; } main.postDelayed(this::pumpResolve, 300); }
+    }
+    private void handleResolved(NsdServiceInfo s) {
+        String h = s.getHost() != null ? s.getHost().getHostAddress() : null;
+        int p = s.getPort() > 0 ? s.getPort() : 8090;
+        if (h == null) return;
+        String id = attr(s, "id");
+        String nm = attr(s, "name");
+        if (nm == null || nm.isEmpty()) nm = s.getServiceName();   // NSD may have renamed it on a clash
+        if (id != null) { final String i2 = id, n2 = nm; hosts.put(id, h + ":" + p); Log.i(TAG, "resolved " + id + " (" + nm + ") @ " + h + ":" + p + " hosts=" + hosts.keySet()); main.post(() -> l.onSeen(i2, n2)); }
+        String want = target;
+        if (want != null && (id == null || !want.equals(id))) return;   // another tablet: remembered, not switched to
+        host = h; port = p; connectedId = id;
+        startPolling();
     }
 
     /** A TXT value from the player's mDNS record ("id" / "name"); null when absent. */
@@ -127,6 +142,7 @@ public class WifiClient {
     public void sendAll(String cmd) {
         if (isQuery(cmd)) { send(cmd); return; }
         java.util.Collection<String> hp = new java.util.ArrayList<>(hosts.values());
+        Log.i(TAG, "sendAll('" + cmd + "') hosts=" + hosts.keySet() + " -> " + hp);
         if (hp.isEmpty()) { send(cmd); return; }
         final String path = toHttp(cmd);
         for (final String h : hp) new Thread(() -> httpTo(h, path)).start();
