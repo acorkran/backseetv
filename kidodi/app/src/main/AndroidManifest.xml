@@ -79,6 +79,7 @@
         <activity
             android:name=".RemoteActivity"
             android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar"
             android:configChanges="orientation|screenSize|keyboardHidden"/>
 
         <!-- QR pairing: display creds/connection info as a QR, and scan one with the camera -->
