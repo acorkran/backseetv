@@ -244,8 +244,11 @@ public class RemoteService extends Service {
         // reliable path — no mDNS), and one link drives the shown state. Wi-Fi stays up as a fallback fan-out.
         boolean bc = ALL.equals(id);
         String linkTarget = bc ? null : id;
-        if (ble != null) { ble.setBroadcast(bc); ble.setTarget(linkTarget); ble.stop(); ble.start(); }
-        if (wifi != null) { wifi.setTarget(linkTarget); wifi.stop(); wifi = null; startWifi(null, 0); }
+        // The BleClient already holds a link to every tablet it heard, so switching is just a flag flip —
+        // no stop/start (that caused a multi-second rescan lag). Its running scan connects any newly-wanted
+        // tablet (e.g. single -> Both). Wi-Fi just re-aims which host it polls for state.
+        if (ble != null) { ble.setBroadcast(bc); ble.setTarget(linkTarget); ble.start(); }
+        if (wifi != null) wifi.setTarget(linkTarget);
         if (bc && wifi == null) startWifi(null, 0);
     }
     /** Friendly name of the player we're actually attached to, or null. */
