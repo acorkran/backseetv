@@ -147,6 +147,18 @@ public class WifiClient {
         final String path = toHttp(cmd);
         for (final String h : hp) new Thread(() -> httpTo(h, path)).start();
     }
+    /** ids currently resolved on the LAN (for callers to know who Wi-Fi can reach). */
+    public java.util.Set<String> hostIds() { return new java.util.HashSet<>(hosts.keySet()); }
+    /** Send a (non-query) command to specific players by id over HTTP — for those NOT reachable on BLE
+        (e.g. a TV that doesn't advertise BLE). */
+    public void sendTo(java.util.Collection<String> ids, String cmd) {
+        if (isQuery(cmd) || ids == null || ids.isEmpty()) return;
+        final String path = toHttp(cmd);
+        for (String id : ids) {
+            String hp = hosts.get(id);
+            if (hp != null) { final String h = hp; new Thread(() -> httpTo(h, path)).start(); }
+        }
+    }
     private void httpTo(String hostPort, String path) {
         java.net.HttpURLConnection c = null;
         try {

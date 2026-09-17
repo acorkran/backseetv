@@ -307,12 +307,7 @@ public class RemoteActivity extends Activity {
             ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
             RemoteService svc = RemoteService.get();
             String ws = WearPusher.watchStatus();
-            String tgt = svc != null ? svc.target() : null;
-            String base;
-            if (RemoteService.ALL.equals(tgt)) base = "Both";                              // both in unison
-            else if (tgt != null && svc.connectedTablet() != null) base = svc.connectedTablet();
-            else base = ready && svc != null ? svc.transport() : "connect";
-            linkLabel.setText(base + (ws.isEmpty() ? "" : "  ·  " + ws) + "  ▾");
+            linkLabel.setText(targetLabel(svc, ready) + (ws.isEmpty() ? "" : "  ·  " + ws) + "  ▾");
             if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
@@ -660,39 +655,66 @@ public class RemoteActivity extends Activity {
     //  The level is one setting shared by TV and remotes (kidodi_conn); the TV publishes it
     //  in state and RemoteService coordinates the joins/pushes. This screen shows status,
     //  lets you change the level, and offers the manual actions for each.
-    // =====================================================================================
-    // Top dropdown: pick which tablet this remote drives — one, the other, or BOTH IN UNISON — plus a
-    // way into the Connection screen. The tablet choices appear once a second player has been heard.
+    // The header label: which screens are selected — a name, "N screens", or "All".
+    private String targetLabel(RemoteService svc, boolean ready) {
+        if (svc == null) return "connect";
+        java.util.Set<String> sel = svc.targets();
+        if (sel.isEmpty()) return "All";
+        if (sel.size() == 1) { String n = svc.tablets().get(sel.iterator().next()); return n != null ? n : (ready ? svc.transport() : "connect"); }
+        return sel.size() + " screens";
+    }
+
+    // Top dropdown: a CUSTOM in-app popup (dark card, styled rows) — check any subset of screens to control
+    // (1, some, or all). Toggling applies live. "All screens" (or checking everything) = All.
+    private android.widget.PopupWindow targetPopup;
     private void showTargetMenu() {
         final RemoteService svc = RemoteService.get();
-        if (svc == null) { openConnection(); return; }
-        final java.util.Map<String, String> tabs = svc.tablets();
-        final String cur = svc.target();
-        android.widget.PopupMenu pm = new android.widget.PopupMenu(this, linkLabel);
-        final java.util.HashMap<Integer, String> map = new java.util.HashMap<>();
-        int mid = 1;
-        if (tabs.size() >= 2) {
-            for (java.util.Map.Entry<String, String> e : tabs.entrySet()) {
-                pm.getMenu().add(0, mid, mid, (e.getKey().equals(cur) ? "●  " : "○  ") + e.getValue());
-                map.put(mid, e.getKey()); mid++;
-            }
-            pm.getMenu().add(0, mid, mid, (RemoteService.ALL.equals(cur) ? "●  " : "○  ") + "Both in unison");
-            map.put(mid, RemoteService.ALL); mid++;
+        if (svc == null || svc.tablets().isEmpty()) { openConnection(); return; }
+        LinearLayout col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), 0x33FFFFFF);
+        col.setBackground(bg); col.setPadding(0, dp(6), 0, dp(6));
+        targetPopup = new android.widget.PopupWindow(col, dp(250), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        targetPopup.setElevation(dp(12));
+        buildTargetRows(col, svc);
+        targetPopup.showAsDropDown(linkLabel, -dp(150), dp(6), Gravity.END);
+    }
+    private void buildTargetRows(final LinearLayout col, final RemoteService svc) {
+        col.removeAllViews();
+        TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
+        hdr.setPadding(dp(16), dp(8), dp(16), dp(8)); col.addView(hdr);
+        final java.util.Set<String> sel = svc.targets(); final boolean all = sel.isEmpty();
+        col.addView(checkRow("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); }));
+        for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
+            final boolean on = all || sel.contains(e.getKey());
+            col.addView(checkRow(e.getValue(), on, () -> {
+                java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
+                if (on) ns.remove(e.getKey()); else ns.add(e.getKey());
+                if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());   // never zero screens -> treat as All
+                svc.setTargets(ns); refreshTargets(col, svc);
+            }));
         }
-        final int connId = mid;
-        pm.getMenu().add(0, connId, connId, "Connection…");
-        pm.setOnMenuItemClickListener(item -> {
-            int id = item.getItemId();
-            if (id == connId) { openConnection(); return true; }
-            final String t = map.get(id);
-            if (t != null) {
-                svc.setTarget(t);
-                toast(RemoteService.ALL.equals(t) ? "Both in unison" : "Using " + tabs.get(t));
-                linkLabel.setText((RemoteService.ALL.equals(t) ? "Both" : tabs.get(t)) + "  ▾");
-            }
-            return true;
-        });
-        pm.show();
+        View div = new View(this); div.setBackgroundColor(0x22FFFFFF);
+        col.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        LinearLayout cr = new LinearLayout(this); cr.setPadding(dp(16), dp(11), dp(16), dp(11)); cr.setClickable(true);
+        TextView ct = new TextView(this); ct.setText("Connection…"); ct.setTextColor(ACCENT); ct.setTextSize(14);
+        cr.addView(ct); cr.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); openConnection(); });
+        col.addView(cr);
+    }
+    private void refreshTargets(LinearLayout col, RemoteService svc) {
+        buildTargetRows(col, svc);
+        linkLabel.setText(targetLabel(svc, true) + "  ▾");
+    }
+    /** One styled checkbox row (drawn ☑/☐ box + label). */
+    private View checkRow(String label, boolean checked, final Runnable onTap) {
+        LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(dp(14), dp(11), dp(16), dp(11)); r.setClickable(true);
+        TextView box = new TextView(this); box.setText(checked ? "☑" : "☐");
+        box.setTextColor(checked ? GOOD : SUB); box.setTextSize(20); box.setPadding(0, 0, dp(12), 0);
+        r.addView(box);
+        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(15);
+        r.addView(t);
+        r.setOnClickListener(v -> onTap.run());
+        return r;
     }
 
     static final String[][] CONN_MODES = {
@@ -740,36 +762,8 @@ public class RemoteActivity extends Activity {
         if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off");
         connStatus.setText(sb.toString().trim());
     }
-    /** Which tablet this remote drives. Hidden until a second player has been heard: with one tablet
-        there's nothing to choose and the remote keeps attaching to whatever answers first. */
-    private void renderTablets() {
-        final RemoteService svc = RemoteService.get();
-        if (svc == null || local) return;
-        java.util.Map<String, String> found = svc.tablets();
-        final String target = svc.target();
-        if (found.size() < 2 && target == null) return;
-        TextView hdr = noteText("Tablet"); hdr.setTextColor(SUB); connModes.addView(hdr);
-        for (final java.util.Map.Entry<String, String> e : found.entrySet()) {
-            boolean on = e.getKey().equals(target);
-            Button b = rowBtn((on ? "●  " : "○  ") + e.getValue(), on ? 0xFF8FD694 : TXT);
-            b.setOnClickListener(v -> {
-                svc.setTarget(e.getKey());
-                toast("Using " + e.getValue());
-                main.postDelayed(() -> { renderConnModes(); renderConnStatus(); }, 600);
-            });
-            connModes.addView(b);
-        }
-        if (target != null) {
-            Button any = rowBtn("○  Any tablet (first to answer)", TXT);
-            any.setOnClickListener(v -> {
-                svc.setTarget(null);
-                toast("Using any tablet");
-                main.postDelayed(() -> { renderConnModes(); renderConnStatus(); }, 600);
-            });
-            connModes.addView(any);
-        }
-        connModes.addView(noteText("More than one player is in range — pick the one this remote drives."));
-    }
+    /** Screen selection now lives in the header dropdown (checkbox multi-select), not here. */
+    private void renderTablets() { }
 
     private void renderConnModes() {
         if (connModes == null) return;

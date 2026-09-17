@@ -225,34 +225,44 @@ public class RemoteService extends Service {
     // --- WHICH tablet (multi-player) ---------------------------------------------------------------
     // Both links used to take whatever player answered first, so a remote in range of two of them could
     // attach to either and swap between them. Every player heard is remembered here; the pick is sticky.
-    static final String PREF_TARGET = "kidodi_target";
-    public static final String ALL = "*";   // target = "both in unison": commands fan out to every tablet
-    public boolean isBroadcast() { return ALL.equals(target()); }
+    static final String PREF_TARGET = "kidodi_target";   // comma-separated ids to control; "" (or "*") = ALL
+    public static final String ALL = "*";
     private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
     /** id -> friendly name for every player heard on BLE or mDNS this session. */
     public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
-    /** The player we hold out for, or null = whichever answers first (single-tablet setups). */
-    public String target() { String t = Cfg.p(this).getString(PREF_TARGET, ""); return t.isEmpty() ? null : t; }
-    /** What the LINKS (BLE/Wi-Fi) hold out for. In broadcast mode ("*") that's null — the links still
-        connect/poll a representative tablet for state, and commands fan to all via Wi-Fi hosts(). Passing
-        "*" straight to a link makes it hold out for a nonexistent id and connect to nothing. */
-    private String linkTarget() { String t = target(); return ALL.equals(t) ? null : t; }
-    /** Stick to one player: persist it, then re-aim both links. */
-    public void setTarget(String id) {
-        Cfg.p(this).edit().putString(PREF_TARGET, id == null ? "" : id).apply();
-        // "Both in unison" ("*") isn't a real id: BLE broadcasts to EVERY tablet it holds a link to (the
-        // reliable path — no mDNS), and one link drives the shown state. Wi-Fi stays up as a fallback fan-out.
-        boolean bc = ALL.equals(id);
-        String linkTarget = bc ? null : id;
-        // The BleClient already holds a link to every tablet it heard, so switching is just a flag flip —
-        // no stop/start (that caused a multi-second rescan lag). Its running scan connects any newly-wanted
-        // tablet (e.g. single -> Both). Wi-Fi just re-aims which host it polls for state.
-        if (ble != null) { ble.setBroadcast(bc); ble.setTarget(linkTarget); ble.start(); }
-        if (wifi != null) wifi.setTarget(linkTarget);
-        if (bc && wifi == null) startWifi(null, 0);
+    /** The SELECTED players to control (checkbox multi-select). Empty = ALL heard. */
+    public java.util.Set<String> targets() {
+        String t = Cfg.p(this).getString(PREF_TARGET, "");
+        java.util.LinkedHashSet<String> s = new java.util.LinkedHashSet<>();
+        if (t != null && !t.isEmpty() && !ALL.equals(t)) for (String id : t.split(",")) if (!id.isEmpty()) s.add(id);
+        return s;
     }
-    /** Friendly name of the player we're actually attached to, or null. */
+    public boolean isAll() { return targets().isEmpty(); }
+    /** Persist the selection, then re-aim the links. Empty/full set = ALL. */
+    public void setTargets(java.util.Set<String> ids) {
+        // Treat "all of them selected" as ALL (empty), so adding a new screen later is auto-included.
+        java.util.Set<String> sel = (ids == null) ? new java.util.HashSet<>() : new java.util.HashSet<>(ids);
+        if (!seenTablets.isEmpty() && sel.containsAll(seenTablets.keySet())) sel.clear();
+        Cfg.p(this).edit().putString(PREF_TARGET, sel.isEmpty() ? "" : android.text.TextUtils.join(",", sel)).apply();
+        aimLinks();
+    }
+    /** Back-compat: set a single target (or ALL). */
+    public void setTarget(String id) {
+        if (id == null || ALL.equals(id)) setTargets(java.util.Collections.<String>emptySet());
+        else { java.util.HashSet<String> s = new java.util.HashSet<>(); s.add(id); setTargets(s); }
+    }
+    /** Re-aim BLE (drives the selected set) + Wi-Fi (polls the representative + reaches Wi-Fi-only screens). */
+    private void aimLinks() {
+        java.util.Set<String> sel = targets();
+        String rep = sel.isEmpty() ? null : sel.iterator().next();   // whose state the UI shows
+        if (ble != null) { ble.setDrive(sel); ble.setStateId(rep); ble.start(); }
+        if (wifi != null) wifi.setTarget(rep);
+        if (wifi == null) startWifi(null, 0);   // Wi-Fi is needed for Wi-Fi-only screens (a TV) + representative state
+    }
+    /** Friendly name of the representative player, or a count when several are selected. */
     public String connectedTablet() {
+        java.util.Set<String> sel = targets();
+        if (!sel.isEmpty() && sel.size() > 1) return sel.size() + " screens";
         String id = bleUp() ? ble.connectedId() : (wifi != null && wifi.isConnected() ? wifi.connectedId() : null);
         if (id == null) return null;
         String n = seenTablets.get(id);
@@ -270,11 +280,12 @@ public class RemoteService extends Service {
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
-        ble.setBroadcast(isBroadcast());
-        ble.setTarget(linkTarget());
+        java.util.Set<String> sel = targets();
+        ble.setDrive(sel);
+        ble.setStateId(sel.isEmpty() ? null : sel.iterator().next());
         ble.start();
-        if (!"ble".equals(connMode)) applyConnMode();   // wifi tier: bring mDNS up now (concurrent), don't wait for the BLE-fallback
-        if (isBroadcast() && wifi == null) startWifi(null, 0);   // "both in unison" always needs Wi-Fi (BLE holds one link)
+        if (!"ble".equals(connMode)) applyConnMode();   // hotspot coordination for the chosen tier
+        if (wifi == null) startWifi(null, 0);            // Wi-Fi always up: Wi-Fi-only screens (a TV) + representative state
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
         main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
@@ -291,20 +302,31 @@ public class RemoteService extends Service {
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
         if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
-        else wifi.setTarget(linkTarget());   // "*" -> null (poll a representative; broadcast fans via hosts())
+        else { java.util.Set<String> sel = targets(); wifi.setTarget(sel.isEmpty() ? null : sel.iterator().next()); }   // poll the representative
         wifi.start();
     }
 
     private boolean bleUp() { return ble != null && ble.isConnected(); }
 
     public void send(String cmd) {
-        if (isBroadcast()) {                      // both in unison
-            if (bleUp()) { ble.send(cmd); return; }        // BLE fans to EVERY connected tablet (no mDNS needed)
-            if (wifi != null) { wifi.sendAll(cmd); return; }   // Wi-Fi fallback (needs both resolved)
+        if (isQueryCmd(cmd)) {   // a query has ONE answer — ask the representative only
+            if (bleUp()) ble.sendState(cmd);
+            else if (wifi != null) wifi.send(cmd);
             return;
         }
-        if (bleUp()) ble.send(cmd);
-        else if (wifi != null) wifi.send(cmd);
+        // A control command goes to EVERY selected screen: BLE to the tablets it holds links to, Wi-Fi to
+        // the rest (e.g. a TV that doesn't advertise BLE). Empty selection = ALL heard screens.
+        java.util.Set<String> sel = targets();
+        java.util.Set<String> bleIds = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
+        if (ble != null) ble.send(cmd);
+        if (wifi != null) {
+            java.util.Set<String> w = sel.isEmpty() ? new java.util.HashSet<>(wifi.hostIds()) : new java.util.HashSet<>(sel);
+            w.removeAll(bleIds);
+            if (!w.isEmpty()) wifi.sendTo(w, cmd);
+        }
+    }
+    private static boolean isQueryCmd(String c) {
+        return c.equals("list") || c.equals("queue") || c.equals("conn") || c.equals("cfg") || c.startsWith("shows") || c.startsWith("eps:");
     }
     public String state() { return lastState; }
     public boolean isLocal() { return local; }
@@ -320,7 +342,7 @@ public class RemoteService extends Service {
             public void onStatus(String s) {} public void onState(String s) {}
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
-        tmp.setTarget(target());   // upload to the tablet we're driving, not whichever resolves first
+        { java.util.Set<String> sel = targets(); tmp.setTarget(sel.isEmpty() ? null : sel.iterator().next()); }   // upload to the representative
         tmp.start();
         try {
             for (int i = 0; i < 50; i++) {
