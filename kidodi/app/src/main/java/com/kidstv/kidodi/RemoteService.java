@@ -240,12 +240,13 @@ public class RemoteService extends Service {
     /** Stick to one player: persist it, then re-aim both links. */
     public void setTarget(String id) {
         Cfg.p(this).edit().putString(PREF_TARGET, id == null ? "" : id).apply();
-        // "Both in unison" isn't a real player id: poll whoever answers for a representative state, and
-        // fan commands to all via Wi-Fi (BLE can only hold one link, so broadcast needs Wi-Fi up).
-        String linkTarget = ALL.equals(id) ? null : id;
-        if (ble != null) { ble.setTarget(linkTarget); ble.stop(); ble.start(); }
+        // "Both in unison" ("*") isn't a real id: BLE broadcasts to EVERY tablet it holds a link to (the
+        // reliable path — no mDNS), and one link drives the shown state. Wi-Fi stays up as a fallback fan-out.
+        boolean bc = ALL.equals(id);
+        String linkTarget = bc ? null : id;
+        if (ble != null) { ble.setBroadcast(bc); ble.setTarget(linkTarget); ble.stop(); ble.start(); }
         if (wifi != null) { wifi.setTarget(linkTarget); wifi.stop(); wifi = null; startWifi(null, 0); }
-        if (ALL.equals(id) && wifi == null) startWifi(null, 0);
+        if (bc && wifi == null) startWifi(null, 0);
     }
     /** Friendly name of the player we're actually attached to, or null. */
     public String connectedTablet() {
@@ -266,6 +267,7 @@ public class RemoteService extends Service {
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
             public void onSeen(String id, String name) { noteSeen(id, name); }
         });
+        ble.setBroadcast(isBroadcast());
         ble.setTarget(linkTarget());
         ble.start();
         if (!"ble".equals(connMode)) applyConnMode();   // wifi tier: bring mDNS up now (concurrent), don't wait for the BLE-fallback
@@ -293,7 +295,11 @@ public class RemoteService extends Service {
     private boolean bleUp() { return ble != null && ble.isConnected(); }
 
     public void send(String cmd) {
-        if (isBroadcast() && wifi != null) { wifi.sendAll(cmd); return; }   // both in unison
+        if (isBroadcast()) {                      // both in unison
+            if (bleUp()) { ble.send(cmd); return; }        // BLE fans to EVERY connected tablet (no mDNS needed)
+            if (wifi != null) { wifi.sendAll(cmd); return; }   // Wi-Fi fallback (needs both resolved)
+            return;
+        }
         if (bleUp()) ble.send(cmd);
         else if (wifi != null) wifi.send(cmd);
     }
