@@ -230,6 +230,7 @@ public class RemoteService extends Service {
     public static final String ALL = "*";
     private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
     private final Map<String, String> deviceIps = new ConcurrentHashMap<>();   // id -> LAN ip (from BLE state); merged with wifi hosts
+    private final Set<String> hostIds = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());   // devices that hold the library (candidate sync leaders)
 
     /** A device's LAN ip so we can HTTP its ControlServer directly (arm/disarm a sync group). */
     public String deviceIp(String id) {
@@ -256,7 +257,9 @@ public class RemoteService extends Service {
         }
         java.util.List<String> order = new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets());
         if (order.size() < 2) return;                       // need a leader + at least one follower
+        // Leader must be a MEDIA HOST (followers stream from it). Prefer a known host in the group; else the first.
         String leader = order.get(0);
+        for (String id : order) if (hostIds.contains(id)) { leader = id; break; }
         String leaderIp = deviceIp(leader);
         if (leaderIp == null || leaderIp.isEmpty()) return; // can't arm without the leader's ip
         httpArm(leaderIp, "/sync?on=0");                    // the leader plays normally (audio source)
@@ -332,7 +335,11 @@ public class RemoteService extends Service {
             public void onState(String json) { onIncoming(json, "BLE"); }
             public void onStill(byte[] jpeg) { setLatestStill(jpeg); }   // reassembled BLE still -> shared for views/AA
             public void onSeen(String id, String name) { noteSeen(id, name); }
-            public void onDeviceIp(String id, String ip) { if (id != null && ip != null && !ip.isEmpty()) deviceIps.put(id, ip); }
+            public void onDeviceState(String id, String ip, boolean isHost) {
+                if (id == null) return;
+                if (ip != null && !ip.isEmpty()) deviceIps.put(id, ip);
+                if (isHost) hostIds.add(id); else hostIds.remove(id);
+            }
         });
         java.util.Set<String> sel = targets();
         ble.setDrive(sel);

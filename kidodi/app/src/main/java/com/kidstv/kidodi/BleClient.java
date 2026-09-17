@@ -37,8 +37,9 @@ public class BleClient {
         void onStatus(String s); void onState(String json); void onStill(byte[] jpeg);
         /** A player was heard advertising (id + friendly name), whether or not we attach to it. */
         void onSeen(String id, String name);
-        /** A player's state told us its LAN ip (so a remote can HTTP it directly, e.g. to arm a sync group). */
-        void onDeviceIp(String id, String ip);
+        /** A player's state told us its LAN ip + whether it's a host (holds the library) — so a remote can
+            HTTP it directly and pick the media host as the sync leader. */
+        void onDeviceState(String id, String ip, boolean isHost);
     }
     static final String TAG = "Kidodi";
 
@@ -201,7 +202,8 @@ public class BleClient {
         if (Ble.STATE.equals(uuid)) {
             c.lastStateMs = System.currentTimeMillis();
             String s = new String(v);
-            try { String ip = new org.json.JSONObject(s).optString("ip", ""); if (!ip.isEmpty()) main.post(() -> l.onDeviceIp(c.id, ip)); } catch (Exception ignored) {}   // learn every tablet's ip, not just the shown one
+            try { org.json.JSONObject o = new org.json.JSONObject(s); String ip = o.optString("ip", ""); boolean host = !o.optBoolean("client", false);
+                  if (!ip.isEmpty()) main.post(() -> l.onDeviceState(c.id, ip, host)); } catch (Exception ignored) {}   // learn every tablet's ip + host-ness, not just the shown one
             if (isStateSource(c)) main.post(() -> l.onState(s));
         } else if (Ble.IMG.equals(uuid)) {
             if (isStateSource(c)) onImgChunk(c, v);   // camera stills only from the one we're showing

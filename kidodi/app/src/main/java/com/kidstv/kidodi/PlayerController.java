@@ -730,6 +730,7 @@ public class PlayerController {
             o.put("duration_ms", durMs);
             o.put("cur", curId);   // stable library id of the current item (cached by the ticker) — followers mirror it
             o.put("clock", sampleClock);   // leader's monotonic clock when position_ms was sampled (synced-playback extrapolation)
+            o.put("client", clientItems != null);   // true = streams from a host (never the sync leader); false = holds the library
             o.put("volume", Math.round(vol * 100) / 100.0);
             o.put("muted", muted);
             o.put("sleeping", sleeping);
