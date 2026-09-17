@@ -40,6 +40,7 @@ class Cfg {
             {"kidodi_chal_len",      "int", "6"},   // Randomized PIN: number of digits shown on screen
             {"kidodi_chal_secs",     "int", "30"},  // Randomized PIN: seconds allowed to enter it
             {"kidodi_chal_tries",    "int", "3"},   // Randomized PIN: wrong attempts allowed before it drops back to locked
+            {"kidodi_host",          "str", ""},    // CLIENT mode: host tablet's IP to stream the library from ("" = standalone/host)
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
 

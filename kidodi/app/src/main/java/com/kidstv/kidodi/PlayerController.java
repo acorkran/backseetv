@@ -22,6 +22,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 
@@ -64,6 +65,9 @@ public class PlayerController {
     // library index: id = index into libFiles (sorted by path); libShows = show -> ids (episode order)
     private volatile List<File> libFiles = new ArrayList<>();
     private volatile LinkedHashMap<String, List<Integer>> libShows = new LinkedHashMap<>();
+    // CLIENT mode (kidodi_host set): the library lives on another tablet; items are host /media URLs keyed
+    // by the SAME id the host uses, so a broadcast "play show/episode X" plays the same content on both.
+    private volatile Map<Integer, MediaItem> clientItems = null;   // non-null => this player is a client
 
     public void setNapped(boolean n) { napped = n; }
 
@@ -73,6 +77,9 @@ public class PlayerController {
     public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
     private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         appCtx = ctx.getApplicationContext();
+        final String host = Cfg.getStr(appCtx, "kidodi_host", "");
+        if (host != null && !host.isEmpty()) { new Thread(() -> loadClientLibrary(host, autoStart)).start(); return; }
+        clientItems = null;
         new Thread(() -> {
             LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
             // stable ids: global list sorted by absolute path
@@ -107,6 +114,60 @@ public class PlayerController {
                 if (autoStart) selectPlaylist("Shuffle All");
             });
         }).start();
+    }
+
+    /** CLIENT: build the library from the HOST's manifest — same shows/ids, items are host /media URLs
+        (so id X on the client == id X on the host). Retries until the host is reachable. */
+    private void loadClientLibrary(final String host, final boolean autoStart) {
+        try {
+            String base = "http://" + host + ":8090";
+            JSONObject lib = new JSONObject(httpGet(base + "/library"));
+            JSONArray shows = lib.optJSONArray("shows");
+            final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
+            final LinkedHashMap<String, List<Integer>> showIds = new LinkedHashMap<>();
+            final List<MediaItem> all = new ArrayList<>();
+            final Map<Integer, MediaItem> byId = new HashMap<>();
+            if (shows != null) for (int s = 0; s < shows.length(); s++) {
+                String name = shows.getJSONObject(s).optString("name");
+                if (name == null || name.isEmpty()) continue;
+                JSONObject epsO = new JSONObject(httpGet(base + "/library?show=" + enc(name)));
+                JSONArray eps = epsO.optJSONArray("items");
+                List<MediaItem> list = new ArrayList<>(); List<Integer> ids = new ArrayList<>();
+                if (eps != null) for (int i = 0; i < eps.length(); i++) {
+                    int id = eps.getJSONObject(i).optInt("id", -1);
+                    String title = eps.getJSONObject(i).optString("title", "");
+                    if (id < 0) continue;
+                    MediaItem mi = new MediaItem.Builder().setUri(base + "/media?id=" + id)
+                            .setMediaMetadata(new MediaMetadata.Builder().setTitle(title).build()).build();
+                    list.add(mi); all.add(mi); ids.add(id); byId.put(id, mi);
+                }
+                built.put(name, list); showIds.put(name, ids);
+            }
+            if (all.isEmpty()) { main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000); return; }
+            on(() -> {
+                clientItems = byId; libFiles = new ArrayList<>(); libShows = showIds;
+                playlists.clear();
+                playlists.put("Shuffle All", all);
+                playlists.putAll(built);
+                loop = Cfg.getInt(appCtx, "kidodi_loop", 1) == 1;
+                android.util.Log.i("Kidodi", "client library from " + host + ": " + all.size() + " items, " + built.size() + " shows");
+                if (autoStart) selectPlaylist("Shuffle All");
+            });
+        } catch (Exception e) {
+            android.util.Log.w("Kidodi", "client library from " + host + " failed: " + e + " — retrying");
+            main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000);
+        }
+    }
+    private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
+    private static String httpGet(String url) throws Exception {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        c.setConnectTimeout(3000); c.setReadTimeout(4000);
+        try {
+            java.io.InputStream in = c.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[4096]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n);
+            return bo.toString("UTF-8");
+        } finally { c.disconnect(); }
     }
 
     private List<MediaItem> itemsFor(String name) {
@@ -178,6 +239,8 @@ public class PlayerController {
 
     // --- queue editing ------------------------------------------------------
     private MediaItem itemFor(int id) {
+        Map<Integer, MediaItem> c = clientItems;
+        if (c != null) return c.get(id);   // client: host /media URL for this id
         List<File> f = libFiles;
         return (id >= 0 && id < f.size()) ? MediaItem.fromUri(Uri.fromFile(f.get(id))) : null;
     }
@@ -433,10 +496,12 @@ public class PlayerController {
     }
 
     private String titleOf(MediaItem m) {
-        try { if (m != null && m.localConfiguration != null) {
-            String seg = m.localConfiguration.uri.getLastPathSegment();
-            return seg != null ? seg : "";
-        }} catch (Exception ignored) {}
+        try {
+            if (m != null) {
+                if (m.mediaMetadata != null && m.mediaMetadata.title != null) return m.mediaMetadata.title.toString();   // client URL items
+                if (m.localConfiguration != null) { String seg = m.localConfiguration.uri.getLastPathSegment(); return seg != null ? seg : ""; }
+            }
+        } catch (Exception ignored) {}
         return "";
     }
 
