@@ -703,6 +703,11 @@ public class RemoteActivity extends Activity {
             sh.setPadding(dp(16), dp(8), dp(16), dp(2)); col.addView(sh);
             final boolean sg = svc.isSyncGroup();
             col.addView(checkRow("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshTargets(col, svc); }));
+            if (sg) {   // audio: each screen its own sound (default) vs only the leader (co-located, no echo)
+                final boolean lo = svc.groupLeaderOnly();
+                View r = checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); });
+                r.setPadding(dp(30), dp(9), dp(16), dp(9)); col.addView(r);   // indented sub-option
+            }
         }
         View div = new View(this); div.setBackgroundColor(0x22FFFFFF);
         col.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));

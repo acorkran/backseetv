@@ -72,6 +72,8 @@ public class PlayerController {
     private volatile Map<Integer, MediaItem> clientItems = null;   // non-null => this player is a client
     private volatile Map<String, Integer> idOfPath = null;         // host: local file path -> stable id (for "cur")
     private volatile boolean syncEnabled = false;                  // follower: continuously mirror the host's playback
+    private volatile boolean syncMuteFollower = false;             // follower: stay silent (leader-only audio) vs play own audio
+    public void setSyncMuteFollower(boolean m) { syncMuteFollower = m; if (p != null) on(this::syncMute); }
     private Runnable syncTick;
     private Runnable startPending;                                 // a scheduled seek-ahead start waiting to fire
     // Shared clock (NTP-lite): leaderClock(now) ≈ elapsedRealtime() + clkOffset. Kept fresh by min-RTT probes.
@@ -167,6 +169,7 @@ public class PlayerController {
                 loop = Cfg.getInt(appCtx, "kidodi_loop", 1) == 1;
                 android.util.Log.i("Kidodi", "client library from " + host + ": " + all.size() + " items, " + built.size() + " shows");
                 if (autoStart) selectPlaylist("Shuffle All");
+                syncMuteFollower = Cfg.getInt(appCtx, "kidodi_sync_mute", 0) == 1;   // restore leader-only vs own-audio
                 if (Cfg.getInt(appCtx, "kidodi_sync", 0) == 1) setSync(true);   // follower: start mirroring the host
             });
         } catch (Exception e) {
@@ -375,9 +378,9 @@ public class PlayerController {
         else if (!lplaying && p.isPlaying()) p.pause();
         syncMute();
     }
-    /** A synced FOLLOWER is always silent — audio comes from the leader only. Force gain 0 every tick,
-        regardless of the follower's own mute flag (a stray broadcast unmute must never make it echo). */
-    private void syncMute() { if (p != null && !sleeping) p.setVolume(0f); }
+    /** Follower audio each mirror tick. In LEADER-ONLY mode force gain 0 (audio comes from the leader, no
+        echo — and a stray broadcast unmute can't make it sound). In EACH-SCREEN mode play its own volume. */
+    private void syncMute() { if (p != null && !sleeping) p.setVolume(syncMuteFollower ? 0f : effMult()); }
     /** Wait `ms` (the seek-ahead lead) then start — by then the leader has reached the frame we seeked to. */
     private void schedulePlayAfter(long ms) {
         if (startPending != null) main.removeCallbacks(startPending);

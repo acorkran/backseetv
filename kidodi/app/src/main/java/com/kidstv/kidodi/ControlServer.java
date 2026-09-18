@@ -98,6 +98,8 @@ public class ControlServer {
                         Cfg.applyConfig(ctx, "kidodi_host", urlDecode(host));
                         ctrl.reloadForSync(ctx);   // enter client mode so itemFor(cur) resolves the leader's library
                     }
+                    String mute = param(q, "mute");   // leader-only audio (1) vs each screen its own sound (0)
+                    if (mute != null) { boolean m = "1".equals(mute) || "true".equals(mute); ctrl.setSyncMuteFollower(m); Cfg.applyConfig(ctx, "kidodi_sync_mute", m ? "1" : "0"); }
                     ctrl.setSync(want);
                     Cfg.applyConfig(ctx, "kidodi_sync", ctrl.isSync() ? "1" : "0");
                     PlayerActivity.wakeScreen(); body = ok(); break;

@@ -232,6 +232,7 @@ public class RemoteService extends Service {
     // attach to either and swap between them. Every player heard is remembered here; the pick is sticky.
     static final String PREF_TARGET = "kidodi_target";   // comma-separated ids to control; "" (or "*") = ALL
     static final String PREF_SYNCGROUP = "kidodi_syncgroup";   // leader id when a synced group is armed; "" = off
+    static final String PREF_GROUP_AUDIO = "kidodi_group_audio";   // "each" = every screen its own sound (default); "leader" = leader only
     public static final String ALL = "*";
     private final Map<String, String> seenTablets = new ConcurrentHashMap<>();
     private final Map<String, String> deviceIps = new ConcurrentHashMap<>();   // id -> LAN ip (from BLE state); merged with wifi hosts
@@ -247,6 +248,24 @@ public class RemoteService extends Service {
     }
     // ---- Synced group: one leader plays with audio, the rest mirror it muted in lock-step ----------------
     public boolean isSyncGroup() { return !Cfg.p(this).getString(PREF_SYNCGROUP, "").isEmpty(); }
+    /** Audio in a synced group: false = each screen plays its own sound (default); true = only the leader. */
+    public boolean groupLeaderOnly() { return "leader".equals(Cfg.p(this).getString(PREF_GROUP_AUDIO, "each")); }
+    public void setGroupAudio(boolean leaderOnly) {
+        Cfg.p(this).edit().putString(PREF_GROUP_AUDIO, leaderOnly ? "leader" : "each").apply();
+        if (isSyncGroup()) reArmFollowersMute();   // push the new audio mode to the current followers
+    }
+    /** The screens in the group: the current selection, or all seen when "All". */
+    private java.util.Set<String> groupMembers() {
+        java.util.Set<String> t = targets();
+        return t.isEmpty() ? new java.util.LinkedHashSet<>(seenTablets.keySet()) : t;
+    }
+    /** Re-tell the current followers whether to stay silent (leader-only) or play their own audio. */
+    private void reArmFollowersMute() {
+        String leader = syncLeaderId(); if (leader == null) return;
+        String leaderIp = deviceIp(leader); if (leaderIp == null) return;
+        int mute = groupLeaderOnly() ? 1 : 0;
+        for (String id : groupMembers()) if (!id.equals(leader)) { String ip = deviceIp(id); if (ip != null) httpArm(ip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute); }
+    }
     public String syncLeaderId() { String s = Cfg.p(this).getString(PREF_SYNCGROUP, ""); return s.isEmpty() ? null : s; }
     public String syncLeaderName() { String id = syncLeaderId(); if (id == null) return null; String n = seenTablets.get(id); return n != null ? n : id; }
     /** Arm/disarm a synced group over the CURRENT screen selection. Leader = the first selected (its state is
@@ -272,9 +291,11 @@ public class RemoteService extends Service {
         String leaderIp = deviceIp(leader);
         if (leaderIp == null || leaderIp.isEmpty()) return; // can't arm without the leader's ip
         httpArm(leaderIp, "/sync?on=0");                    // the leader plays normally (audio source)
-        for (int i = 1; i < order.size(); i++) {
-            String fip = deviceIp(order.get(i));
-            if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp);
+        int mute = groupLeaderOnly() ? 1 : 0;               // each screen its own sound, or leader only
+        for (String id : order) {
+            if (id.equals(leader)) continue;
+            String fip = deviceIp(id);
+            if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute);
         }
         Cfg.p(this).edit().putString(PREF_SYNCGROUP, leader).apply();
         aimLinks();                                         // control now drives the leader; followers mirror
@@ -384,6 +405,15 @@ public class RemoteService extends Service {
             else if (wifi != null) wifi.send(cmd);
             return;
         }
+        // Volume in a synced group with PER-SCREEN audio hits every member (each its own sound); everything
+        // else (playback; or volume when the group is leader-only) goes to the effective target below.
+        if (isSyncGroup() && isVolCmd(cmd) && !groupLeaderOnly()) {
+            java.util.Set<String> members = groupMembers();
+            java.util.Set<String> ble2 = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
+            if (ble != null) ble.sendToIds(members, cmd);
+            if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(members); w.removeAll(ble2); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
+            return;
+        }
         // A control command goes to EVERY selected screen: BLE to the tablets it holds links to, Wi-Fi to
         // the rest (e.g. a TV that doesn't advertise BLE). Empty selection = ALL heard screens. A synced
         // group collapses this to the leader alone (the followers mirror it themselves).
@@ -396,6 +426,7 @@ public class RemoteService extends Service {
             if (!w.isEmpty()) wifi.sendTo(w, cmd);
         }
     }
+    private static boolean isVolCmd(String c) { return c != null && (c.equals("volup") || c.equals("voldown") || c.equals("mute") || c.startsWith("vol")); }
     private static boolean isQueryCmd(String c) {
         return c.equals("list") || c.equals("queue") || c.equals("conn") || c.equals("cfg") || c.startsWith("shows") || c.startsWith("eps:");
     }

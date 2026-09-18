@@ -42,6 +42,7 @@ class Cfg {
             {"kidodi_chal_tries",    "int", "3"},   // Randomized PIN: wrong attempts allowed before it drops back to locked
             {"kidodi_host",          "str", ""},    // CLIENT mode: host tablet's IP to stream the library from ("" = standalone/host)
             {"kidodi_sync",          "int", "0"},   // FOLLOWER: 1 = mirror the host's item+position (synced viewing); 0 = independent
+            {"kidodi_sync_mute",     "int", "0"},   // FOLLOWER: 1 = stay silent while syncing (leader-only audio); 0 = play own audio
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
 

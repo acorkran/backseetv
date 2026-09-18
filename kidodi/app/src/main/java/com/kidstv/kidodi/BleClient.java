@@ -266,6 +266,12 @@ public class BleClient {
         final byte[] b = cmd.getBytes();
         for (Conn c : conns.values()) if (wanted(c.id)) write(c, b);
     }
+    /** Send to a SPECIFIC set of connected tablets regardless of `drive` (e.g. per-screen volume in a group). */
+    public void sendToIds(java.util.Set<String> ids, String cmd) {
+        if (ids == null) return;
+        final byte[] b = cmd.getBytes();
+        for (Conn c : conns.values()) if (ids.contains(c.id)) write(c, b);
+    }
     /** Send only to the state-source tablet (queries have a single answer, not a fan-out). */
     public void sendState(String cmd) { Conn c = stateConn(); if (c != null) write(c, cmd.getBytes()); }
     private void write(Conn c, byte[] b) {
