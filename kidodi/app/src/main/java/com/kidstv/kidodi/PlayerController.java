@@ -341,7 +341,7 @@ public class PlayerController {
     private void stopSyncLoop() {
         if (syncTick != null) { main.removeCallbacks(syncTick); syncTick = null; }
         if (startPending != null) { main.removeCallbacks(startPending); startPending = null; }
-        on(() -> { try { if (p != null) p.setPlaybackParameters(new PlaybackParameters(1f)); } catch (Exception ignored) {} });
+        on(() -> { try { if (p != null) { p.setPlaybackParameters(new PlaybackParameters(1f)); keepMute(); } } catch (Exception ignored) {} });   // restore the device's own volume (no longer a forced-silent follower)
     }
     /** The leader's position RIGHT NOW, extrapolated from a timestamped sample on the shared clock. */
     private long expectedPos(long leaderPos, long leaderClock, boolean lplaying) {
@@ -357,28 +357,31 @@ public class PlayerController {
         seek START_LEAD past the leader, wait that long, then play, so we begin exactly where it will be. */
     private void mirror(int cur, long leaderPos, long leaderClock, boolean lplaying) {
         if (p == null || cur < 0) return;
-        if (startPending != null) { keepMute(); return; }   // a scheduled start is mid-flight; don't fight it
+        if (startPending != null) { syncMute(); return; }   // a scheduled start is mid-flight; don't fight it
         final long expected = expectedPos(leaderPos, leaderClock, lplaying);
         if (currentLibId() != cur) {                         // wrong item -> switch + scheduled seek-ahead start
             MediaItem mi = itemFor(cur);
             if (mi != null) {
-                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); keepMute();
+                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); syncMute();
                 if (lplaying) { p.seekTo(expected + START_LEAD); p.pause(); schedulePlayAfter(START_LEAD); }
                 else { p.seekTo(expected); p.pause(); }
             }
-            keepMute(); return;
+            syncMute(); return;
         }
         long drift = p.getCurrentPosition() - expected;      // >0 = we're ahead of the leader
         if (Math.abs(drift) > HARD_SEEK_MS) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
         else { float sp = 1f - drift / 6000f; sp = Math.max(0.985f, Math.min(1.015f, sp)); p.setPlaybackParameters(new PlaybackParameters(sp)); }
         if (lplaying && !p.isPlaying()) p.play();
         else if (!lplaying && p.isPlaying()) p.pause();
-        keepMute();
+        syncMute();
     }
+    /** A synced FOLLOWER is always silent — audio comes from the leader only. Force gain 0 every tick,
+        regardless of the follower's own mute flag (a stray broadcast unmute must never make it echo). */
+    private void syncMute() { if (p != null && !sleeping) p.setVolume(0f); }
     /** Wait `ms` (the seek-ahead lead) then start — by then the leader has reached the frame we seeked to. */
     private void schedulePlayAfter(long ms) {
         if (startPending != null) main.removeCallbacks(startPending);
-        startPending = () -> { startPending = null; if (syncEnabled && p != null) { keepMute(); p.play(); } };
+        startPending = () -> { startPending = null; if (syncEnabled && p != null) { syncMute(); p.play(); } };
         main.postDelayed(startPending, Math.max(0, ms));
     }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */

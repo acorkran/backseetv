@@ -132,6 +132,11 @@ public class RemoteService extends Service {
         try {   // the TV publishes its connection level + hotspot creds in state
             JSONObject o = new JSONObject(json);
             if (o.has("conn")) noteConn(o.optString("conn", ""), o.optJSONObject("hotspot"));
+            String id = o.optString("id", ""), ip = o.optString("ip", "");   // learn the shown device's ip + host-ness (for sync-group arming)
+            if (!id.isEmpty()) {
+                if (!ip.isEmpty()) deviceIps.put(id, ip);
+                if (o.has("client")) { if (o.optBoolean("client")) hostIds.remove(id); else hostIds.add(id); }
+            }
         } catch (Exception ignored) {}
         if (ui != null) ui.onState(json);
     }
@@ -257,9 +262,13 @@ public class RemoteService extends Service {
         }
         java.util.List<String> order = new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets());
         if (order.size() < 2) return;                       // need a leader + at least one follower
-        // Leader must be a MEDIA HOST (followers stream from it). Prefer a known host in the group; else the first.
-        String leader = order.get(0);
+        // Leader must be a MEDIA HOST (followers stream from it). Prefer a known host in the group; else the
+        // currently-shown representative (what the user drives); else the first with a resolvable ip.
+        String leader = null;
         for (String id : order) if (hostIds.contains(id)) { leader = id; break; }
+        if (leader == null) { try { String rid = new JSONObject(lastState).optString("id", ""); if (order.contains(rid)) leader = rid; } catch (Exception ignored) {} }
+        if (leader == null) for (String id : order) if (deviceIp(id) != null) { leader = id; break; }
+        if (leader == null) leader = order.get(0);
         String leaderIp = deviceIp(leader);
         if (leaderIp == null || leaderIp.isEmpty()) return; // can't arm without the leader's ip
         httpArm(leaderIp, "/sync?on=0");                    // the leader plays normally (audio source)
