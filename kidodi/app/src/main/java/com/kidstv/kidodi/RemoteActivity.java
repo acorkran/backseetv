@@ -51,26 +51,14 @@ public class RemoteActivity extends Activity {
     static final int ACCENT = 0xFF2F6FEB, GOOD = 0xFF33C05B, WARN = 0xFFE0A63D, PURPLE = 0xFF9B72E0, ORANGE = 0xFFE0673F;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private TitleDot titleDot;
+    private TextView titleDot;   // the "Kidodi" wordmark (menu button + popup anchor)
+    private View dot;            // the connection light (top-right corner); tap = ephemeral status text
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
+    private LinearLayout screenToggles; // All / Sync group / Leader-only audio chips at the top
+    private LinearLayout deviceCards;   // per-screen cards with checkboxes on the Remote tab
+    private Runnable cardPoller;        // polls each screen's /state to fill the cards
+    private final java.util.Map<String, String> devState = new java.util.concurrent.ConcurrentHashMap<>();   // id -> latest /state json
 
-    /** The "Kidodi" wordmark whose 'o' carries the connection light (green ready / amber not). Tap = the menu. */
-    private static class TitleDot extends TextView {
-        private int dotColor = 0xFFE0A63D;
-        TitleDot(Context c) { super(c); }
-        void setDot(int color) { if (color != dotColor) { dotColor = color; invalidate(); } }
-        @Override protected void onDraw(android.graphics.Canvas canvas) {
-            super.onDraw(canvas);
-            CharSequence cs = getText(); if (cs == null) return;
-            String s = cs.toString(); int oi = s.indexOf('o'); if (oi < 0) return;
-            android.graphics.Paint tp = getPaint();
-            float cx = getPaddingLeft() + tp.measureText(s, 0, oi) + tp.measureText(s, oi, oi + 1) / 2f;
-            float cy = getBaseline() - getTextSize() * 0.27f;   // centre of the lowercase o
-            android.graphics.Paint d = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-            d.setColor(dotColor);
-            canvas.drawCircle(cx, cy, getTextSize() * 0.19f, d);   // fills the 'o' — a clear status light
-        }
-    }
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
@@ -111,25 +99,34 @@ public class RemoteActivity extends Activity {
         root.setBackgroundColor(BG);
         root.setPadding(dp(16), dp(20), dp(16), dp(8));
 
-        // --- header (visible on every tab): the "Kidodi" wordmark IS the menu button (light in its 'o') ---
+        // --- header: "Kidodi ⌄" opens the menu; the connection light sits in the corner (tap = status) ---
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        // The "Kidodi" wordmark IS the menu button: tap it for screens / sync / settings / connection.
-        // The connection light lives inside its 'o'. A chevron signals it opens a menu.
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL); titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setClickable(true); titleRow.setPadding(0, dp(2), dp(10), dp(2));
         titleRow.setOnClickListener(v -> showTargetMenu());
-        titleDot = new TitleDot(this);
+        titleDot = new TextView(this);
         titleDot.setText("Kidodi"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
         titleDot.setTypeface(titleDot.getTypeface(), android.graphics.Typeface.BOLD);
         titleRow.addView(titleDot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView chev = new TextView(this); chev.setText(" ⌄"); chev.setTextColor(TXT); chev.setTextSize(20);
         chev.setPadding(dp(6), 0, 0, dp(6));
         titleRow.addView(chev);
-        header.addView(titleRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(header);   // header is full width; the title sits left on its own (no filler needed)
+        header.addView(titleRow, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));   // title takes the flexible left
+        dot = new View(this);
+        GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
+        dot.setBackground(dg); dot.setClickable(true);
+        dot.setOnClickListener(v -> showConnBlurb());   // ephemeral "Bluetooth connected" / "Wi-Fi down" etc.
+        header.addView(dot, new LinearLayout.LayoutParams(dp(13), dp(13)));
+        root.addView(header);
+
+        // --- top toggle row: All screens / Sync group / Leader-only audio (moved out of the menu) ---
+        screenToggles = new LinearLayout(this); screenToggles.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        stp.topMargin = dp(10); root.addView(screenToggles, stp);
+        refreshScreenToggles();
 
         // --- tab bar: Remote | Playlists | Queue ---
         root.addView(spacer(dp(10)));
@@ -184,35 +181,15 @@ public class RemoteActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
 
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        GradientDrawable cd = new GradientDrawable(); cd.setColor(CARD); cd.setCornerRadius(dp(18));
-        card.setBackground(cd);
-        LinearLayout titleRow = new LinearLayout(this);
-        titleRow.setOrientation(LinearLayout.HORIZONTAL);
-        titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        IconView art = new IconView(this, IconView.SHUFFLE, withAlpha(TXT, 0x22), SUB);
-        titleRow.addView(art, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        LinearLayout tcol = new LinearLayout(this); tcol.setOrientation(LinearLayout.VERTICAL);
-        tcol.setPadding(dp(12), 0, 0, 0);
-        title = new TextView(this); title.setText("—"); title.setTextColor(TXT); title.setTextSize(18);
-        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD); title.setMaxLines(1); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        subtitle = new TextView(this); subtitle.setText(""); subtitle.setTextColor(SUB); subtitle.setTextSize(13); subtitle.setMaxLines(1); subtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        tcol.addView(title); tcol.addView(subtitle);
-        titleRow.addView(tcol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        card.addView(titleRow);
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(1000);
-        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(withAlpha(TXT, 0x22)));
-        LinearLayout.LayoutParams pgp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6));
-        pgp.topMargin = dp(12);
-        card.addView(progress, pgp);
-        timeText = new TextView(this); timeText.setText(""); timeText.setTextColor(SUB); timeText.setTextSize(11);
-        timeText.setPadding(0, dp(4), 0, 0);
-        card.addView(timeText);
-        root.addView(card);
+        // One card per connected screen (tap to select), each showing its own show + progress. These replace
+        // the single now-playing card. title/subtitle/progress/timeText stay as off-screen holders so the
+        // representative-state path (showState) keeps working without NPEs.
+        title = new TextView(this); subtitle = new TextView(this);
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000);
+        timeText = new TextView(this);
+        deviceCards = new LinearLayout(this); deviceCards.setOrientation(LinearLayout.VERTICAL);
+        root.addView(deviceCards);
+        refreshDeviceCards();
 
         root.addView(spacer(dp(14)));
         LinearLayout tr = new LinearLayout(this);
@@ -257,6 +234,139 @@ public class RemoteActivity extends Activity {
 
         sv.addView(root);
         return sv;
+    }
+
+    private void refreshAll() { refreshScreenToggles(); refreshDeviceCards(); }
+
+    // Top chips: All screens / Sync group / Leader-only audio (moved out of the menu).
+    private void refreshScreenToggles() {
+        if (screenToggles == null) return;
+        screenToggles.removeAllViews();
+        final RemoteService svc = RemoteService.get(); if (svc == null) return;
+        boolean all = svc.targets().isEmpty();
+        screenToggles.addView(toggleChip("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshAll(); }), chipLp());
+        if (svc.tablets().size() >= 2) {
+            final boolean sg = svc.isSyncGroup();
+            screenToggles.addView(toggleChip("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshAll(); }), chipLp());
+            if (sg) {
+                final boolean lo = svc.groupLeaderOnly();
+                screenToggles.addView(toggleChip("Leader audio", lo, () -> { svc.setGroupAudio(!lo); refreshAll(); }), chipLp());
+            }
+        }
+    }
+    private View toggleChip(String label, boolean on, final Runnable onTap) {
+        TextView t = new TextView(this); t.setText(label); t.setTextSize(12); t.setGravity(Gravity.CENTER);
+        t.setTextColor(on ? 0xFFFFFFFF : TXT); t.setPadding(dp(6), dp(9), dp(6), dp(9)); t.setMaxLines(1);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(dp(18)); g.setColor(on ? ACCENT : BTN);
+        t.setBackground(g); t.setClickable(true); t.setOnClickListener(v -> onTap.run());
+        return t;
+    }
+    private LinearLayout.LayoutParams chipLp() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); p.setMargins(dp(3), 0, dp(3), 0); return p; }
+
+    // Ephemeral connection blurb near the corner light: "Bluetooth connected" / "Wi-Fi connected" / "down".
+    private void showConnBlurb() {
+        RemoteService svc = RemoteService.get();
+        boolean ble = svc != null && svc.bleConnected();
+        boolean wifiUp = tvReach != null && tvReach.toLowerCase().startsWith("reachable");
+        String msg = (ble && wifiUp) ? "Bluetooth + Wi-Fi connected" : ble ? "Bluetooth connected" : wifiUp ? "Wi-Fi connected" : "Not connected";
+        TextView t = new TextView(this); t.setText(msg); t.setTextColor(TXT); t.setTextSize(13);
+        t.setPadding(dp(14), dp(9), dp(14), dp(9));
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(12)); bg.setStroke(dp(1), 0x33FFFFFF);
+        t.setBackground(bg);
+        final android.widget.PopupWindow pop = new android.widget.PopupWindow(t, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, false);
+        pop.setElevation(dp(10));
+        try { pop.showAsDropDown(dot, -dp(180), dp(4), Gravity.END); } catch (Exception ignored) {}
+        main.postDelayed(() -> { try { pop.dismiss(); } catch (Exception ignored) {} }, 1900);
+    }
+
+    // A card per connected screen: checkbox + name + placeholder media art + its own show/progress. 2 per row.
+    private void refreshDeviceCards() {
+        if (deviceCards == null) return;
+        deviceCards.removeAllViews();
+        RemoteService svc = RemoteService.get();
+        java.util.List<java.util.Map.Entry<String, String>> devs = svc != null ? new java.util.ArrayList<>(svc.tablets().entrySet()) : new java.util.ArrayList<>();
+        if (devs.isEmpty()) { deviceCards.addView(noteText("No screens connected yet — tap Kidodi → Connection.")); return; }
+        boolean all = svc.targets().isEmpty();
+        LinearLayout rowL = null;
+        for (int i = 0; i < devs.size(); i++) {
+            if (i % 2 == 0) {
+                rowL = new LinearLayout(this); rowL.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rp.topMargin = dp(8); deviceCards.addView(rowL, rp);
+            }
+            java.util.Map.Entry<String, String> e = devs.get(i);
+            boolean sel = all || svc.targets().contains(e.getKey()) || e.getKey().equals(svc.syncLeaderId());
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            cp.setMargins(i % 2 == 0 ? 0 : dp(8), 0, 0, 0);
+            rowL.addView(deviceCard(e.getKey(), e.getValue(), sel), cp);
+        }
+        if (devs.size() % 2 == 1) rowL.addView(new View(this), new LinearLayout.LayoutParams(0, dp(1), 1f));   // fill the odd slot
+    }
+    private View deviceCard(final String id, String name, final boolean selected) {
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(10), dp(10), dp(10), dp(10));
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
+        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id));
+        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL); top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : SUB); box.setTextSize(18); box.setPadding(0, 0, dp(8), 0);
+        top.addView(box);
+        TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        top.addView(nm, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        c.addView(top);
+        FrameLayout artBox = new FrameLayout(this);
+        GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(10)); artBox.setBackground(ab);
+        IconView ic = new IconView(this, IconView.WATCH, 0x00000000, withAlpha(TXT, 0x55));
+        FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(34), dp(34)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
+        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78)); abp.topMargin = dp(8); c.addView(artBox, abp);
+        String st = devState.get(id); String show = ""; int posMs = 0, durMs = 0;
+        if (st != null) try { org.json.JSONObject o = new org.json.JSONObject(st); show = o.optString("title", "").replace('.', ' ').trim(); posMs = o.optInt("position_ms", 0); durMs = o.optInt("duration_ms", 0); } catch (Exception ignored) {}
+        TextView tt = new TextView(this); tt.setText(show.isEmpty() ? "—" : show); tt.setTextColor(SUB); tt.setTextSize(11); tt.setMaxLines(2); tt.setEllipsize(android.text.TextUtils.TruncateAt.END); tt.setPadding(0, dp(8), 0, 0);
+        c.addView(tt);
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); pb.setMax(1000); pb.setProgress(durMs > 0 ? Math.round(1000f * posMs / durMs) : 0);
+        pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        pb.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(withAlpha(TXT, 0x22)));
+        LinearLayout.LayoutParams pgp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)); pgp.topMargin = dp(6); c.addView(pb, pgp);
+        return c;
+    }
+    private void toggleScreen(String id) {
+        RemoteService svc = RemoteService.get(); if (svc == null) return;
+        boolean all = svc.targets().isEmpty();
+        java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
+        if (ns.contains(id) && ns.size() > 1) ns.remove(id); else ns.add(id);
+        if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());
+        svc.setTargets(ns); refreshAll();
+    }
+    private void startCardPolling() {
+        if (cardPoller != null) return;
+        cardPoller = new Runnable() { public void run() {
+            RemoteService svc = RemoteService.get();
+            refreshScreenToggles();   // once per cycle: picks up newly-heard screens for the chips
+            if (svc != null && curTab == 0) {
+                for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
+                    final String id = e.getKey(); final String ip = svc.deviceIp(id);
+                    if (ip == null || ip.isEmpty()) continue;
+                    new Thread(() -> {
+                        String s = httpGetShort("http://" + ip + ":8090/state");
+                        if (s != null && s.startsWith("{")) { devState.put(id, s); main.post(() -> { if (curTab == 0) refreshDeviceCards(); }); }
+                    }).start();
+                }
+            }
+            main.postDelayed(this, 1600);
+        }};
+        main.post(cardPoller);
+    }
+    private void stopCardPolling() { if (cardPoller != null) { main.removeCallbacks(cardPoller); cardPoller = null; } }
+    private String httpGetShort(String url) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = openOnWifi(url); c.setConnectTimeout(1500); c.setReadTimeout(1500);
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream()));
+            StringBuilder sb = new StringBuilder(); String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+            r.close(); return sb.toString();
+        } catch (Exception e) { return null; }
+        finally { if (c != null) try { c.disconnect(); } catch (Exception ignored) {} }
     }
 
     // --- TAB 2: Playlists — pick a playlist (built-ins + your saved queues) ---
@@ -315,7 +425,8 @@ public class RemoteActivity extends Activity {
     private final RemoteService.Listener svcListener = new RemoteService.Listener() {
         public void onStatus(String s) {
             boolean ready = s.startsWith("ready");
-            if (titleDot != null) titleDot.setDot(ready ? GOOD : WARN);   // the light lives in the 'o'
+            if (dot != null && dot.getBackground() instanceof GradientDrawable) ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
+            refreshScreenToggles();
             if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
@@ -365,6 +476,7 @@ public class RemoteActivity extends Activity {
             JSONObject hs = o.optJSONObject("hotspot");
             hsSsid = hs != null ? hs.optString("ssid", null) : null; hsPass = hs != null ? hs.optString("pass", null) : null;
             if (connView != null) renderConnStatus();
+            refreshScreenToggles();   // pick up newly-heard screens (Sync group appears once 2+ are known)
         } catch (Exception ignored) {}
     }
 
@@ -1387,10 +1499,12 @@ public class RemoteActivity extends Activity {
         RemoteService.acquire(this, "ui");   // the link is on demand: held while this screen is visible
         attach();
         showTab(0);   // always land on the Remote tab
+        refreshAll(); startCardPolling();   // per-screen cards + their live state
         main.removeCallbacks(uiTick); main.post(uiTick);
     }
     @Override protected void onPause() {
         main.removeCallbacks(uiTick);
+        stopCardPolling();
         if (still != null) closeStill();   // never keep polling the camera still in the background
         RemoteService svc = RemoteService.get(); if (svc != null) svc.setListener(null);
         RemoteService.release(this, "ui");
