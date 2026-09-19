@@ -65,10 +65,10 @@ public class RemoteActivity extends Activity {
             String s = cs.toString(); int oi = s.indexOf('o'); if (oi < 0) return;
             android.graphics.Paint tp = getPaint();
             float cx = getPaddingLeft() + tp.measureText(s, 0, oi) + tp.measureText(s, oi, oi + 1) / 2f;
-            float cy = getBaseline() - getTextSize() * 0.25f;   // centre of the lowercase o
+            float cy = getBaseline() - getTextSize() * 0.27f;   // centre of the lowercase o
             android.graphics.Paint d = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
             d.setColor(dotColor);
-            canvas.drawCircle(cx, cy, getTextSize() * 0.13f, d);
+            canvas.drawCircle(cx, cy, getTextSize() * 0.19f, d);   // fills the 'o' — a clear status light
         }
     }
     private ProgressBar progress;
@@ -913,8 +913,18 @@ public class RemoteActivity extends Activity {
                     connActions.addView(qr);
                 }
                 break;
-            default:
-                connActions.addView(noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera and fast library browsing need a Wi-Fi level."));
+            default: {   // ble — real status + a jump to the system Bluetooth settings (the app can't toggle BT itself)
+                android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
+                android.bluetooth.BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
+                boolean btOn = ad != null && ad.isEnabled();
+                RemoteService svc = RemoteService.get();
+                boolean linked = svc != null && svc.bleConnected();
+                connActions.addView(noteText("Bluetooth: " + (btOn ? "on" : "OFF") + "     ·     tablet link: " + (linked ? "connected" : "not connected")));
+                Button bt = rowBtn(btOn ? "Open Bluetooth settings" : "Turn Bluetooth on (system settings)", btOn ? TXT : ACCENT);
+                bt.setOnClickListener(v -> { try { startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)); } catch (Exception e) { toast("Couldn't open Bluetooth settings"); } });
+                connActions.addView(bt);
+                connActions.addView(noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera + fast library browsing need a Wi-Fi level."));
+            }
         }
     }
     private void showWifiQr(String ssid, String pass, String caption) {
@@ -991,13 +1001,11 @@ public class RemoteActivity extends Activity {
           Button b = setRow(col, "When the queue ends"); b.setText(loop ? "loop forever" : "stop (TV off)");
           b.setOnClickListener(v -> { setCfg("kidodi_loop", cfgI("kidodi_loop", 1) == 1 ? "0" : "1"); renderSettings(); }); }
 
-        sSec(col, "Connection level");
-        for (final String[] m : CONN_MODES) {
-            boolean on = m[0].equals(cfgS("kidodi_conn", "ble"));
-            Button b = setRow(col, (on ? "●  " : "○  ") + m[1]); b.setText(on ? "current" : "choose"); b.setTextColor(on ? GOOD : TXT);
-            b.setOnClickListener(v -> { RemoteService svc = RemoteService.get(); if (svc != null) svc.setConnMode(m[0]);
-                try { cfgVals.put("kidodi_conn", m[0]); } catch (Exception ignored) {} renderSettings(); });
-        }
+        sSec(col, "Connection");
+        { String cur = cfgS("kidodi_conn", "ble"); String label = cur;
+          for (String[] m : CONN_MODES) if (m[0].equals(cur)) label = m[1];
+          Button b = setRow(col, "Connection level"); b.setText(label); b.setTextColor(GOOD);
+          b.setOnClickListener(v -> { closeSettings(); openConnection(); }); }   // one home for it: the Connection page
 
         sSec(col, "Toddler play mode");
         cfgStrCycle(col, "Sound", "kidodi_playmode_sound", new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"});
