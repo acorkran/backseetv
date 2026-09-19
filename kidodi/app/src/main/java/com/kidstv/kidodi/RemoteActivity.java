@@ -332,10 +332,15 @@ public class RemoteActivity extends Activity {
     }
     private void toggleScreen(String id) {
         RemoteService svc = RemoteService.get(); if (svc == null) return;
+        java.util.List<String> ids = new java.util.ArrayList<>(svc.tablets().keySet());
+        if (ids.isEmpty()) return;
         boolean all = allSelected(svc);
-        java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
-        if (ns.contains(id) && ns.size() > 1) ns.remove(id); else ns.add(id);
-        if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());
+        java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? ids : svc.targets());
+        if (ns.contains(id)) {
+            if (ns.size() > 1) ns.remove(id);                                    // one of several -> just drop it
+            else { String next = ids.get((ids.indexOf(id) + 1) % ids.size()); ns.clear(); ns.add(next); }   // last one -> hop the check to the next device
+        } else ns.add(id);
+        if (ns.isEmpty()) ns.add(id);
         applySelection(ns);
     }
     /** True when every connected screen is selected (targets empty, or contains them all). */
