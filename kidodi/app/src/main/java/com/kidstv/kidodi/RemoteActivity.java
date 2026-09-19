@@ -227,6 +227,7 @@ public class RemoteActivity extends Activity {
         GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x22)); g.setCornerRadius(dp(14)); g.setStroke(dp(1), withAlpha(accent, big ? 0x88 : 0x55));
         c.setBackground(g); c.setClickable(true);
         IconView ic = new IconView(this, icon, 0x00000000, accent);
+        ic.setClickable(false);   // decorative — let the cell receive the tap (IconView is clickable by default)
         int sz = big ? dp(27) : dp(23);
         c.addView(ic, new LinearLayout.LayoutParams(sz, sz));
         TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(big ? 11 : 10); t.setPadding(0, dp(3), 0, 0);
@@ -311,6 +312,7 @@ public class RemoteActivity extends Activity {
         FrameLayout artBox = new FrameLayout(this);
         GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(9)); artBox.setBackground(ab);
         IconView ic = new IconView(this, IconView.WATCH, 0x00000000, withAlpha(TXT, 0x44));
+        ic.setClickable(false);   // decorative — don't swallow taps on the card
         FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(30), dp(30)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
         TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : 0xFFCFD6E4); box.setTextSize(18);
         box.setPadding(dp(6), dp(2), 0, 0); artBox.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
