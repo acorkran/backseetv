@@ -177,63 +177,61 @@ public class RemoteActivity extends Activity {
 
     // --- TAB 1: Remote — now-playing card + transport + volume + Light/Sleep/Power + Check-in ---
     private View buildRemoteTab() {
-        ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-
-        // One card per connected screen (tap to select), each showing its own show + progress. These replace
-        // the single now-playing card. title/subtitle/progress/timeText stay as off-screen holders so the
-        // representative-state path (showState) keeps working without NPEs.
+        LinearLayout tabRoot = new LinearLayout(this); tabRoot.setOrientation(LinearLayout.VERTICAL); tabRoot.setBackgroundColor(BG);
+        // off-screen holders so showState (representative path) keeps working without NPEs
         title = new TextView(this); subtitle = new TextView(this);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000);
         timeText = new TextView(this);
-        deviceCards = new LinearLayout(this); deviceCards.setOrientation(LinearLayout.VERTICAL);
-        root.addView(deviceCards);
-        refreshDeviceCards();
 
-        root.addView(spacer(dp(14)));
-        LinearLayout tr = new LinearLayout(this);
-        tr.setOrientation(LinearLayout.HORIZONTAL);
-        tr.setGravity(Gravity.CENTER);
-        tr.addView(iconBtn(IconView.PREV, BTN, TXT, "prev"), lp(dp(64), dp(64), dp(8)));
+        // Framed, scrollable panel of neat per-screen cards: fills the space, scrolls when there are many.
+        ScrollView cardsScroll = new ScrollView(this);
+        GradientDrawable frameBg = new GradientDrawable(); frameBg.setColor(0x10FFFFFF); frameBg.setCornerRadius(dp(16)); frameBg.setStroke(dp(1), 0x22FFFFFF);
+        cardsScroll.setBackground(frameBg); cardsScroll.setClipToOutline(true); cardsScroll.setPadding(dp(8), dp(8), dp(8), dp(8));
+        deviceCards = new LinearLayout(this); deviceCards.setOrientation(LinearLayout.VERTICAL);
+        cardsScroll.addView(deviceCards);
+        refreshDeviceCards();
+        tabRoot.addView(cardsScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // Slim transport above the grid: back / play-pause / forward.
+        LinearLayout tr = new LinearLayout(this); tr.setOrientation(LinearLayout.HORIZONTAL); tr.setGravity(Gravity.CENTER);
+        tr.addView(iconBtn(IconView.PREV, BTN, TXT, "prev"), lp(dp(54), dp(48), dp(12)));
         playPause = new IconView(this, IconView.PLAYPAUSE, ACCENT, TXT);
         playPause.setOnClickListener(v -> send("playpause"));
-        tr.addView(playPause, lp(dp(84), dp(84), dp(8)));
-        tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(64), dp(64), dp(8)));
-        root.addView(tr);
+        tr.addView(playPause, lp(dp(62), dp(56), dp(12)));
+        tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(54), dp(48), dp(12)));
+        LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(10);
+        tabRoot.addView(tr, trp);
 
-        root.addView(spacer(dp(12)));
-        LinearLayout vr = new LinearLayout(this);
-        vr.setOrientation(LinearLayout.HORIZONTAL);
-        vr.setGravity(Gravity.CENTER);
-        vr.addView(iconBtn(IconView.VOLDOWN, BTN, TXT, "voldown"), lp(0, dp(52), dp(6), 1f));
-        vr.addView(iconBtn(IconView.VOLUP, BTN, TXT, "volup"), lp(0, dp(52), dp(6), 1f));
-        root.addView(vr);
+        sleepText = new TextView(this); sleepText.setText(""); sleepText.setTextColor(WARN); sleepText.setTextSize(12);
+        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); tabRoot.addView(sleepText);
 
-        root.addView(spacer(dp(12)));
-        LinearLayout ar = new LinearLayout(this);
-        ar.setOrientation(LinearLayout.HORIZONTAL);
-        ar.addView(actionCard(IconView.SUN, WARN, "Light", "flash"), lp(0, dp(74), dp(5), 1f));
-        ar.addView(actionCard(IconView.SLEEP, PURPLE, "Sleep", "sleep:15"), lp(0, dp(74), dp(5), 1f));
-        ar.addView(actionCard(IconView.POWER, ORANGE, "Power", "power"), lp(0, dp(74), dp(5), 1f));
-        root.addView(ar);
+        // 4x2 function grid: Light Sleep Power Check-in / Toddler Mute Vol- Vol+
+        LinearLayout g1 = new LinearLayout(this); g1.setOrientation(LinearLayout.HORIZONTAL);
+        g1.addView(gridCell(IconView.SUN, WARN, "Light", () -> send("flash")), gcLp());
+        g1.addView(gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15")), gcLp());
+        g1.addView(gridCell(IconView.POWER, ORANGE, "Power", () -> send("power")), gcLp());
+        g1.addView(gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill), gcLp());
+        LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); tabRoot.addView(g1, g1p);
+        LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
+        g2.addView(gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }), gcLp());
+        g2.addView(gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute")), gcLp());
+        g2.addView(gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown")), gcLp());
+        g2.addView(gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup")), gcLp());
+        LinearLayout.LayoutParams g2p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g2p.topMargin = dp(6); tabRoot.addView(g2, g2p);
 
-        sleepText = new TextView(this);
-        sleepText.setText(""); sleepText.setTextColor(WARN); sleepText.setTextSize(13);
-        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(12), 0, 0);
-        root.addView(sleepText);
-
-        // Check-in + Toddler as proper icon cards (matching the Light/Sleep/Power row), not ad-hoc text.
-        // Wi-Fi QR scanning lives in the Connection screen (tap the link label) — it's not a Remote-tab action.
-        LinearLayout xr = new LinearLayout(this);
-        xr.setPadding(dp(6), dp(14), dp(6), dp(4));
-        xr.addView(actionCardRun(IconView.WATCH, GOOD, "Check-in", this::openStill), lp(0, dp(74), dp(5), 1f));
-        xr.addView(actionCardRun(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }),
-                lp(0, dp(74), dp(5), 1f));
-        root.addView(xr);
-
-        sv.addView(root);
-        return sv;
+        return tabRoot;
+    }
+    private LinearLayout.LayoutParams gcLp() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(62), 1f); p.setMargins(dp(3), 0, dp(3), 0); return p; }
+    private View gridCell(int icon, final int accent, String label, final Runnable onTap) {
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
+        GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x22)); g.setCornerRadius(dp(14)); g.setStroke(dp(1), withAlpha(accent, 0x55));
+        c.setBackground(g); c.setClickable(true);
+        IconView ic = new IconView(this, icon, 0x00000000, accent);
+        c.addView(ic, new LinearLayout.LayoutParams(dp(23), dp(23)));
+        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(10); t.setPadding(0, dp(3), 0, 0);
+        c.addView(t);
+        c.setOnClickListener(v -> onTap.run());
+        return c;
     }
 
     private void refreshAll() { refreshScreenToggles(); refreshDeviceCards(); }
@@ -315,7 +313,7 @@ public class RemoteActivity extends Activity {
         FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(30), dp(30)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
         TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : 0xFFCFD6E4); box.setTextSize(18);
         box.setPadding(dp(6), dp(2), 0, 0); artBox.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
-        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)); c.addView(artBox, abp);
+        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)); c.addView(artBox, abp);
         // name
         TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
         nm.setTypeface(nm.getTypeface(), android.graphics.Typeface.BOLD); nm.setPadding(dp(2), dp(7), 0, 0); c.addView(nm);
@@ -1575,7 +1573,7 @@ public class RemoteActivity extends Activity {
 
     // --- Canvas-drawn icons (no font glyphs -> no tofu), ported from v1 -------
     class IconView extends View {
-        static final int POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9, SUN = 10, WATCH = 11, BEAR = 12;
+        static final int POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9, SUN = 10, WATCH = 11, BEAR = 12, MUTE = 13;
         final int mode; int bgCol, iconCol; boolean playing = false;
         final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         final GradientDrawable bgd = new GradientDrawable();
@@ -1609,6 +1607,15 @@ public class RemoteActivity extends Activity {
                     p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(3f, s * 0.24f));
                     cv.drawLine(cx - s, cy, cx + s, cy, p);
                     if (mode == VOLUP) cv.drawLine(cx, cy - s, cx, cy + s, p); break;
+                case MUTE: {   // a speaker with a mute slash
+                    p.setStyle(Paint.Style.FILL);
+                    Path sp = new Path();
+                    sp.moveTo(cx - s * 0.95f, cy - s * 0.34f); sp.lineTo(cx - s * 0.45f, cy - s * 0.34f);
+                    sp.lineTo(cx + s * 0.12f, cy - s * 0.85f); sp.lineTo(cx + s * 0.12f, cy + s * 0.85f);
+                    sp.lineTo(cx - s * 0.45f, cy + s * 0.34f); sp.lineTo(cx - s * 0.95f, cy + s * 0.34f); sp.close();
+                    cv.drawPath(sp, p);
+                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2.5f, s * 0.2f));
+                    cv.drawLine(cx + s * 0.42f, cy - s * 0.55f, cx + s * 1.05f, cy + s * 0.6f, p); break; }
                 case SLEEP: {
                     p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2.5f, s * 0.17f));
                     float bl = cx - s, bt = cy - s * 0.10f, br = cx + s * 0.30f, bb = cy + s * 0.95f;
