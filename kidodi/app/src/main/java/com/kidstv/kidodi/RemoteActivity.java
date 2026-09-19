@@ -51,8 +51,26 @@ public class RemoteActivity extends Activity {
     static final int ACCENT = 0xFF2F6FEB, GOOD = 0xFF33C05B, WARN = 0xFFE0A63D, PURPLE = 0xFF9B72E0, ORANGE = 0xFFE0673F;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private View dot;
+    private TitleDot titleDot;
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
+
+    /** The "Kidodi" wordmark whose 'o' carries the connection light (green ready / amber not). Tap = the menu. */
+    private static class TitleDot extends TextView {
+        private int dotColor = 0xFFE0A63D;
+        TitleDot(Context c) { super(c); }
+        void setDot(int color) { if (color != dotColor) { dotColor = color; invalidate(); } }
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            super.onDraw(canvas);
+            CharSequence cs = getText(); if (cs == null) return;
+            String s = cs.toString(); int oi = s.indexOf('o'); if (oi < 0) return;
+            android.graphics.Paint tp = getPaint();
+            float cx = getPaddingLeft() + tp.measureText(s, 0, oi) + tp.measureText(s, oi, oi + 1) / 2f;
+            float cy = getBaseline() - getTextSize() * 0.25f;   // centre of the lowercase o
+            android.graphics.Paint d = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            d.setColor(dotColor);
+            canvas.drawCircle(cx, cy, getTextSize() * 0.13f, d);
+        }
+    }
     private ProgressBar progress;
     private IconView playPause;
     private FrameLayout frame;
@@ -93,32 +111,25 @@ public class RemoteActivity extends Activity {
         root.setBackgroundColor(BG);
         root.setPadding(dp(16), dp(20), dp(16), dp(8));
 
-        // --- header (visible on every tab): title + connection dot + transport label ---
+        // --- header (visible on every tab): the "Kidodi" wordmark IS the menu button (light in its 'o') ---
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView h = new TextView(this);
-        h.setText("Kidodi"); h.setTextColor(TXT); h.setTextSize(24);
-        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD);
-        header.addView(h, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        // linkLabel takes the flexible middle and TRUNCATES if long (a long watch-update status was
-        // squeezing the "Kidodi" title into a vertical stack); title + gear + dot keep their natural size.
-        linkLabel = new TextView(this);
-        linkLabel.setText(""); linkLabel.setTextColor(SUB); linkLabel.setTextSize(12);
-        linkLabel.setPadding(dp(8), 0, dp(6), 0);
-        linkLabel.setMaxLines(1); linkLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        linkLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        linkLabel.setClickable(true); linkLabel.setOnClickListener(v -> showTargetMenu());   // pick a tablet / both / Connection
-        header.addView(linkLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView gear = new TextView(this);
-        gear.setText("⚙"); gear.setTextColor(SUB); gear.setTextSize(22); gear.setPadding(dp(4), 0, dp(10), 0);
-        gear.setClickable(true); gear.setOnClickListener(v -> openSettings());   // all the TV's settings, from the phone
-        header.addView(gear);
-        dot = new View(this);
-        GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
-        dot.setBackground(dg);
-        header.addView(dot, new LinearLayout.LayoutParams(dp(12), dp(12)));
-        root.addView(header);
+        // The "Kidodi" wordmark IS the menu button: tap it for screens / sync / settings / connection.
+        // The connection light lives inside its 'o'. A chevron signals it opens a menu.
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL); titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.setClickable(true); titleRow.setPadding(0, dp(2), dp(10), dp(2));
+        titleRow.setOnClickListener(v -> showTargetMenu());
+        titleDot = new TitleDot(this);
+        titleDot.setText("Kidodi"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
+        titleDot.setTypeface(titleDot.getTypeface(), android.graphics.Typeface.BOLD);
+        titleRow.addView(titleDot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView chev = new TextView(this); chev.setText(" ⌄"); chev.setTextColor(TXT); chev.setTextSize(20);
+        chev.setPadding(dp(6), 0, 0, dp(6));
+        titleRow.addView(chev);
+        header.addView(titleRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(header);   // header is full width; the title sits left on its own (no filler needed)
 
         // --- tab bar: Remote | Playlists | Queue ---
         root.addView(spacer(dp(10)));
@@ -304,10 +315,7 @@ public class RemoteActivity extends Activity {
     private final RemoteService.Listener svcListener = new RemoteService.Listener() {
         public void onStatus(String s) {
             boolean ready = s.startsWith("ready");
-            ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
-            RemoteService svc = RemoteService.get();
-            String ws = WearPusher.watchStatus();
-            linkLabel.setText(targetLabel(svc, ready) + (ws.isEmpty() ? "" : "  ·  " + ws) + "  ▾");
+            if (titleDot != null) titleDot.setDot(ready ? GOOD : WARN);   // the light lives in the 'o'
             if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
@@ -670,19 +678,59 @@ public class RemoteActivity extends Activity {
     private android.widget.PopupWindow targetPopup;
     private void showTargetMenu() {
         final RemoteService svc = RemoteService.get();
-        if (svc == null || svc.tablets().isEmpty()) { openConnection(); return; }
+        if (svc == null) { openConnection(); return; }
         LinearLayout col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(0, dp(6), 0, dp(6));
+        // Scroll when the menu is taller than the screen (several screens + lock-step rows).
+        int maxH = (int) (getResources().getDisplayMetrics().heightPixels * 0.72f);
+        MaxScroll sv = new MaxScroll(this, maxH);
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), 0x33FFFFFF);
-        col.setBackground(bg); col.setPadding(0, dp(6), 0, dp(6));
-        targetPopup = new android.widget.PopupWindow(col, dp(250), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        sv.setBackground(bg); sv.setClipToOutline(true);
+        sv.addView(col);
+        targetPopup = new android.widget.PopupWindow(sv, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true);
         targetPopup.setElevation(dp(12));
         buildTargetRows(col, svc);
-        targetPopup.showAsDropDown(linkLabel, -dp(150), dp(6), Gravity.END);
+        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "Kidodi" wordmark
+    }
+    /** A ScrollView that never grows past maxH — the popup menu scrolls instead of running off-screen. */
+    private static class MaxScroll extends android.widget.ScrollView {
+        private final int maxH;
+        MaxScroll(Context c, int maxH) { super(c); this.maxH = maxH; }
+        @Override protected void onMeasure(int w, int h) {
+            super.onMeasure(w, MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST));
+        }
+    }
+    /** One tappable cell for the top Settings | Connection row. */
+    private View menuCell(String label, int color, final Runnable onTap) {
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER);
+        c.setPadding(dp(12), dp(13), dp(12), dp(13)); c.setClickable(true);
+        TextView t = new TextView(this); t.setText(label); t.setTextColor(color); t.setTextSize(14);
+        c.addView(t);
+        c.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); onTap.run(); });
+        return c;
+    }
+    private void hSep(LinearLayout col) {
+        View d = new View(this); d.setBackgroundColor(0x22FFFFFF);
+        col.addView(d, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
     }
     private void buildTargetRows(final LinearLayout col, final RemoteService svc) {
         col.removeAllViews();
+        // Row 1: Settings | Connection (two columns).
+        LinearLayout row1 = new LinearLayout(this); row1.setOrientation(LinearLayout.HORIZONTAL);
+        row1.addView(menuCell("⚙  Settings", TXT, this::openSettings), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        View vs = new View(this); vs.setBackgroundColor(0x22FFFFFF); row1.addView(vs, new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
+        row1.addView(menuCell("Connection…", ACCENT, this::openConnection), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        col.addView(row1);
+        hSep(col);
+
+        // Which screens.
         TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
         hdr.setPadding(dp(16), dp(8), dp(16), dp(8)); col.addView(hdr);
+        if (svc.tablets().isEmpty()) {
+            TextView none = new TextView(this); none.setText("No screens found — open Connection.");
+            none.setTextColor(SUB); none.setTextSize(13); none.setPadding(dp(16), dp(2), dp(16), dp(10)); col.addView(none);
+            return;
+        }
         final java.util.Set<String> sel = svc.targets(); final boolean all = sel.isEmpty();
         col.addView(checkRow("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); }));
         for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
@@ -694,31 +742,22 @@ public class RemoteActivity extends Activity {
                 svc.setTargets(ns); refreshTargets(col, svc);
             }));
         }
-        // Sync group: when 2+ screens exist, offer lock-step playback (one plays with audio, the rest mirror
-        // it muted). Arming picks the first selected screen as the leader; the others follow it.
+        // Play in lock-step (needs 2+ screens). One plays, the rest mirror it; audio each-screen or leader-only.
         if (svc.tablets().size() >= 2) {
-            View sdiv = new View(this); sdiv.setBackgroundColor(0x22FFFFFF);
-            col.addView(sdiv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            hSep(col);
             TextView sh = new TextView(this); sh.setText("Play in lock-step"); sh.setTextColor(SUB); sh.setTextSize(11);
             sh.setPadding(dp(16), dp(8), dp(16), dp(2)); col.addView(sh);
             final boolean sg = svc.isSyncGroup();
             col.addView(checkRow("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshTargets(col, svc); }));
-            if (sg) {   // audio: each screen its own sound (default) vs only the leader (co-located, no echo)
+            if (sg) {
                 final boolean lo = svc.groupLeaderOnly();
                 View r = checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); });
                 r.setPadding(dp(30), dp(9), dp(16), dp(9)); col.addView(r);   // indented sub-option
             }
         }
-        View div = new View(this); div.setBackgroundColor(0x22FFFFFF);
-        col.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
-        LinearLayout cr = new LinearLayout(this); cr.setPadding(dp(16), dp(11), dp(16), dp(11)); cr.setClickable(true);
-        TextView ct = new TextView(this); ct.setText("Connection…"); ct.setTextColor(ACCENT); ct.setTextSize(14);
-        cr.addView(ct); cr.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); openConnection(); });
-        col.addView(cr);
     }
     private void refreshTargets(LinearLayout col, RemoteService svc) {
         buildTargetRows(col, svc);
-        linkLabel.setText(targetLabel(svc, true) + "  ▾");
     }
     /** One styled checkbox row (drawn ☑/☐ box + label). */
     private View checkRow(String label, boolean checked, final Runnable onTap) {
