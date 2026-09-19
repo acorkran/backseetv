@@ -205,30 +205,31 @@ public class RemoteActivity extends Activity {
         sleepText = new TextView(this); sleepText.setText(""); sleepText.setTextColor(WARN); sleepText.setTextSize(12);
         sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); tabRoot.addView(sleepText);
 
-        // 4x2 function grid: Light Sleep Power Check-in / Toddler Mute Vol- Vol+
+        // 4x2 function grid: Light Sleep Mute Vol+ / Toddler Power Check-in Vol-  (volume cells 10% wider)
         LinearLayout g1 = new LinearLayout(this); g1.setOrientation(LinearLayout.HORIZONTAL);
-        g1.addView(gridCell(IconView.SUN, WARN, "Light", () -> send("flash")), gcLp());
-        g1.addView(gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15")), gcLp());
-        g1.addView(gridCell(IconView.POWER, ORANGE, "Power", () -> send("power")), gcLp());
-        g1.addView(gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill), gcLp());
+        g1.addView(gridCell(IconView.SUN, WARN, "Light", () -> send("flash"), false), gcLp(1f));
+        g1.addView(gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15"), false), gcLp(1f));
+        g1.addView(gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute"), false), gcLp(1f));
+        g1.addView(gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
         LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); tabRoot.addView(g1, g1p);
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
-        g2.addView(gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }), gcLp());
-        g2.addView(gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute")), gcLp());
-        g2.addView(gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown")), gcLp());
-        g2.addView(gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup")), gcLp());
+        g2.addView(gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }, false), gcLp(1f));
+        g2.addView(gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
+        g2.addView(gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
+        g2.addView(gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
         LinearLayout.LayoutParams g2p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g2p.topMargin = dp(6); tabRoot.addView(g2, g2p);
 
         return tabRoot;
     }
-    private LinearLayout.LayoutParams gcLp() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(62), 1f); p.setMargins(dp(3), 0, dp(3), 0); return p; }
-    private View gridCell(int icon, final int accent, String label, final Runnable onTap) {
+    private LinearLayout.LayoutParams gcLp(float weight) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(62), weight); p.setMargins(dp(3), 0, dp(3), 0); return p; }
+    private View gridCell(int icon, final int accent, String label, final Runnable onTap, boolean big) {
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
-        GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x22)); g.setCornerRadius(dp(14)); g.setStroke(dp(1), withAlpha(accent, 0x55));
+        GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x22)); g.setCornerRadius(dp(14)); g.setStroke(dp(1), withAlpha(accent, big ? 0x88 : 0x55));
         c.setBackground(g); c.setClickable(true);
         IconView ic = new IconView(this, icon, 0x00000000, accent);
-        c.addView(ic, new LinearLayout.LayoutParams(dp(23), dp(23)));
-        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(10); t.setPadding(0, dp(3), 0, 0);
+        int sz = big ? dp(27) : dp(23);
+        c.addView(ic, new LinearLayout.LayoutParams(sz, sz));
+        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(big ? 11 : 10); t.setPadding(0, dp(3), 0, 0);
         c.addView(t);
         c.setOnClickListener(v -> onTap.run());
         return c;
