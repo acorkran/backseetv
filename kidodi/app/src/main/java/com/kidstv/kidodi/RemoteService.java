@@ -395,19 +395,32 @@ public class RemoteService extends Service {
 
     private boolean bleUp() { return ble != null && ble.isConnected(); }
 
+    private final Map<String, Long> lastToggle = new ConcurrentHashMap<>();
+    private static boolean isToggleCmd(String c) { return "power".equals(c) || "playpause".equals(c) || "mute".equals(c); }
     public void send(String cmd) {
         if (isQueryCmd(cmd)) {   // a query has ONE answer — ask the representative only
             if (bleUp()) ble.sendState(cmd);
             else if (wifi != null) wifi.send(cmd);
             return;
         }
-        // Volume in a synced group with PER-SCREEN audio hits every member (each its own sound); everything
-        // else (playback; or volume when the group is leader-only) goes to the effective target below.
-        if (isSyncGroup() && isVolCmd(cmd) && !groupLeaderOnly()) {
-            java.util.Set<String> members = new java.util.HashSet<>(groupOrder());
+        if (isToggleCmd(cmd)) {   // debounce spam: rapid toggles could flip screens into different states
+            long now = android.os.SystemClock.elapsedRealtime();
+            Long t = lastToggle.get(cmd);
+            if (t != null && now - t < 350) return;
+            lastToggle.put(cmd, now);
+        }
+        // In a synced group, PLAYBACK (play/pause/next/seek…) drives the leader alone and the followers mirror
+        // it. Everything else is a PER-SCREEN action (power/light/sleep/toddler/volume/mute) and must hit
+        // EVERY member — otherwise e.g. Power naps only the leader and leaves the followers' screens on.
+        // Volume/mute in leader-only audio mode still go to the leader alone.
+        if (isSyncGroup() && !isPlaybackCmd(cmd)) {
+            String leader = syncLeaderId();
+            boolean leaderOnly = isVolCmd(cmd) && groupLeaderOnly();
+            java.util.Set<String> tgt = new java.util.HashSet<>();
+            if (leaderOnly) { if (leader != null) tgt.add(leader); } else tgt.addAll(groupOrder());
             java.util.Set<String> ble2 = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
-            if (ble != null) ble.sendToIds(members, cmd);
-            if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(members); w.removeAll(ble2); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
+            if (ble != null) ble.sendToIds(tgt, cmd);
+            if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(tgt); w.removeAll(ble2); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
             return;
         }
         // A control command goes to EVERY selected screen: BLE to the tablets it holds links to, Wi-Fi to
@@ -423,6 +436,12 @@ public class RemoteService extends Service {
         }
     }
     private static boolean isVolCmd(String c) { return c != null && (c.equals("volup") || c.equals("voldown") || c.equals("mute") || c.startsWith("vol")); }
+    /** Content/position commands that drive the sync LEADER (followers mirror). Everything else is per-screen. */
+    private static boolean isPlaybackCmd(String c) {
+        if (c == null) return false;
+        switch (c) { case "play": case "pause": case "playpause": case "next": case "prev": case "seeknear": case "shuffle": case "loop": return true; }
+        return c.startsWith("jump") || c.startsWith("seek") || c.startsWith("playlist") || c.startsWith("enqueue") || c.startsWith("dequeue") || c.startsWith("savequeue");
+    }
     private static boolean isQueryCmd(String c) {
         return c.equals("list") || c.equals("queue") || c.equals("conn") || c.equals("cfg") || c.startsWith("shows") || c.startsWith("eps:");
     }

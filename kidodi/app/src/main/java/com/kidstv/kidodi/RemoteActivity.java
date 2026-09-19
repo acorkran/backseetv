@@ -196,7 +196,7 @@ public class RemoteActivity extends Activity {
         LinearLayout tr = new LinearLayout(this); tr.setOrientation(LinearLayout.HORIZONTAL); tr.setGravity(Gravity.CENTER);
         tr.addView(iconBtn(IconView.PREV, BTN, TXT, "prev"), lp(dp(54), dp(48), dp(12)));
         playPause = new IconView(this, IconView.PLAYPAUSE, ACCENT, TXT);
-        playPause.setOnClickListener(v -> send("playpause"));
+        playPause.setOnClickListener(v -> send("playpause")); pressFx(playPause);
         tr.addView(playPause, lp(dp(62), dp(56), dp(12)));
         tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(54), dp(48), dp(12)));
         LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(10);
@@ -233,7 +233,22 @@ public class RemoteActivity extends Activity {
         TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(big ? 11 : 10); t.setPadding(0, dp(3), 0, 0);
         c.addView(t);
         c.setOnClickListener(v -> onTap.run());
+        pressFx(c);
         return c;
+    }
+    /** A tactile "depress" on touch: the button scales down under the finger, then springs back. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private void pressFx(final View v) {
+        v.setOnTouchListener((view, ev) -> {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    view.animate().scaleX(0.91f).scaleY(0.91f).setDuration(55).start(); break;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(120).setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start(); break;
+            }
+            return false;   // don't consume — the click still fires
+        });
     }
 
     private void refreshAll() { refreshScreenToggles(); refreshDeviceCards(); }
@@ -259,7 +274,7 @@ public class RemoteActivity extends Activity {
         t.setTextColor(on ? 0xFFFFFFFF : TXT); t.setPadding(dp(6), dp(9), dp(6), dp(9)); t.setMaxLines(1);
         t.setEllipsize(android.text.TextUtils.TruncateAt.END);
         GradientDrawable g = new GradientDrawable(); g.setCornerRadius(dp(18)); g.setColor(on ? ACCENT : BTN);
-        t.setBackground(g); t.setClickable(true); t.setOnClickListener(v -> onTap.run());
+        t.setBackground(g); t.setClickable(true); t.setOnClickListener(v -> onTap.run()); pressFx(t);
         return t;
     }
     private LinearLayout.LayoutParams chipLp() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); p.setMargins(dp(3), 0, dp(3), 0); return p; }
@@ -307,7 +322,7 @@ public class RemoteActivity extends Activity {
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14));
         bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
-        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id));
+        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id)); pressFx(c);
         // landscape media panel (16:9-ish) with the checkbox overlaid top-left
         FrameLayout artBox = new FrameLayout(this);
         GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(9)); artBox.setBackground(ab);
@@ -1539,6 +1554,7 @@ public class RemoteActivity extends Activity {
     private IconView iconBtn(int mode, int bg, int icon, final String cmd) {
         IconView v = new IconView(this, mode, bg, icon);
         v.setOnClickListener(x -> send(cmd));
+        pressFx(v);
         return v;
     }
     private LinearLayout actionCard(int mode, int accent, String label, final String cmd) {
