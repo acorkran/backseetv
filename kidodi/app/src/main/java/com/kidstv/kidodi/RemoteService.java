@@ -298,7 +298,7 @@ public class RemoteService extends Service {
             if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute);
         }
         Cfg.p(this).edit().putString(PREF_SYNCGROUP, leader).apply();
-        aimLinks();                                         // control now drives the leader; followers mirror
+        setTargets(new java.util.LinkedHashSet<>(order));   // the selection IS the group (leader + followers) so the picker shows them all; aimLinks() runs inside
     }
     /** Fire-and-forget GET to a tablet's ControlServer (used to arm/disarm sync). */
     private void httpArm(final String ip, final String path) {

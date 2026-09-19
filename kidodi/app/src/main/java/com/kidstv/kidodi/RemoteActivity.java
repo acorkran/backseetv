@@ -734,7 +734,7 @@ public class RemoteActivity extends Activity {
         final java.util.Set<String> sel = svc.targets(); final boolean all = sel.isEmpty();
         col.addView(checkRow("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); }));
         for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
-            final boolean on = all || sel.contains(e.getKey());
+            final boolean on = all || sel.contains(e.getKey()) || e.getKey().equals(svc.syncLeaderId());   // the armed leader is always in its group
             col.addView(checkRow(e.getValue(), on, () -> {
                 java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
                 if (on) ns.remove(e.getKey()); else ns.add(e.getKey());
