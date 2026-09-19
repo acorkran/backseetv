@@ -128,8 +128,17 @@ public class RemoteActivity extends Activity {
         stp.topMargin = dp(10); root.addView(screenToggles, stp);
         refreshScreenToggles();
 
-        // --- tab bar: Remote | Playlists | Queue ---
-        root.addView(spacer(dp(10)));
+        // --- content: three swappable tab views fill the middle (each scrolls) ---
+        root.addView(spacer(dp(8)));
+        content = new FrameLayout(this);
+        remoteTab = buildRemoteTab();
+        playlistsTab = buildPlaylistsTab();
+        queueTab = buildQueueTab();
+        content.addView(remoteTab); content.addView(playlistsTab); content.addView(queueTab);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // --- tab bar pinned at the BOTTOM: Remote | Playlists | Queue ---
+        root.addView(spacer(dp(8)));
         tabBar = new LinearLayout(this); tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBtns[0] = pillChip("Remote", v -> showTab(0));
         tabBtns[1] = pillChip("Playlists", v -> showTab(1));
@@ -140,15 +149,6 @@ public class RemoteActivity extends Activity {
             tabBar.addView(tabBtns[k], tp);
         }
         root.addView(tabBar);
-        root.addView(spacer(dp(10)));
-
-        // --- content: three swappable tab views fill the rest ---
-        content = new FrameLayout(this);
-        remoteTab = buildRemoteTab();
-        playlistsTab = buildPlaylistsTab();
-        queueTab = buildQueueTab();
-        content.addView(remoteTab); content.addView(playlistsTab); content.addView(queueTab);
-        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(frame);
@@ -243,8 +243,8 @@ public class RemoteActivity extends Activity {
         if (screenToggles == null) return;
         screenToggles.removeAllViews();
         final RemoteService svc = RemoteService.get(); if (svc == null) return;
-        boolean all = svc.targets().isEmpty();
-        screenToggles.addView(toggleChip("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshAll(); }), chipLp());
+        boolean all = allSelected(svc);
+        screenToggles.addView(toggleChip("All screens", all, () -> applySelection(java.util.Collections.<String>emptySet())), chipLp());
         if (svc.tablets().size() >= 2) {
             final boolean sg = svc.isSyncGroup();
             screenToggles.addView(toggleChip("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshAll(); }), chipLp());
@@ -287,7 +287,7 @@ public class RemoteActivity extends Activity {
         RemoteService svc = RemoteService.get();
         java.util.List<java.util.Map.Entry<String, String>> devs = svc != null ? new java.util.ArrayList<>(svc.tablets().entrySet()) : new java.util.ArrayList<>();
         if (devs.isEmpty()) { deviceCards.addView(noteText("No screens connected yet — tap Kidodi → Connection.")); return; }
-        boolean all = svc.targets().isEmpty();
+        boolean all = allSelected(svc);
         LinearLayout rowL = null;
         for (int i = 0; i < devs.size(); i++) {
             if (i % 2 == 0) {
@@ -296,7 +296,7 @@ public class RemoteActivity extends Activity {
                 rp.topMargin = dp(8); deviceCards.addView(rowL, rp);
             }
             java.util.Map.Entry<String, String> e = devs.get(i);
-            boolean sel = all || svc.targets().contains(e.getKey()) || e.getKey().equals(svc.syncLeaderId());
+            boolean sel = all || svc.targets().contains(e.getKey());
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             cp.setMargins(i % 2 == 0 ? 0 : dp(8), 0, 0, 0);
             rowL.addView(deviceCard(e.getKey(), e.getValue(), sel), cp);
@@ -304,24 +304,25 @@ public class RemoteActivity extends Activity {
         if (devs.size() % 2 == 1) rowL.addView(new View(this), new LinearLayout.LayoutParams(0, dp(1), 1f));   // fill the odd slot
     }
     private View deviceCard(final String id, String name, final boolean selected) {
-        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(10), dp(10), dp(10), dp(10));
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14));
         bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
         c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id));
-        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL); top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : SUB); box.setTextSize(18); box.setPadding(0, 0, dp(8), 0);
-        top.addView(box);
-        TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        top.addView(nm, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        c.addView(top);
+        // landscape media panel (16:9-ish) with the checkbox overlaid top-left
         FrameLayout artBox = new FrameLayout(this);
-        GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(10)); artBox.setBackground(ab);
-        IconView ic = new IconView(this, IconView.WATCH, 0x00000000, withAlpha(TXT, 0x55));
-        FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(34), dp(34)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
-        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78)); abp.topMargin = dp(8); c.addView(artBox, abp);
+        GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(9)); artBox.setBackground(ab);
+        IconView ic = new IconView(this, IconView.WATCH, 0x00000000, withAlpha(TXT, 0x44));
+        FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(30), dp(30)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
+        TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : 0xFFCFD6E4); box.setTextSize(18);
+        box.setPadding(dp(6), dp(2), 0, 0); artBox.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
+        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)); c.addView(artBox, abp);
+        // name
+        TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        nm.setTypeface(nm.getTypeface(), android.graphics.Typeface.BOLD); nm.setPadding(dp(2), dp(7), 0, 0); c.addView(nm);
+        // show + progress
         String st = devState.get(id); String show = ""; int posMs = 0, durMs = 0;
         if (st != null) try { org.json.JSONObject o = new org.json.JSONObject(st); show = o.optString("title", "").replace('.', ' ').trim(); posMs = o.optInt("position_ms", 0); durMs = o.optInt("duration_ms", 0); } catch (Exception ignored) {}
-        TextView tt = new TextView(this); tt.setText(show.isEmpty() ? "—" : show); tt.setTextColor(SUB); tt.setTextSize(11); tt.setMaxLines(2); tt.setEllipsize(android.text.TextUtils.TruncateAt.END); tt.setPadding(0, dp(8), 0, 0);
+        TextView tt = new TextView(this); tt.setText(show.isEmpty() ? "—" : show); tt.setTextColor(SUB); tt.setTextSize(11); tt.setMaxLines(1); tt.setEllipsize(android.text.TextUtils.TruncateAt.END); tt.setPadding(dp(2), dp(2), 0, 0);
         c.addView(tt);
         ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); pb.setMax(1000); pb.setProgress(durMs > 0 ? Math.round(1000f * posMs / durMs) : 0);
         pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
@@ -331,11 +332,27 @@ public class RemoteActivity extends Activity {
     }
     private void toggleScreen(String id) {
         RemoteService svc = RemoteService.get(); if (svc == null) return;
-        boolean all = svc.targets().isEmpty();
+        boolean all = allSelected(svc);
         java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
         if (ns.contains(id) && ns.size() > 1) ns.remove(id); else ns.add(id);
         if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());
-        svc.setTargets(ns); refreshAll();
+        applySelection(ns);
+    }
+    /** True when every connected screen is selected (targets empty, or contains them all). */
+    private boolean allSelected(RemoteService svc) {
+        java.util.Set<String> t = svc.targets();
+        return t.isEmpty() || (!svc.tablets().isEmpty() && t.containsAll(svc.tablets().keySet()));
+    }
+    /** Apply a new screen selection, keeping any armed sync group consistent (re-arm ≥2, else disarm). */
+    private void applySelection(java.util.Set<String> ns) {
+        RemoteService svc = RemoteService.get(); if (svc == null) return;
+        boolean wasSync = svc.isSyncGroup();
+        svc.setTargets(ns);
+        if (wasSync) {
+            int n = svc.targets().isEmpty() ? svc.tablets().size() : svc.targets().size();
+            if (n >= 2) svc.setSyncGroup(true); else svc.setSyncGroup(false);
+        }
+        refreshAll();
     }
     private void startCardPolling() {
         if (cardPoller != null) return;

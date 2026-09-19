@@ -247,58 +247,54 @@ public class RemoteService extends Service {
         return null;
     }
     // ---- Synced group: one leader plays with audio, the rest mirror it muted in lock-step ----------------
-    public boolean isSyncGroup() { return !Cfg.p(this).getString(PREF_SYNCGROUP, "").isEmpty(); }
+    // A synced group is ON only when armed AND ≥2 screens are selected (you can't sync one). The leader is
+    // always DERIVED from the current selection (a host in it, else the first), so it can never drift out
+    // of the group — the selection is the single source of truth.
+    public boolean isSyncGroup() { return "1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, "")) && groupOrder().size() >= 2; }
+    /** The screens in the group, in order: the current selection, or all seen when "All". */
+    private java.util.List<String> groupOrder() { return new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets()); }
+    public String syncLeaderId() {
+        if (!isSyncGroup()) return null;
+        java.util.List<String> order = groupOrder();
+        for (String id : order) if (hostIds.contains(id)) return id;       // a media host is the natural leader
+        for (String id : order) if (deviceIp(id) != null) return id;       // else the first we can reach
+        return order.isEmpty() ? null : order.get(0);
+    }
+    public String syncLeaderName() { String id = syncLeaderId(); if (id == null) return null; String n = seenTablets.get(id); return n != null ? n : id; }
     /** Audio in a synced group: false = each screen plays its own sound (default); true = only the leader. */
     public boolean groupLeaderOnly() { return "leader".equals(Cfg.p(this).getString(PREF_GROUP_AUDIO, "each")); }
     public void setGroupAudio(boolean leaderOnly) {
         Cfg.p(this).edit().putString(PREF_GROUP_AUDIO, leaderOnly ? "leader" : "each").apply();
-        if (isSyncGroup()) reArmFollowersMute();   // push the new audio mode to the current followers
+        if (isSyncGroup()) armGroup();   // push the new audio mode to the current followers
     }
-    /** The screens in the group: the current selection, or all seen when "All". */
-    private java.util.Set<String> groupMembers() {
-        java.util.Set<String> t = targets();
-        return t.isEmpty() ? new java.util.LinkedHashSet<>(seenTablets.keySet()) : t;
-    }
-    /** Re-tell the current followers whether to stay silent (leader-only) or play their own audio. */
-    private void reArmFollowersMute() {
-        String leader = syncLeaderId(); if (leader == null) return;
-        String leaderIp = deviceIp(leader); if (leaderIp == null) return;
-        int mute = groupLeaderOnly() ? 1 : 0;
-        for (String id : groupMembers()) if (!id.equals(leader)) { String ip = deviceIp(id); if (ip != null) httpArm(ip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute); }
-    }
-    public String syncLeaderId() { String s = Cfg.p(this).getString(PREF_SYNCGROUP, ""); return s.isEmpty() ? null : s; }
-    public String syncLeaderName() { String id = syncLeaderId(); if (id == null) return null; String n = seenTablets.get(id); return n != null ? n : id; }
-    /** Arm/disarm a synced group over the CURRENT screen selection. Leader = the first selected (its state is
-        what the remote shows); the rest become muted followers streaming from + mirroring the leader. */
+    /** Arm/disarm a synced group over the CURRENT selection. */
     public void setSyncGroup(boolean on) {
-        if (!on) {   // disarm: tell everyone we can reach to stop following (idempotent, so hit all known ids)
-            String leader = syncLeaderId();
-            java.util.HashSet<String> all = new java.util.HashSet<>(seenTablets.keySet()); all.addAll(deviceIps.keySet());
-            for (String id : all) if (!id.equals(leader)) httpArm(deviceIp(id), "/sync?on=0");
+        if (!on) {
+            java.util.HashSet<String> known = new java.util.HashSet<>(seenTablets.keySet()); known.addAll(deviceIps.keySet());
+            for (String id : known) httpArm(deviceIp(id), "/sync?on=0");   // everyone stops following
             Cfg.p(this).edit().putString(PREF_SYNCGROUP, "").apply();
             aimLinks();
             return;
         }
-        java.util.List<String> order = new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets());
-        if (order.size() < 2) return;                       // need a leader + at least one follower
-        // Leader must be a MEDIA HOST (followers stream from it). Prefer a known host in the group; else the
-        // currently-shown representative (what the user drives); else the first with a resolvable ip.
-        String leader = null;
-        for (String id : order) if (hostIds.contains(id)) { leader = id; break; }
-        if (leader == null) { try { String rid = new JSONObject(lastState).optString("id", ""); if (order.contains(rid)) leader = rid; } catch (Exception ignored) {} }
-        if (leader == null) for (String id : order) if (deviceIp(id) != null) { leader = id; break; }
-        if (leader == null) leader = order.get(0);
-        String leaderIp = deviceIp(leader);
-        if (leaderIp == null || leaderIp.isEmpty()) return; // can't arm without the leader's ip
-        httpArm(leaderIp, "/sync?on=0");                    // the leader plays normally (audio source)
-        int mute = groupLeaderOnly() ? 1 : 0;               // each screen its own sound, or leader only
-        for (String id : order) {
+        if (groupOrder().size() < 2) return;                               // need a leader + at least one follower
+        Cfg.p(this).edit().putString(PREF_SYNCGROUP, "1").apply();         // set first so syncLeaderId() derives
+        armGroup();
+        aimLinks();
+    }
+    /** (Re)arm the current group: leader plays, non-member screens stop, follower members mirror the leader. */
+    private void armGroup() {
+        String leader = syncLeaderId(); if (leader == null) return;
+        String leaderIp = deviceIp(leader); if (leaderIp == null || leaderIp.isEmpty()) return;
+        java.util.Set<String> members = new java.util.HashSet<>(groupOrder());
+        java.util.HashSet<String> known = new java.util.HashSet<>(seenTablets.keySet()); known.addAll(deviceIps.keySet());
+        for (String id : known) if (!members.contains(id)) httpArm(deviceIp(id), "/sync?on=0");   // dropped screens leave the group
+        httpArm(leaderIp, "/sync?on=0");                                   // the leader plays normally (audio source)
+        int mute = groupLeaderOnly() ? 1 : 0;
+        for (String id : groupOrder()) {
             if (id.equals(leader)) continue;
             String fip = deviceIp(id);
             if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute);
         }
-        Cfg.p(this).edit().putString(PREF_SYNCGROUP, leader).apply();
-        setTargets(new java.util.LinkedHashSet<>(order));   // the selection IS the group (leader + followers) so the picker shows them all; aimLinks() runs inside
     }
     /** Fire-and-forget GET to a tablet's ControlServer (used to arm/disarm sync). */
     private void httpArm(final String ip, final String path) {
@@ -408,7 +404,7 @@ public class RemoteService extends Service {
         // Volume in a synced group with PER-SCREEN audio hits every member (each its own sound); everything
         // else (playback; or volume when the group is leader-only) goes to the effective target below.
         if (isSyncGroup() && isVolCmd(cmd) && !groupLeaderOnly()) {
-            java.util.Set<String> members = groupMembers();
+            java.util.Set<String> members = new java.util.HashSet<>(groupOrder());
             java.util.Set<String> ble2 = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
             if (ble != null) ble.sendToIds(members, cmd);
             if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(members); w.removeAll(ble2); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
