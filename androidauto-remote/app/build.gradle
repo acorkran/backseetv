@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.kidstv.aaremote'
+    namespace 'io.anancy.aaremote'
     compileSdk 34
 
     defaultConfig {
-        applicationId 'com.kidstv.aaremote'
+        applicationId 'io.anancy.aaremote'
         minSdk 23
         targetSdk 34
         versionCode 1

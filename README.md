@@ -1,25 +1,25 @@
-# Kidodi
+# Anancy
 
 [![Android CI](../../actions/workflows/android-ci.yml/badge.svg)](../../actions/workflows/android-ci.yml)
 
-A self-contained, **fully offline** in-car kids' TV appliance. An Android tablet is locked
-down as a **device-owner kiosk** that boots straight into a shuffle of the child's shows —
-no launcher, no menus to escape into, no internet, no ads — and is driven from the front
-seat by a phone, a smartwatch, or the car's Android Auto screen. Multiple tablets can be
-driven at once, either **independently** or **synced frame-to-frame** so two kids see the
-same thing in step.
+A self-contained, **fully offline** in-car and multi-screen media appliance. An Android tablet is
+locked down as a **device-owner kiosk** that boots straight into a shuffle of local media —
+no launcher, no menus to escape into, no internet, no ads — and is driven from a phone, a
+smartwatch, or the car's Android Auto screen. Multiple screens can be driven at once, either
+**independently** or **synced frame-to-frame** so several show the same thing in step.
 
-Built as a real appliance for real drives, then hardened into a portfolio piece: one
-cohesive Android app, unit-tested core logic, CI, and no cloud anywhere.
+Built as a real appliance for real drives, then hardened into a portfolio piece: one cohesive
+Android app, unit-tested core logic, CI, and no cloud anywhere.
 
-> **Name:** Kid + Kodi. The project began as `jellyfin-wheels` (a Raspberry Pi + Jellyfin
-> streamer that was too weak), pivoted to media-local-on-tablet, and then replaced Kodi
-> entirely with its own player. That history lives in [`legacy/`](legacy/).
+> **Name:** *Anancy* — the trickster-**storyteller spider** of West African and Caribbean
+> folklore, who bargained for and owns all the world's stories. The spider's web says the
+> whole idea in one image: a single story mirrored across many connected screens.
+> *(Formerly **Kidodi** — the in-car kids-TV origin is now just one use case.)*
 
 ## Demo
 
 <!-- TODO(owner): drop a screen recording here — phone remote driving two tablets in sync.
-     Save it as docs/demo.gif and change the line below to: ![Kidodi demo](docs/demo.gif) -->
+     Save it as docs/demo.gif and change the line below to: ![Anancy demo](docs/demo.gif) -->
 _A 20-second clip of the phone remote driving two tablets in lock-step will go here._
 
 ## What makes it interesting
@@ -28,7 +28,7 @@ _A 20-second clip of the phone remote driving two tablets in lock-step will go h
   with an NTP-lite offset (lowest-RTT filtered, slow-drift tracked), extrapolate where the
   leader is *now*, and converge with a seek-ahead scheduled start plus an inaudible ±1.5%
   speed nudge. Measured to ~20–50 ms apart on real hardware. The math is pure and
-  unit-tested: [`player/SyncMath.java`](kidodi/app/src/main/java/com/kidstv/kidodi/player/SyncMath.java).
+  unit-tested: [`player/SyncMath.java`](anancy/app/src/main/java/io/anancy/player/SyncMath.java).
 - **Its own EOF-proof player.** A Media3 (ExoPlayer) engine with native shuffle-all +
   deterministic auto-advance, so the "stuck at end-of-file" wedge that plagued the old
   Kodi build structurally cannot happen — no watchdog needed.
@@ -42,7 +42,7 @@ _A 20-second clip of the phone remote driving two tablets in lock-step will go h
 - **Correct command routing.** In a synced group, playback drives the leader alone
   (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —
   the split is pure and unit-tested:
-  [`remote/CommandRouter.java`](kidodi/app/src/main/java/com/kidstv/kidodi/remote/CommandRouter.java).
+  [`remote/CommandRouter.java`](anancy/app/src/main/java/io/anancy/remote/CommandRouter.java).
 - **Four control surfaces** from one app: an in-tablet admin remote, a phone remote, a
   Wear OS remote, and an Android Auto media dash.
 
@@ -67,7 +67,7 @@ One APK, two roles (chosen on first run and remembered): **player** (the tablet 
    Synced group: one leader plays; followers poll /clock + /state and mirror in lock-step.
 ```
 
-Inside `kidodi/app` the code is grouped by concern:
+Inside `anancy/app` the code is grouped by concern (package root `io.anancy`):
 
 | Package | Responsibility |
 |---------|----------------|
@@ -81,7 +81,7 @@ Inside `kidodi/app` the code is grouped by concern:
 
 | Path | What it is | State |
 |------|------------|-------|
-| [`kidodi/`](kidodi/) | **The app.** `:app` (phone + tablet) and `:wear` (Wear OS). Gradle. | Production |
+| [`anancy/`](anancy/) | **The app.** `:app` (phone + tablet) and `:wear` (Wear OS). Gradle. | Production |
 | [`androidauto-remote/`](androidauto-remote/) | Standalone Android Auto media dash. Gradle. | Experimental |
 | [`camera-monitor/`](camera-monitor/) | Front-cam + ML Kit still-image child monitor. Gradle. | Prototype |
 | [`server/`](server/) | Home-server helper scripts (media sync over adb). | Utility |
@@ -93,7 +93,7 @@ The app is a standard Gradle project (Java 17, Android SDK build-tools 34 / plat
 `local.properties` is gitignored; set `ANDROID_SDK_ROOT` or add your own.
 
 ```bash
-cd kidodi
+cd anancy
 gradle :app:testDebugUnitTest     # run the unit tests (SyncMath, CommandRouter)
 gradle :app:assembleDebug         # build the APK (also builds + embeds the watch app)
 ```

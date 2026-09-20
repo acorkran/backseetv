@@ -1,4 +1,4 @@
-# Kidodi — Setup guide
+# Anancy — Setup guide
 
 How to build the whole appliance from scratch: a locked-down Kodi kiosk tablet that boots into a
 shuffle of kids' shows, plus the phone remote, the Android Auto remote, and the (optional) child
@@ -24,20 +24,20 @@ Android platform-tools binary; the tablet + phone are reached over USB or wirele
 
 ## 1. Media onto the SD card
 
-Lay the library out on the card as `/<mount>/KidsTV/<Show>/Season NN/<episode>.mp4` with per-item
+Lay the library out on the card as `/<mount>/Anancy/<Show>/Season NN/<episode>.mp4` with per-item
 `.nfo` + local art. Kodi will read all metadata locally (no network). The card mounts as a portable
-volume (no adoption needed); the reference build lives at `/storage/<uuid>/KidsTV`.
+volume (no adoption needed); the reference build lives at `/storage/<uuid>/Anancy`.
 
 ## 2. Kodi: install + point at the SD + scan
 
 1. Install Kodi (org.xbmc.kodi) on the tablet (sideload the APK; it is **not** part of this repo).
-2. Add a **video source** → the SD `KidsTV` folder, content type **TV shows**, scraper
+2. Add a **video source** → the SD `Anancy` folder, content type **TV shows**, scraper
    **Local information only** (`metadata.local`) so it never hits the internet.
 3. **Scan** — Kodi builds `MyVideos*.db` from the local NFO/art. (On a swapless tablet a huge scan
    can OOM; add zram if needed.) One-time; the DB then just needs re-pointing if the card path ever
    changes (prefix-swap `path.strPath` / `art.url` / `episode.c18` — see `kodi-tablet-sd-expansion`).
 4. Copy the **autoplay addon** into Kodi's addons dir so the show self-heals and boots automatically:
-   `tablet-kiosk/kodi-config/service.kidstv.autoplay/` and `script.kidstv.play/` →
+   `tablet-kiosk/kodi-config/service.anancy.autoplay/` and `script.anancy.play/` →
    `…/org.xbmc.kodi/files/.kodi/addons/`. Enable both in Kodi.
 
 ## 3. Smart playlists — generate one per show from the library
@@ -87,7 +87,7 @@ only be set on a device with **no accounts added**, and once set the app **canno
 uninstalled** — removing device-owner effectively needs a **factory reset**. Do this deliberately.
 
 ```bash
-adb install tablet-kiosk/kidstv-kiosk.apk       # or build.sh first (see §7)
+adb install tablet-kiosk/anancy-kiosk.apk       # or build.sh first (see §7)
 adb shell dpm set-device-owner com.kidstv.kiosk/.AdminReceiver
 ```
 
@@ -108,7 +108,7 @@ install" of the kiosk is a reinstall-over, **not** an uninstall).
 
 ```bash
 cd remote-app && ./build.sh          # no Gradle: aapt2 -> javac -> d8 -> apksigner
-adb install kidstv-remote.apk
+adb install anancy-remote.apk
 ```
 
 First run is zero-config: with the phone's **hotspot on** and the tablet joined, the remote sweeps
@@ -125,7 +125,7 @@ adb install -r androidauto-remote/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 On the phone: Android Auto → tap the Version header ~10× to enable **developer mode**, then enable
-**"Unknown sources"** (required for a sideloaded media app to appear). In the car, open **"Kidodi
+**"Unknown sources"** (required for a sideloaded media app to appear). In the car, open **"Anancy
 Remote"** from the media-app picker: browse playlists, play/pause, skip, **Vol−/Vol+** (drives the
 tablet's volume, not the car's), and a sticky **power-off** custom action. (It needs
 `usesCleartextTraffic` for the power/nap bridge call — already in its manifest.)
@@ -135,8 +135,8 @@ tablet's volume, not the car's), and a sticky **power-off** custom action. (It n
 ```bash
 gradle -p camera-monitor --offline assembleDebug
 adb install -r camera-monitor/app/build/outputs/apk/debug/app-debug.apk
-adb shell pm grant com.kidstv.cameramon android.permission.CAMERA
-adb shell pm grant com.kidstv.cameramon android.permission.POST_NOTIFICATIONS
+adb shell pm grant io.anancy.cameramon android.permission.CAMERA
+adb shell pm grant io.anancy.cameramon android.permission.POST_NOTIFICATIONS
 ```
 
 On-device front-cam + bundled ML Kit (offline) logs eyes-open + head-pitch to a CSV while Kodi plays
@@ -149,7 +149,7 @@ data pipeline + limits.
 
 - **Network:** turn the phone's **hotspot** on for the ride; the tablet auto-joins it and both
   remotes find it. It's the one manual step.
-- **Kiosk update:** `adb install -r tablet-kiosk/kidstv-kiosk.apk` (reinstall-over; never uninstall).
+- **Kiosk update:** `adb install -r tablet-kiosk/anancy-kiosk.apk` (reinstall-over; never uninstall).
 - **Add a show later:** drop it on the SD in the same layout, Kodi Scan, regenerate playlists (§3,
   incl. the Kodi restart).
 - **Admin:** 4 four-finger taps in 3s → PIN → in-kiosk admin menu (playlists, rebuild ShuffleAll,
@@ -165,10 +165,10 @@ the tablet rejoins the home Wi-Fi (mDNS-discovered). See **`server/`**:
 # one-off / manual
 server/camsync.sh
 # automatic: every 10 min via cron (picks up trips within ~10 min of coming home)
-*/10 * * * * /home/user/projects/kidodi/server/camsync.sh >/dev/null 2>&1
+*/10 * * * * /home/user/projects/anancy/server/camsync.sh >/dev/null 2>&1
 ```
 
-New rows (line-count watermark) append to `~/kidodi-data/childlog-archive.csv` + a dated per-trip
+New rows (line-count watermark) append to `~/anancy-data/childlog-archive.csv` + a dated per-trip
 snapshot; the on-device CSV is left intact. Wireless adb needs a one-time pairing to the server.
 
 ## Build tooling summary

@@ -1,6 +1,6 @@
 name: Android CI
 
-# Builds the Kidodi v2 app (:app + :wear) and runs the unit tests on every push
+# Builds the Anancy v2 app (:app + :wear) and runs the unit tests on every push
 # and PR. The app is a plain Gradle project with no committed wrapper, so we
 # provision Gradle 8.7 explicitly. local.properties is gitignored — the SDK path
 # comes from the runner's ANDROID_SDK_ROOT.
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: kidodi
+        working-directory: anancy
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +48,6 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: kidodi-debug-apk
-          path: kidodi/app/build/outputs/apk/debug/app-debug.apk
+          name: anancy-debug-apk
+          path: anancy/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

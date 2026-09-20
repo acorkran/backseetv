@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- read the local library off the SD card (grant via appops MANAGE_EXTERNAL_STORAGE allow).
+         API 29 has no all-files access: legacy READ/WRITE_EXTERNAL_STORAGE + requestLegacyExternalStorage,
+         which the device-owner kiosk grants to itself (Library.grantStorage) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- in-process control server (:8090) + mDNS/NSD advertise so remotes find the player -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- BLE control tier: player = peripheral (advertise), remote = central (scan); both connect -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+    <!-- pre-31 BLE -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <!-- pre-31 BLE scan + the local-only hotspot below API 33 (NEARBY_WIFI_DEVICES replaces it) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32"/>
+    <!-- keep the remote's connection (BLE/wifi) alive in a foreground service (also feeds Android Auto) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- boot straight into the show (v1 parity: the SHOW is the home screen) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- optional camera-monitor plugin: periodically-updated still images (off by default) -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
+    <!-- Wi-Fi provisioning: device-owner add/join + local-only hotspot (random SSID shared via QR) -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"/>
+
+    <application
+        android:label="Anancy"
+        android:icon="@android:drawable/ic_media_play"
+        android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true">
+
+        <!-- Android Auto: MEDIA app (the only surface a car actually shows). See AnancyMediaService. -->
+        <meta-data android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc"/>
+
+        <!-- Launcher: one APK, two roles. Routes to player or remote (first-run chooser). -->
+        <activity
+            android:name=".RouterActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Black.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+                <!-- also a HOME app: the show IS the home screen (device-owner pins us as preferred home) -->
+                <category android:name="android.intent.category.HOME"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Player role: the show is the home screen (fullscreen, landscape). -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
+
+        <!-- Play mode is now a transparent WebView overlay inside PlayerActivity (no separate activity). -->
+
+        <!-- Remote role: control UI. -->
+        <activity
+            android:name=".remote.RemoteActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
+
+        <!-- QR pairing: display creds/connection info as a QR, and scan one with the camera -->
+        <activity android:name=".net.QrShareActivity" android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
+        <activity android:name=".net.QrScanActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
+
+        <!-- local-only Wi-Fi hotspot (random SSID + passphrase shown as a QR for remotes to scan+join) -->
+        <service android:name=".net.HotspotService" android:exported="false"/>
+
+        <!-- optional "locked" tier: device-owner APIs for inescapable lock-task -->
+        <receiver android:name=".admin.AdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin"/>
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- TV-side admin settings (behind the unlock gesture + PIN) -->
+        <activity android:name=".remote.SettingsActivity" android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"/>
+
+        <!-- About / feature levels (opened from device-owner "requires setup" notices) -->
+        <activity android:name=".remote.AboutActivity" android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"/>
+
+        <!-- boot straight into the player (the SHOW is the home screen) -->
+        <receiver android:name=".admin.BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- after THIS app is updated: push the embedded watch build to the watch (phone role only) -->
+        <receiver android:name=".admin.PackageReplacedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- phone connection service: BLE primary + wifi fallback -->
+        <service android:name=".remote.RemoteService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"/>
+
+        <!-- optional camera-monitor plugin: headless still-image capture (off by default) -->
+        <service android:name=".net.SnapshotService"
+            android:exported="false"
+            android:foregroundServiceType="camera"/>
+
+
+        <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
+             now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
+        <service android:name=".player.AnancyMediaService" android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService"/>
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
