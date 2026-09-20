@@ -1,181 +1,166 @@
 # Anancy — Setup guide
 
-How to build the whole appliance from scratch: a locked-down Kodi kiosk tablet that boots into a
-shuffle of kids' shows, plus the phone remote, the Android Auto remote, and the (optional) child
-camera monitor. Everything is **offline** — no internet, no accounts, no cloud.
+How to build and provision the appliance from scratch. Anancy is **one** Android app
+(`anancy/`, package + applicationId `app.anancy`) with its own Media3/ExoPlayer engine — **no
+Kodi, no bridge, no separate remote/camera apps**. The same APK runs in two roles, chosen on first
+run: **player** (the tablet kiosk, boots into a shuffle of local media) and **remote** (a phone,
+and by extension the paired watch + the car's Android Auto screen). Everything is **offline** — no
+internet, no accounts, no cloud.
 
-This is the process that was walked through end-to-end; the commands are what actually work on the
-reference hardware (Samsung Galaxy Tab Active3 / SM-T575, Android 13). `adb` throughout is the
-Android platform-tools binary; the tablet + phone are reached over USB or wireless adb.
+`adb` throughout is the Android platform-tools binary; the tablet and phone are reached over USB or
+wireless adb. Reference hardware: Samsung Galaxy Tab Active3 / SM-T575 and a Lenovo TB-X606F.
 
 ---
 
-## 0. Hardware + prerequisites
+## 0. Prerequisites
 
-- **Tablet** — the playback device (reference: SM-T575). Gets locked down as a device-owner kiosk.
-- **Phone** — the front-seat remote + the phone's **hotspot is the network** the tablet joins.
-- **microSD card** — holds the whole media library at native quality, read-only in practice (kept
-  off internal storage so it's not re-written; see `kodi-tablet-sd-expansion`).
-- **A dev machine** with the Android SDK (build-tools + a platform image), Java 17, and — for the
-  two Gradle apps — Gradle 8.7. Set `ANDROID_HOME`/`ANDROID_SDK_ROOT` to the SDK.
-- **Media** — your own kids' shows, one folder per show, `Show/Season NN/Show.SxxEyy.Title.mp4`,
-  with baked-in NFO + artwork (fully offline, no scraper). Acquiring/encoding media is out of scope
-  here — see the project notes on the yt-dlp grab pipeline and the 576p/native ffmpeg pipeline.
+- **JDK 17** (the build compiles at `sourceCompatibility`/`targetCompatibility` 17).
+- **Android SDK** with **build-tools 34** and **platform `android-34`** (the project compiles and
+  targets API 34; `minSdk` 26).
+- **Gradle 8.7** on your `PATH`. There is **no Gradle wrapper** in the repo — invoke the system
+  `gradle`.
+- **`ANDROID_SDK_ROOT`** (or `ANDROID_HOME`) pointing at the SDK. `anancy/local.properties` is
+  gitignored; if you prefer, create it with `sdk.dir=/path/to/android-sdk` instead.
+- **adb** (platform-tools) to install and provision devices.
+- **Media** — your own kids' shows as plain video files (`.mp4` / `.mkv` / `.m4v`). No NFO,
+  artwork, or scraper is needed; Anancy groups by folder (see §5).
 
-## 1. Media onto the SD card
-
-Lay the library out on the card as `/<mount>/Anancy/<Show>/Season NN/<episode>.mp4` with per-item
-`.nfo` + local art. Kodi will read all metadata locally (no network). The card mounts as a portable
-volume (no adoption needed); the reference build lives at `/storage/<uuid>/Anancy`.
-
-## 2. Kodi: install + point at the SD + scan
-
-1. Install Kodi (org.xbmc.kodi) on the tablet (sideload the APK; it is **not** part of this repo).
-2. Add a **video source** → the SD `Anancy` folder, content type **TV shows**, scraper
-   **Local information only** (`metadata.local`) so it never hits the internet.
-3. **Scan** — Kodi builds `MyVideos*.db` from the local NFO/art. (On a swapless tablet a huge scan
-   can OOM; add zram if needed.) One-time; the DB then just needs re-pointing if the card path ever
-   changes (prefix-swap `path.strPath` / `art.url` / `episode.c18` — see `kodi-tablet-sd-expansion`).
-4. Copy the **autoplay addon** into Kodi's addons dir so the show self-heals and boots automatically:
-   `tablet-kiosk/kodi-config/service.anancy.autoplay/` and `script.anancy.play/` →
-   `…/org.xbmc.kodi/files/.kodi/addons/`. Enable both in Kodi.
-
-## 3. Smart playlists — generate one per show from the library
-
-Kodi smart playlists (`.xsp`) live in
-`…/org.xbmc.kodi/files/.kodi/userdata/playlists/video/`. Two curated ones ship in
-`tablet-kiosk/kodi-config/playlists/`: **ShuffleAll.xsp** (the content-agnostic all-shows shuffle the
-kiosk boots into — excludes any folder named `!hidden`) and **Naptime.xsp** (a calm mix).
-
-To make a **per-show playlist for every show** in the library, generate them from Kodi's own list
-(so titles match exactly, apostrophes and all) and push them over adb. With the bridge forwarded
-(`adb forward tcp:18081 tcp:8080`):
+## 1. Build
 
 ```bash
-python3 - <<'PY'
-import json, subprocess, re, os
-r = subprocess.run(["curl","-s","-X","POST","localhost:18081/jsonrpc","-d",
-  '{"jsonrpc":"2.0","id":1,"method":"VideoLibrary.GetTVShows","params":{"properties":["title"]}}'],
-  capture_output=True, text=True).stdout
-shows = [s["title"] for s in json.loads(r)["result"]["tvshows"]]
-esc = lambda t: t.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-fn  = lambda t: re.sub(r'[^A-Za-z0-9]','',t)+".xsp"
-os.makedirs("pl-new", exist_ok=True)
-for t in shows:
-    open("pl-new/"+fn(t),"w",encoding="utf-8").write(
-      '<?xml version="1.0" encoding="UTF-8"?>\n<smartplaylist type="episodes">\n'
-      f'    <name>{esc(t)}</name>\n    <match>all</match>\n'
-      f'    <rule field="tvshow" operator="is"><value>{esc(t)}</value></rule>\n'
-      '    <order direction="ascending">episode</order>\n</smartplaylist>\n')
-print(f"generated {len(shows)} playlists")
-PY
-
-PLDIR=/storage/emulated/0/Android/data/org.xbmc.kodi/files/.kodi/userdata/playlists/video
-for f in pl-new/*.xsp; do adb push "$f" "$PLDIR/"; done
+cd anancy
+gradle :app:assembleDebug
 ```
 
-**GOTCHA:** Kodi caches its smart-playlist registry — newly-*added* `.xsp` files aren't picked up
-until Kodi re-reads the folder. **Restart Kodi** after pushing new playlists
-(`adb shell am force-stop org.xbmc.kodi` then relaunch), or they resolve to "Invalid params" / 0
-episodes even though the file is correct. Overwriting an existing `.xsp` is picked up live; only new
-files need the restart.
+This produces `anancy/app/build/outputs/apk/debug/app-debug.apk`.
 
-## 4. Device-owner provisioning — the ONE un-reversible step
+Building `:app` **also builds the `:wear` module and embeds `wear.apk` into the phone APK's
+assets** (`embedWearApk` runs before `preBuild`). That is what lets a phone in the remote role push
+the watch build to a paired Wear OS watch over the Bluetooth Data Layer — you never install the
+watch app by hand (see §6).
 
-The kiosk app must be **device owner** to lock the task, blank the screen, and own HOME. This can
-only be set on a device with **no accounts added**, and once set the app **cannot be casually
-uninstalled** — removing device-owner effectively needs a **factory reset**. Do this deliberately.
+Optional — run the pure-logic unit tests (sync math + command routing, JVM-only, fast):
 
 ```bash
-adb install tablet-kiosk/anancy-kiosk.apk       # or build.sh first (see §7)
-adb shell dpm set-device-owner com.kidstv.kiosk/.AdminReceiver
+gradle :app:testDebugUnitTest
 ```
 
-Then grant the kiosk what it needs (device-owner grants most, but these are explicit):
+## 2. Install and pick a role (first run)
 
 ```bash
-adb shell appops set com.kidstv.kiosk SYSTEM_ALERT_WINDOW allow          # the touch-block overlay
-adb shell appops set com.kidstv.kiosk MANAGE_EXTERNAL_STORAGE allow      # phone->tablet uploads
-adb shell pm grant com.kidstv.kiosk android.permission.WRITE_SECURE_SETTINGS  # watchdog/pin/import-dir globals
+adb install -r anancy/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On next boot the tablet comes up as the kiosk: HOME = the kiosk, which launches Kodi, raises the
-touch-block overlay, and the autoplay addon starts ShuffleAll. Admin escape = 4 four-finger taps in
-3s → PIN (default 1234). Once device-owner, updates are just `adb install -r` over the top (a "fresh
-install" of the kiosk is a reinstall-over, **not** an uninstall).
+Launch **Anancy**. On first run `RouterActivity` shows **"Set this device's role"** with two
+buttons:
 
-## 5. Phone remote
+- **This is the TV (player)** — the tablet kiosk that plays the local library.
+- **This is a Remote** — a phone (or the on-device admin remote, the watch companion, the AA dash).
+
+The choice is stored and every later launch routes straight to that role. To re-choose, clear the
+app's data. On first launch the app also requests the BLE runtime permissions it needs.
+
+## 3. Provision the tablet as a device-owner kiosk (player only)
+
+The player must be **device owner** to lock the task, own HOME, disable the keyguard, and blank the
+screen. This can only be set on a device with **no accounts added**, and it is effectively
+permanent: removing device-owner needs a **factory reset**. Do it deliberately, on the tablet you
+chose the **player** role on.
 
 ```bash
-cd remote-app && ./build.sh          # no Gradle: aapt2 -> javac -> d8 -> apksigner
-adb install anancy-remote.apk
+adb shell dpm set-device-owner app.anancy/.admin.AdminReceiver
 ```
 
-First run is zero-config: with the phone's **hotspot on** and the tablet joined, the remote sweeps
-the phone's own subnet and finds Kodi automatically — no IP to type. Playlist tiles, transport,
-volume, a nap/wake power button, a "Go to sleep" fade, an in-app Settings **page**, a Files browser
-(tablet uploads + a phone folder browser + the system file picker), and an optional home-screen
-**widget** (Settings → Add remote widget).
+(`app.anancy/.admin.AdminReceiver` is the device-admin receiver declared in the manifest.)
 
-## 6. Android Auto remote (optional — control from the car head unit)
+On **Android 11+ (API 30+)** the player reads the library via all-files access — grant it once:
 
 ```bash
-gradle -p androidauto-remote --offline assembleDebug
-adb install -r androidauto-remote/app/build/outputs/apk/debug/app-debug.apk
+adb shell appops set app.anancy MANAGE_EXTERNAL_STORAGE allow
 ```
 
-On the phone: Android Auto → tap the Version header ~10× to enable **developer mode**, then enable
-**"Unknown sources"** (required for a sideloaded media app to appear). In the car, open **"Anancy
-Remote"** from the media-app picker: browse playlists, play/pause, skip, **Vol−/Vol+** (drives the
-tablet's volume, not the car's), and a sticky **power-off** custom action. (It needs
-`usesCleartextTraffic` for the power/nap bridge call — already in its manifest.)
+(On API 29 the device-owner player grants itself legacy read/write storage automatically — see
+`Library.grantStorage` — so no appops step is needed there.)
 
-## 7. Child camera monitor (optional)
+## 4. Turn on the locked kiosk
+
+Lock-task is **gated so dev builds aren't trapped**: the player only enters lock-task, pins itself
+as HOME, and disables the keyguard when the `anancy_kiosk` flag is `1`. Enable it either from the
+on-tablet **Settings screen** (admin menu → Settings), or over adb:
 
 ```bash
-gradle -p camera-monitor --offline assembleDebug
-adb install -r camera-monitor/app/build/outputs/apk/debug/app-debug.apk
-adb shell pm grant app.anancy.cameramon android.permission.CAMERA
-adb shell pm grant app.anancy.cameramon android.permission.POST_NOTIFICATIONS
+adb shell settings put global anancy_kiosk 1
 ```
 
-On-device front-cam + bundled ML Kit (offline) logs eyes-open + head-pitch to a CSV while Kodi plays
-and even screen-off. The kiosk watchdog **auto-starts and recovers it** (heartbeat on the 8080
-bridge; relaunched via a headless autostart activity if it dies while the screen is on). It's a
-glanceable aid, **not** a safety monitor (blind in the dark). See `child-camera-monitor` for the
-data pipeline + limits.
+Relaunch the player (or reboot). It now comes up locked: the show **is** the home screen (boot and
+Home land on it), the status bar is disabled, and playback starts **muted**.
 
-## 8. Everyday operation
+**Admin escape:** the hidden unlock gesture (default **4 four-finger taps within 3s**, tunable) opens
+the unlock challenge. The default style is a **randomized timed code** shown on screen (nothing to
+memorize, a toddler can't copy it in time); a fixed **PIN** (default `1234`, override with
+`adb shell settings put global anancy_pin <PIN>`) and an experimental swipe **pattern** are the
+alternatives. Passing it opens the **admin menu**: Remote (the full remote UI running locally
+against this player), Settings, Toddler play mode, Exit to launcher, and Back to the show.
 
-- **Network:** turn the phone's **hotspot** on for the ride; the tablet auto-joins it and both
-  remotes find it. It's the one manual step.
-- **Kiosk update:** `adb install -r tablet-kiosk/anancy-kiosk.apk` (reinstall-over; never uninstall).
-- **Add a show later:** drop it on the SD in the same layout, Kodi Scan, regenerate playlists (§3,
-  incl. the Kodi restart).
-- **Admin:** 4 four-finger taps in 3s → PIN → in-kiosk admin menu (playlists, rebuild ShuffleAll,
-  import dir, etc.), or a maintenance hatch via the `kiosk_off` global.
+## 5. Put media on the tablet
 
-## 9. Home-base data sync (camera training data)
+Anancy scans for a top-level **`Anancy/`** folder on any storage volume (primary internal *and* a
+portable microSD — no adoption, no hardcoded UUID) and treats **each immediate sub-folder as a
+show**. Files inside a show are sorted by name (episode order). Recognized extensions: **`.mp4`,
+`.mkv`, `.m4v`**.
 
-The camera monitor logs to a CSV on the tablet. To collect it here for training/finetuning, the
-always-on home server pulls it whenever the tablet is adb-reachable — USB, or **wireless adb** once
-the tablet rejoins the home Wi-Fi (mDNS-discovered). See **`server/`**:
+```
+<storage>/Anancy/
+  Bluey/            Season 1/Bluey.S01E01.mp4 ...
+  Ms Rachel/        ...
+  ...
+```
+
+Push a library over adb, e.g. onto primary storage:
 
 ```bash
-# one-off / manual
-server/camsync.sh
-# automatic: every 10 min via cron (picks up trips within ~10 min of coming home)
-*/10 * * * * /home/user/projects/anancy/server/camsync.sh >/dev/null 2>&1
+adb push "Bluey" /sdcard/Anancy/Bluey
 ```
 
-New rows (line-count watermark) append to `~/anancy-data/childlog-archive.csv` + a dated per-trip
-snapshot; the on-device CSV is left intact. Wireless adb needs a one-time pairing to the server.
+On a portable SD the same layout lives at `/storage/<uuid>/Anancy/…`. On launch the player scans the
+roots, builds a **Shuffle All** playlist plus one **per-show** playlist, and starts playing (muted).
+Rescan later from the admin remote. Phone→tablet uploads land in `<Anancy>/Imports/`, which surfaces
+as an **Imports** playlist.
 
-## Build tooling summary
+## 6. Point the remotes at the player
 
-| App | Build | Device-owner? | Uninstallable? |
-|---|---|---|---|
-| `tablet-kiosk` | `./build.sh` (no Gradle) | **yes** | no — reinstall-over only |
-| `remote-app` | `./build.sh` (no Gradle) | no | yes |
-| `androidauto-remote` | `gradle assembleDebug` | no | yes |
-| `camera-monitor` | `gradle assembleDebug` | no | yes |
+**Phone remote** — install the same APK on the phone and pick **This is a Remote**. It reaches the
+player over two transports with the same command vocabulary:
+
+- **BLE (primary)** — works with **no network at all** (car, no Wi-Fi). The player advertises as a
+  GATT peripheral; the remote scans and connects.
+- **Wi-Fi / mDNS** — when both are on the same LAN, the player advertises `_anancy._tcp` and serves
+  an HTTP control API on **:8090**. The remote auto-discovers it by name — **no IP to type**.
+
+For the player's own local-only hotspot, the credentials are shown as a **QR code** that the remote
+scans (QR pairing), so nobody types a random SSID/passphrase.
+
+**Watch remote** — do **not** install it separately. Installing or updating the phone (remote role)
+self-pushes the embedded `wear.apk` to a paired Wear OS watch over the Bluetooth Data Layer
+(`PackageReplacedReceiver` → `WearPusher`). The watch app shares the `app.anancy` application id and
+signing key (required for the Data Layer to route between them). It talks to the player through the
+phone's remote service.
+
+**Android Auto** — the phone app **is** the AA media app (`AnancyMediaService`, a
+`MediaBrowserService`); there is no separate car app to install. To make a sideloaded media app
+appear in the car: on the phone open **Android Auto → tap the Version header ~10×** to enable
+developer mode, then enable **"Unknown sources."** In the car, pick **Anancy** from the media-app
+picker to browse playlists and drive the tablet (play/pause, skip, volume, power). The dash mirrors
+the tablet's now-playing and forwards controls over the remote service; it makes no audio of its
+own.
+
+## Notes
+
+- **Optional camera plugin.** The player can run a headless front-camera **still-snapshot** service
+  (`SnapshotService`, ~0.75 fps JPEGs, **not** a video feed), off by default. It needs the camera
+  permission granted (`adb shell pm grant app.anancy android.permission.CAMERA`).
+- **Updates** are just `adb install -r …/app-debug.apk` over the top; a device-owner player is
+  reinstalled-over, never uninstalled.
+- **`server/`** holds an optional home-server helper that pulls camera-training data off the tablet
+  over adb — see [`server/README.md`](server/README.md).
+- The archived v1 apps live in `legacy/` and are not built.

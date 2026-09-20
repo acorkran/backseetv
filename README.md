@@ -19,7 +19,8 @@ Android app, unit-tested core logic, CI, and no cloud anywhere.
 ## Demo
 
 <!-- TODO(owner): drop a screen recording here — phone remote driving two tablets in sync.
-     Save it as docs/demo.gif and change the line below to: ![Anancy demo](docs/demo.gif) -->
+     See docs/README.md for how to record the clip, convert it, and drop it in
+     (save it as docs/demo.gif and swap this comment for: ![Anancy demo](docs/demo.gif)). -->
 _A 20-second clip of the phone remote driving two tablets in lock-step will go here._
 
 ## What makes it interesting
@@ -82,7 +83,6 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 | Path | What it is | State |
 |------|------------|-------|
 | [`anancy/`](anancy/) | **The app.** `:app` (phone + tablet) and `:wear` (Wear OS). Gradle. | Production |
-| [`androidauto-remote/`](androidauto-remote/) | Standalone Android Auto media dash. Gradle. | Experimental |
 | [`camera-monitor/`](camera-monitor/) | Front-cam + ML Kit still-image child monitor. Gradle. | Prototype |
 | [`server/`](server/) | Home-server helper scripts (media sync over adb). | Utility |
 | [`legacy/`](legacy/) | v1 (Kodi-bridge) apps + v2 prototypes, superseded. Not built. | Archived |
@@ -115,6 +115,10 @@ tracked for an online build + on-device pass:
 - **16 KB page-size**: bump CameraX to 1.4.1+ and ML Kit barcode to 17.3.0+ so their
   bundled native libs load on 16 KB-page Android 15+ devices (current test devices are 4 KB).
 - **HotspotService → foreground service** and **edge-to-edge insets** (only bite at target 35).
+
+## Contributing
+
+This is a personal portfolio project — issues and pull requests aren't being accepted. You're welcome to fork it under the license below.
 
 ## License
 
