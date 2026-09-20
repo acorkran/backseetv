@@ -101,21 +101,12 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
                 WifiJoiner.Creds c = WifiJoiner.parseWifiQr(raw);
                 if (c != null) { WifiJoiner.join(this, c); result.putExtra(RESULT_JOINED_SSID, c.ssid); }
             } else if (raw.regionMatches(true, 0, "ANANCY:", 0, 7)) {
-                String ip = anancyIp(raw);
+                String ip = QrParse.anancyIp(raw);   // pure parse extracted to QrParse (unit-tested)
                 if (ip != null) result.putExtra(RESULT_ANANCY_IP, ip);
             }
         } catch (Exception e) { Log.w(TAG, "qr dispatch: " + e); }
         setResult(RESULT_OK, result);
         runOnUiThread(this::finish);
-    }
-
-    /** ANANCY:ip=192.168.1.2[;k=v...] */
-    private static String anancyIp(String raw) {
-        for (String kv : raw.substring(7).split(";")) {
-            int e = kv.indexOf('=');
-            if (e > 0 && "ip".equalsIgnoreCase(kv.substring(0, e).trim())) return kv.substring(e + 1).trim();
-        }
-        return null;
     }
 
     private void requestCameraPerm() {

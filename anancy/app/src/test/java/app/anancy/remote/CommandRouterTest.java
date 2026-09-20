@@ -35,6 +35,23 @@ public class CommandRouterTest {
         assertFalse(CommandRouter.isPlaybackCmd(null));
     }
 
+    @Test public void playbackPrefixes_matchBareAndArgForms() {
+        // every documented prefix family, in bare and colon-arg form
+        for (String c : new String[]{
+                "jump", "jump:0", "seek", "seek:99999", "playlist", "playlist:Bedtime Mix",
+                "enqueue", "enqueueAll", "dequeue", "savequeue"})
+            assertTrue(c + " should be playback", CommandRouter.isPlaybackCmd(c));
+    }
+
+    @Test public void playbackClassification_isCaseSensitiveAndPrefixExact() {
+        // switch + startsWith are exact/lowercase: near-misses stay per-screen
+        assertFalse(CommandRouter.isPlaybackCmd("PLAY"));        // switch is case-sensitive
+        assertFalse(CommandRouter.isPlaybackCmd("playmode:on")); // "play"-ish but not the "playlist" prefix
+        assertFalse(CommandRouter.isPlaybackCmd("flash"));       // Light
+        assertFalse(CommandRouter.isPlaybackCmd("sleep:15"));    // Sleep timer (bare "sleep" isn't a case either)
+        assertFalse(CommandRouter.isPlaybackCmd(""));            // empty
+    }
+
     @Test public void toggleCommands_areDebounced() {
         assertTrue(CommandRouter.isToggleCmd("power"));
         assertTrue(CommandRouter.isToggleCmd("playpause"));
@@ -86,5 +103,25 @@ public class CommandRouterTest {
     @Test public void deriveLeader_emptyGroupIsNull() {
         assertNull(CommandRouter.deriveLeader(Collections.<String>emptyList(), set(), set()));
         assertNull(CommandRouter.deriveLeader(null, set(), set()));
+    }
+
+    @Test public void deriveLeader_hostWinsEvenWhenUnreachable() {
+        List<String> order = Arrays.asList("a", "b", "c");
+        // 'c' is the media host but NOT reachable; host preference still wins over any reachable screen
+        assertEquals("c", CommandRouter.deriveLeader(order, set("c"), set("a", "b")));
+    }
+
+    @Test public void deriveLeader_singleElementOrder() {
+        List<String> one = Arrays.asList("x");
+        assertEquals("x", CommandRouter.deriveLeader(one, set(), set()));       // lone screen, nothing known
+        assertEquals("x", CommandRouter.deriveLeader(one, set(), set("x")));    // lone screen, reachable
+        assertEquals("x", CommandRouter.deriveLeader(one, set("x"), set()));    // lone screen, is the host
+    }
+
+    @Test public void deriveLeader_nullSetsAreTreatedAsEmpty() {
+        List<String> order = Arrays.asList("a", "b");
+        assertEquals("a", CommandRouter.deriveLeader(order, null, null));               // both null -> first in order
+        assertEquals("b", CommandRouter.deriveLeader(order, null, set("b")));           // null hosts, first reachable
+        assertEquals("a", CommandRouter.deriveLeader(order, set("a"), null));           // host with null reachable
     }
 }

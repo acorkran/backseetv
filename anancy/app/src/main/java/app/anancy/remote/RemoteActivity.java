@@ -624,7 +624,7 @@ public class RemoteActivity extends Activity {
     private static LinearLayout colOf(View overlay) { return (LinearLayout) ((ScrollView) overlay).getChildAt(0); }
     private static void clearRows(LinearLayout col, int keep) { while (col.getChildCount() > keep) col.removeViewAt(keep); }
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
-    private static String pretty(String t) { return t.replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/').trim(); }
+    private static String pretty(String t) { return Fmt.pretty(t); }   // pure impl extracted to Fmt (unit-tested)
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
 
     /** Typed query ({"type":..} payload): Wi-Fi fast path when the TV's IP is reachable (local mode
@@ -1381,7 +1381,7 @@ public class RemoteActivity extends Activity {
         return (java.net.HttpURLConnection) url.openConnection();
     }
 
-    private static String mmss(int ms) { int s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
+    private static String mmss(int ms) { return Fmt.mmss(ms); }   // pure impl extracted to Fmt (unit-tested)
 
     // --- Wi-Fi file import (phone -> tablet) --------------------------------
     private void pickImport() {

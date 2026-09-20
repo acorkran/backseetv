@@ -28,19 +28,14 @@ public final class WifiJoiner {
 
     public static class Creds { public String ssid, type, pass; }
 
-    /** Parse a standard Wi-Fi QR: WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<pass>;; with \-escaping of \ ; , : " */
+    /** Parse a standard Wi-Fi QR: WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<pass>;; with \-escaping of \ ; , : "
+        (pure parsing lives in QrParse; this adapts the holder to Creds for join()). */
     static Creds parseWifiQr(String s) {
-        if (s == null || !s.regionMatches(true, 0, "WIFI:", 0, 5)) return null;
+        QrParse.Wifi w = QrParse.parseWifi(s);
+        if (w == null) return null;
         Creds c = new Creds();
-        for (String field : splitUnescaped(s.substring(5), ';')) {
-            if (field.length() < 2 || field.charAt(1) != ':') continue;
-            char k = Character.toUpperCase(field.charAt(0));
-            String v = unescape(field.substring(2));
-            if (k == 'S') c.ssid = v;
-            else if (k == 'T') c.type = v;
-            else if (k == 'P') c.pass = v;
-        }
-        return (c.ssid != null && !c.ssid.isEmpty()) ? c : null;
+        c.ssid = w.ssid; c.type = w.type; c.pass = w.pass;
+        return c;
     }
 
     /** Join (or best-effort suggest) the network. Returns true if the request was accepted. */
@@ -80,28 +75,5 @@ public final class WifiJoiner {
             }
         } catch (Exception e) { Log.w(TAG, "wifi suggestion (non-DO): " + e); }
         return false;
-    }
-
-    // --- WIFI-QR escaping helpers (backslash escapes \ ; , : ") ---
-    private static List<String> splitUnescaped(String s, char sep) {
-        List<String> out = new ArrayList<>();
-        StringBuilder cur = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char ch = s.charAt(i);
-            if (ch == '\\' && i + 1 < s.length()) { cur.append(ch).append(s.charAt(++i)); }   // keep escape, unescaped later
-            else if (ch == sep) { out.add(cur.toString()); cur.setLength(0); }
-            else cur.append(ch);
-        }
-        if (cur.length() > 0) out.add(cur.toString());
-        return out;
-    }
-    private static String unescape(String s) {
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char ch = s.charAt(i);
-            if (ch == '\\' && i + 1 < s.length()) out.append(s.charAt(++i));
-            else out.append(ch);
-        }
-        return out.toString();
     }
 }

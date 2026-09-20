@@ -37,6 +37,16 @@ public class SyncMathTest {
         assertEquals(0, SyncMath.expectedPos(-500, 0, false, 0, false));
     }
 
+    @Test public void expectedPos_leaderClockZeroDoesNotAdvance() {
+        // leaderClock==0 is treated as "no timestamp yet" -> hold the sampled pos even while playing
+        assertEquals(1000, SyncMath.expectedPos(1000, 0, true, 5300, true));
+    }
+
+    @Test public void expectedPos_advancesRightUpToTheGuard() {
+        // adv just under 60s is still applied (the guard is a strict < 60000)
+        assertEquals(1000 + 59999, SyncMath.expectedPos(1000, 5000, true, 5000 + 59999, true));
+    }
+
     // ---- shouldHardSeek: big drift => seek, small drift => nudge ----
 
     @Test public void shouldHardSeek_boundary() {
@@ -63,6 +73,19 @@ public class SyncMathTest {
     @Test public void driftSpeed_clampedBothWays() {
         assertEquals(0.985f, SyncMath.driftSpeed(1_000_000), 1e-4f);   // wildly ahead -> floor
         assertEquals(1.015f, SyncMath.driftSpeed(-1_000_000), 1e-4f);  // wildly behind -> ceiling
+    }
+
+    @Test public void driftSpeed_justInsideTheClamp() {
+        // +89ms ahead -> 1 - 89/6000 = 0.985167 (still above the 0.985 floor)
+        assertEquals(0.985167f, SyncMath.driftSpeed(89), 1e-4f);
+        // -89ms behind -> 1 + 89/6000 = 1.014833 (still below the 1.015 ceiling)
+        assertEquals(1.014833f, SyncMath.driftSpeed(-89), 1e-4f);
+    }
+
+    @Test public void driftSpeed_exactlyAtTheClamp() {
+        // ±90ms lands exactly on the floor/ceiling (1 - 90/6000 = 0.985)
+        assertEquals(0.985f, SyncMath.driftSpeed(90), 1e-4f);
+        assertEquals(1.015f, SyncMath.driftSpeed(-90), 1e-4f);
     }
 
     // ---- fold: NTP-lite offset estimate from /clock probes ----
@@ -99,5 +122,32 @@ public class SyncMathTest {
         SyncMath.Clock c = SyncMath.fold(start, 0, 9999, 25);
         assertEquals(1000, c.offset);
         assertEquals(10, c.bestRtt);
+    }
+
+    @Test public void fold_equalRttReplacesEstimate() {
+        // rtt == bestRtt satisfies the "<=" cleaner-sample branch -> re-baseline outright
+        SyncMath.Clock start = new SyncMath.Clock(1000, 20, true);
+        // t0=0, t2=20 -> rtt=20 (==bestRtt); off=(tL+10)-20; tL=2010 -> off=2000
+        SyncMath.Clock c = SyncMath.fold(start, 0, 2010, 20);
+        assertEquals(2000, c.offset);
+        assertEquals(20, c.bestRtt);
+        assertTrue(c.valid);
+    }
+
+    @Test public void fold_exactlyTwiceBestRttIsIgnored() {
+        // the nudge branch is a STRICT rtt < bestRtt*2, so rtt == 2*bestRtt falls through -> untouched
+        SyncMath.Clock start = new SyncMath.Clock(1000, 10, true);
+        SyncMath.Clock c = SyncMath.fold(start, 0, 9999, 20);   // rtt=20 == bestRtt*2
+        assertEquals(1000, c.offset);
+        assertEquals(10, c.bestRtt);
+    }
+
+    @Test public void fold_firstSampleCanBeNegativeOffset() {
+        // leader clock behind ours (small tL, large t2) -> a legitimately negative offset
+        SyncMath.Clock c = SyncMath.fold(SyncMath.Clock.initial(), 0, 100, 1000);
+        // rtt=1000, off=(100+500)-1000 = -400
+        assertTrue(c.valid);
+        assertEquals(1000, c.bestRtt);
+        assertEquals(-400, c.offset);
     }
 }
