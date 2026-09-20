@@ -28,10 +28,7 @@ import android.widget.EditText;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Paint;
 import android.graphics.Matrix;
-import android.graphics.Path;
-import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -58,6 +55,7 @@ public class RemoteActivity extends Activity {
     static final int ACCENT = 0xFF2F6FEB, GOOD = 0xFF33C05B, WARN = 0xFFE0A63D, PURPLE = 0xFF9B72E0, ORANGE = 0xFFE0673F;
 
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final RemoteUi ui = new RemoteUi(this);   // stateless view builders (extracted; see RemoteUi)
     private TextView titleDot;   // the "Anancy" wordmark (menu button + popup anchor)
     private View dot;            // the connection light (top-right corner); tap = ephemeral status text
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
@@ -147,9 +145,9 @@ public class RemoteActivity extends Activity {
         // --- tab bar pinned at the BOTTOM: Remote | Playlists | Queue ---
         root.addView(spacer(dp(8)));
         tabBar = new LinearLayout(this); tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBtns[0] = pillChip("Remote", v -> showTab(0));
-        tabBtns[1] = pillChip("Playlists", v -> showTab(1));
-        tabBtns[2] = pillChip("Queue", v -> showTab(2));
+        tabBtns[0] = ui.pillChip("Remote", v -> showTab(0));
+        tabBtns[1] = ui.pillChip("Playlists", v -> showTab(1));
+        tabBtns[2] = ui.pillChip("Queue", v -> showTab(2));
         for (int k = 0; k < 3; k++) {
             LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             tp.setMargins(k == 0 ? 0 : dp(4), 0, k == 2 ? 0 : dp(4), 0);
@@ -203,7 +201,7 @@ public class RemoteActivity extends Activity {
         LinearLayout tr = new LinearLayout(this); tr.setOrientation(LinearLayout.HORIZONTAL); tr.setGravity(Gravity.CENTER);
         tr.addView(iconBtn(IconView.PREV, BTN, TXT, "prev"), lp(dp(54), dp(48), dp(12)));
         playPause = new IconView(this, IconView.PLAYPAUSE, ACCENT, TXT);
-        playPause.setOnClickListener(v -> send("playpause")); pressFx(playPause);
+        playPause.setOnClickListener(v -> send("playpause")); ui.pressFx(playPause);
         tr.addView(playPause, lp(dp(62), dp(56), dp(12)));
         tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(54), dp(48), dp(12)));
         LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(10);
@@ -214,50 +212,21 @@ public class RemoteActivity extends Activity {
 
         // 4x2 function grid: Light Sleep Mute Vol+ / Toddler Power Check-in Vol-  (volume cells 10% wider)
         LinearLayout g1 = new LinearLayout(this); g1.setOrientation(LinearLayout.HORIZONTAL);
-        g1.addView(gridCell(IconView.SUN, WARN, "Light", () -> send("flash"), false), gcLp(1f));
-        g1.addView(gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15"), false), gcLp(1f));
-        g1.addView(gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute"), false), gcLp(1f));
-        g1.addView(gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
+        g1.addView(ui.gridCell(IconView.SUN, WARN, "Light", () -> send("flash"), false), gcLp(1f));
+        g1.addView(ui.gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15"), false), gcLp(1f));
+        g1.addView(ui.gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute"), false), gcLp(1f));
+        g1.addView(ui.gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
         LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); tabRoot.addView(g1, g1p);
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
-        g2.addView(gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }, false), gcLp(1f));
-        g2.addView(gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
-        g2.addView(gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
-        g2.addView(gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
+        g2.addView(ui.gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }, false), gcLp(1f));
+        g2.addView(ui.gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
+        g2.addView(ui.gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
+        g2.addView(ui.gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
         LinearLayout.LayoutParams g2p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g2p.topMargin = dp(6); tabRoot.addView(g2, g2p);
 
         return tabRoot;
     }
     private LinearLayout.LayoutParams gcLp(float weight) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(62), weight); p.setMargins(dp(3), 0, dp(3), 0); return p; }
-    private View gridCell(int icon, final int accent, String label, final Runnable onTap, boolean big) {
-        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
-        GradientDrawable g = new GradientDrawable(); g.setColor(withAlpha(accent, 0x22)); g.setCornerRadius(dp(14)); g.setStroke(dp(1), withAlpha(accent, big ? 0x88 : 0x55));
-        c.setBackground(g); c.setClickable(true);
-        IconView ic = new IconView(this, icon, 0x00000000, accent);
-        ic.setClickable(false);   // decorative — let the cell receive the tap (IconView is clickable by default)
-        int sz = big ? dp(27) : dp(23);
-        c.addView(ic, new LinearLayout.LayoutParams(sz, sz));
-        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(big ? 11 : 10); t.setPadding(0, dp(3), 0, 0);
-        c.addView(t);
-        c.setOnClickListener(v -> onTap.run());
-        pressFx(c);
-        return c;
-    }
-    /** A tactile "depress" on touch: the button scales down under the finger, then springs back. */
-    @android.annotation.SuppressLint("ClickableViewAccessibility")
-    private void pressFx(final View v) {
-        v.setOnTouchListener((view, ev) -> {
-            switch (ev.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN:
-                    view.animate().scaleX(0.91f).scaleY(0.91f).setDuration(55).start(); break;
-                case android.view.MotionEvent.ACTION_UP:
-                case android.view.MotionEvent.ACTION_CANCEL:
-                    view.animate().scaleX(1f).scaleY(1f).setDuration(120).setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start(); break;
-            }
-            return false;   // don't consume — the click still fires
-        });
-    }
-
     private void refreshAll() { refreshScreenToggles(); refreshDeviceCards(); }
 
     // Top chips: All screens / Sync group / Leader-only audio (moved out of the menu).
@@ -266,23 +235,15 @@ public class RemoteActivity extends Activity {
         screenToggles.removeAllViews();
         final RemoteService svc = RemoteService.get(); if (svc == null) return;
         boolean all = allSelected(svc);
-        screenToggles.addView(toggleChip("All screens", all, () -> applySelection(java.util.Collections.<String>emptySet())), chipLp());
+        screenToggles.addView(ui.toggleChip("All screens", all, () -> applySelection(java.util.Collections.<String>emptySet())), chipLp());
         if (svc.tablets().size() >= 2) {
             final boolean sg = svc.isSyncGroup();
-            screenToggles.addView(toggleChip("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshAll(); }), chipLp());
+            screenToggles.addView(ui.toggleChip("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshAll(); }), chipLp());
             if (sg) {
                 final boolean lo = svc.groupLeaderOnly();
-                screenToggles.addView(toggleChip("Leader audio", lo, () -> { svc.setGroupAudio(!lo); refreshAll(); }), chipLp());
+                screenToggles.addView(ui.toggleChip("Leader audio", lo, () -> { svc.setGroupAudio(!lo); refreshAll(); }), chipLp());
             }
         }
-    }
-    private View toggleChip(String label, boolean on, final Runnable onTap) {
-        TextView t = new TextView(this); t.setText(label); t.setTextSize(12); t.setGravity(Gravity.CENTER);
-        t.setTextColor(on ? 0xFFFFFFFF : TXT); t.setPadding(dp(6), dp(9), dp(6), dp(9)); t.setMaxLines(1);
-        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(dp(18)); g.setColor(on ? ACCENT : BTN);
-        t.setBackground(g); t.setClickable(true); t.setOnClickListener(v -> onTap.run()); pressFx(t);
-        return t;
     }
     private LinearLayout.LayoutParams chipLp() { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); p.setMargins(dp(3), 0, dp(3), 0); return p; }
 
@@ -308,7 +269,7 @@ public class RemoteActivity extends Activity {
         deviceCards.removeAllViews();
         RemoteService svc = RemoteService.get();
         java.util.List<java.util.Map.Entry<String, String>> devs = svc != null ? new java.util.ArrayList<>(svc.tablets().entrySet()) : new java.util.ArrayList<>();
-        if (devs.isEmpty()) { deviceCards.addView(noteText("No screens connected yet — tap Anancy → Connection.")); return; }
+        if (devs.isEmpty()) { deviceCards.addView(ui.noteText("No screens connected yet — tap Anancy → Connection.")); return; }
         boolean all = allSelected(svc);
         LinearLayout rowL = null;
         for (int i = 0; i < devs.size(); i++) {
@@ -329,7 +290,7 @@ public class RemoteActivity extends Activity {
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14));
         bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
-        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id)); pressFx(c);
+        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id)); ui.pressFx(c);
         // landscape media panel (16:9-ish) with the checkbox overlaid top-left
         FrameLayout artBox = new FrameLayout(this);
         GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(9)); artBox.setBackground(ab);
@@ -436,9 +397,9 @@ public class RemoteActivity extends Activity {
         // build/import bar (top): Add from library · Import a video from this phone
         LinearLayout build = new LinearLayout(this); build.setOrientation(LinearLayout.HORIZONTAL);
         build.setPadding(0, 0, 0, dp(6));
-        Button addLib = smallBtn("＋  Add from library"); addLib.setTextColor(ACCENT);
+        Button addLib = ui.smallBtn("＋  Add from library"); addLib.setTextColor(ACCENT);
         addLib.setOnClickListener(v -> openLibrary());
-        Button imp = smallBtn("⬆  Import video"); imp.setTextColor(ACCENT);
+        Button imp = ui.smallBtn("⬆  Import video"); imp.setTextColor(ACCENT);
         imp.setOnClickListener(v -> pickImport());
         build.addView(addLib, wlp(1.4f)); build.addView(imp, wlp(1f));
         wrap.addView(build);
@@ -452,7 +413,7 @@ public class RemoteActivity extends Activity {
         hh.setTypeface(hh.getTypeface(), android.graphics.Typeface.BOLD); hh.setPadding(dp(4), 0, 0, dp(6));
         col.addView(hh);
         LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
-        Button sh = smallBtn(""), lo = smallBtn(""), save = smallBtn("Save as playlist…");
+        Button sh = ui.smallBtn(""), lo = ui.smallBtn(""), save = ui.smallBtn("Save as playlist…");
         sh.setOnClickListener(v -> { send("shuffle:toggle"); toast(lastShuffle ? "Shuffle off" : "Shuffle on"); main.postDelayed(() -> loadQueue(col), 800); });
         lo.setOnClickListener(v -> { send("loop:toggle"); toast(lastLoop ? "Will stop at the end (TV off)" : "Looping forever"); main.postDelayed(() -> loadQueue(col), 800); });
         save.setOnClickListener(v -> saveQueueAs());
@@ -538,9 +499,9 @@ public class RemoteActivity extends Activity {
                 final boolean mine = user.contains(name);
                 if (mine && !userHeader) {   // user-made playlists (saved queues) get their own section
                     userHeader = true;
-                    TextView s = noteText("Your playlists  ·  long-press to delete"); s.setTextColor(0xFF8FD694); col.addView(s);
+                    TextView s = ui.noteText("Your playlists  ·  long-press to delete"); s.setTextColor(0xFF8FD694); col.addView(s);
                 }
-                Button row = rowBtn(name, name.equals(currentPl) ? 0xFF8FD694 : TXT);
+                Button row = ui.rowBtn(name, name.equals(currentPl) ? 0xFF8FD694 : TXT);
                 row.setTextSize(16);
                 row.setOnClickListener(v -> { send("play:" + name); showTab(0); });
                 if (mine) row.setOnLongClickListener(v -> {
@@ -561,11 +522,6 @@ public class RemoteActivity extends Activity {
         }
     }
     private LinearLayout.LayoutParams wlp(float w) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(40), w); p.setMargins(dp(2), 0, dp(2), 0); return p; }
-    private Button smallBtn(String text) {
-        Button b = new Button(this); b.setAllCaps(false); b.setText(text); b.setTextSize(12); b.setTextColor(TXT); b.setPadding(dp(4), 0, dp(4), 0);
-        GradientDrawable g = new GradientDrawable(); g.setColor(BTN); g.setCornerRadius(dp(10)); b.setBackground(g);
-        return b;
-    }
     private void renderQueueBar(LinearLayout col) {
         if (col.getChildCount() < 2 || !(col.getChildAt(1) instanceof LinearLayout)) return;
         LinearLayout bar = (LinearLayout) col.getChildAt(1);
@@ -608,7 +564,7 @@ public class RemoteActivity extends Activity {
             for (int i = 0; i < items.length(); i++) {
                 final int abs = from + i;
                 final String name = pretty(items.optString(i));
-                Button row = rowBtn((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name, abs == index ? 0xFF8FD694 : TXT);
+                Button row = ui.rowBtn((abs == index ? "▶  " : "") + (abs + 1) + ".  " + name, abs == index ? 0xFF8FD694 : TXT);
                 row.setOnClickListener(v -> { send("jump:" + abs); showTab(0); });
                 final boolean current = abs == index;
                 row.setOnLongClickListener(v -> {
@@ -620,11 +576,11 @@ public class RemoteActivity extends Activity {
                 });
                 col.addView(row);
             }
-            col.addView(noteText("Tap to jump  ·  long-press to remove"));
+            col.addView(ui.noteText("Tap to jump  ·  long-press to remove"));
         } catch (Exception ignored) {}
     }
     private void saveQueueAs() {
-        final EditText e = field("Playlist name", false);
+        final EditText e = ui.field("Playlist name", false);
         LinearLayout box = new LinearLayout(this); box.setPadding(dp(20), dp(8), dp(20), 0);
         box.addView(e, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         new AlertDialog.Builder(this).setTitle("Save the queue as a playlist").setView(box)
@@ -667,21 +623,6 @@ public class RemoteActivity extends Activity {
     }
     private static LinearLayout colOf(View overlay) { return (LinearLayout) ((ScrollView) overlay).getChildAt(0); }
     private static void clearRows(LinearLayout col, int keep) { while (col.getChildCount() > keep) col.removeViewAt(keep); }
-    private Button rowBtn(String text, int color) {
-        Button row = new Button(this);
-        row.setAllCaps(false); row.setText(text); row.setTextColor(color); row.setTextSize(14); row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMaxLines(2);
-        GradientDrawable g = new GradientDrawable(); g.setColor(CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
-        return row;
-    }
-    private TextView noteText(String s) { TextView t = new TextView(this); t.setText(s); t.setTextColor(SUB); t.setTextSize(12); t.setPadding(dp(6), dp(6), dp(6), dp(6)); return t; }
-    private EditText field(String hint, boolean password) {
-        EditText e = new EditText(this); e.setHint(hint); e.setTextColor(TXT); e.setHintTextColor(SUB); e.setSingleLine(true);
-        e.setInputType(InputType.TYPE_CLASS_TEXT | (password ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
-        return e;
-    }
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
     private static String pretty(String t) { return t.replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/').trim(); }
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
@@ -724,19 +665,6 @@ public class RemoteActivity extends Activity {
     // =====================================================================================
     private final java.util.List<String[]> libShows = new java.util.ArrayList<>();   // [name, count]
     private int libTotal = 0;
-    /** A clearly-tappable pill button for the playlist / library / queue chips. */
-    private TextView pillChip(String label, View.OnClickListener onClick) {
-        TextView t = new TextView(this);
-        t.setText(label); t.setTextColor(TXT); t.setTextSize(14); t.setAllCaps(false);
-        t.setGravity(Gravity.CENTER); t.setMaxLines(1); t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        t.setPadding(dp(10), dp(12), dp(10), dp(12));
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(BTN); g.setCornerRadius(dp(22));
-        t.setBackground(g);
-        t.setClickable(true); t.setOnClickListener(onClick);
-        return t;
-    }
-
     private void openLibrary() {
         if (libView != null) return;
         libShows.clear(); libTotal = 0;
@@ -746,7 +674,7 @@ public class RemoteActivity extends Activity {
     private void loadShows(final LinearLayout col, final int from) {
         fetchTyped("/library", from > 0 ? "shows:" + from : "shows", "library", o -> {
             if (libView == null) return;
-            if (o == null) { clearRows(col, 1); col.addView(noteText("Couldn't reach the TV's library. Is the Bluetooth link up? A Wi-Fi level is faster — tap the connection label up top.")); return; }
+            if (o == null) { clearRows(col, 1); col.addView(ui.noteText("Couldn't reach the TV's library. Is the Bluetooth link up? A Wi-Fi level is faster — tap the connection label up top.")); return; }
             org.json.JSONArray a = o.optJSONArray("shows");
             libTotal = o.optInt("total", (a != null ? a.length() : 0) + from);
             if (a != null) for (int i = 0; i < a.length(); i++) {
@@ -760,18 +688,18 @@ public class RemoteActivity extends Activity {
         clearRows(col, 1);
         for (final String[] s : libShows) {
             LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
-            Button open = rowBtn(s[0] + "   ·   " + s[1] + (s[1].equals("1") ? " episode" : " episodes"), TXT);
+            Button open = ui.rowBtn(s[0] + "   ·   " + s[1] + (s[1].equals("1") ? " episode" : " episodes"), TXT);
             open.setOnClickListener(v -> openEpisodes(s[0]));
             row.addView(open, new LinearLayout.LayoutParams(0, dp(52), 1f));
-            Button add = smallBtn("Add all"); add.setTextColor(ACCENT);
+            Button add = ui.smallBtn("Add all"); add.setTextColor(ACCENT);
             add.setOnClickListener(v -> { send("enqshow:" + s[0]); toast("Added " + s[0] + " to the queue"); });
             LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); alp.setMargins(dp(6), 0, 0, 0);
             row.addView(add, alp);
             col.addView(row);
         }
-        if (libShows.size() < libTotal) { Button more = rowBtn("Load more…  (" + libShows.size() + " of " + libTotal + ")", ACCENT); more.setOnClickListener(v -> loadShows(col, libShows.size())); col.addView(more); }
-        if (libShows.isEmpty()) col.addView(noteText("No shows found on the TV."));
-        else col.addView(noteText("Tap a show for its episodes  ·  Add all queues the whole show"));
+        if (libShows.size() < libTotal) { Button more = ui.rowBtn("Load more…  (" + libShows.size() + " of " + libTotal + ")", ACCENT); more.setOnClickListener(v -> loadShows(col, libShows.size())); col.addView(more); }
+        if (libShows.isEmpty()) col.addView(ui.noteText("No shows found on the TV."));
+        else col.addView(ui.noteText("Tap a show for its episodes  ·  Add all queues the whole show"));
     }
     private final java.util.List<String[]> epItems = new java.util.ArrayList<>();   // [id, title]
     private int epTotal = 0; private String epShow;
@@ -786,7 +714,7 @@ public class RemoteActivity extends Activity {
     private void loadEpisodes(final LinearLayout col, final int from) {
         fetchTyped("/library?show=" + enc(epShow), "eps:" + epShow + ":" + from, "episodes", o -> {
             if (epView == null) return;
-            if (o == null) { clearRows(col, 1); col.addView(noteText("Couldn't load the episodes. Is the Bluetooth link up?")); return; }
+            if (o == null) { clearRows(col, 1); col.addView(ui.noteText("Couldn't load the episodes. Is the Bluetooth link up?")); return; }
             org.json.JSONArray a = o.optJSONArray("items");
             int f = o.optInt("from", 0);
             epTotal = o.optInt("total", f + (a != null ? a.length() : 0));
@@ -800,7 +728,7 @@ public class RemoteActivity extends Activity {
     private void renderEpisodes(final LinearLayout col) {
         clearRows(col, 1);
         for (final String[] e : epItems) {
-            Button row = rowBtn(pretty(e[1]), TXT);
+            Button row = ui.rowBtn(pretty(e[1]), TXT);
             row.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(pretty(e[1]))
                     .setItems(new String[]{"Play now", "Play next", "Add to queue"}, (d, w) -> {
                         send((w == 0 ? "enqnow:" : w == 1 ? "enqnext:" : "enq:") + e[0]);
@@ -808,9 +736,9 @@ public class RemoteActivity extends Activity {
                     }).show());
             col.addView(row);
         }
-        if (epItems.size() < epTotal) { Button more = rowBtn("Load more…  (" + epItems.size() + " of " + epTotal + ")", ACCENT); more.setOnClickListener(v -> loadEpisodes(col, epItems.size())); col.addView(more); }
-        if (epItems.isEmpty()) col.addView(noteText("No episodes."));
-        else col.addView(noteText("Tap an episode: Play now · Play next · Add to queue"));
+        if (epItems.size() < epTotal) { Button more = ui.rowBtn("Load more…  (" + epItems.size() + " of " + epTotal + ")", ACCENT); more.setOnClickListener(v -> loadEpisodes(col, epItems.size())); col.addView(more); }
+        if (epItems.isEmpty()) col.addView(ui.noteText("No episodes."));
+        else col.addView(ui.noteText("Tap an episode: Play now · Play next · Add to queue"));
     }
     private void closeEpisodes() { if (epView != null) { frame.removeView(epView); epView = null; } }
     private void closeLibrary() { closeEpisodes(); if (libView != null) { frame.removeView(libView); libView = null; } }
@@ -866,10 +794,6 @@ public class RemoteActivity extends Activity {
         c.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); onTap.run(); });
         return c;
     }
-    private void hSep(LinearLayout col) {
-        View d = new View(this); d.setBackgroundColor(0x22FFFFFF);
-        col.addView(d, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
-    }
     private void buildTargetRows(final LinearLayout col, final RemoteService svc) {
         col.removeAllViews();
         // Row 1: Settings | Connection (two columns).
@@ -878,7 +802,7 @@ public class RemoteActivity extends Activity {
         View vs = new View(this); vs.setBackgroundColor(0x22FFFFFF); row1.addView(vs, new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
         row1.addView(menuCell("Connection…", ACCENT, this::openConnection), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         col.addView(row1);
-        hSep(col);
+        ui.hSep(col);
 
         // Which screens.
         TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
@@ -889,10 +813,10 @@ public class RemoteActivity extends Activity {
             return;
         }
         final java.util.Set<String> sel = svc.targets(); final boolean all = sel.isEmpty();
-        col.addView(checkRow("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); }));
+        col.addView(ui.checkRow("All screens", all, () -> { svc.setTargets(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); }));
         for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
             final boolean on = all || sel.contains(e.getKey()) || e.getKey().equals(svc.syncLeaderId());   // the armed leader is always in its group
-            col.addView(checkRow(e.getValue(), on, () -> {
+            col.addView(ui.checkRow(e.getValue(), on, () -> {
                 java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
                 if (on) ns.remove(e.getKey()); else ns.add(e.getKey());
                 if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());   // never zero screens -> treat as All
@@ -901,14 +825,14 @@ public class RemoteActivity extends Activity {
         }
         // Play in lock-step (needs 2+ screens). One plays, the rest mirror it; audio each-screen or leader-only.
         if (svc.tablets().size() >= 2) {
-            hSep(col);
+            ui.hSep(col);
             TextView sh = new TextView(this); sh.setText("Play in lock-step"); sh.setTextColor(SUB); sh.setTextSize(11);
             sh.setPadding(dp(16), dp(8), dp(16), dp(2)); col.addView(sh);
             final boolean sg = svc.isSyncGroup();
-            col.addView(checkRow("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshTargets(col, svc); }));
+            col.addView(ui.checkRow("Sync group", sg, () -> { svc.setSyncGroup(!sg); refreshTargets(col, svc); }));
             if (sg) {
                 final boolean lo = svc.groupLeaderOnly();
-                View r = checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); });
+                View r = ui.checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); });
                 r.setPadding(dp(30), dp(9), dp(16), dp(9)); col.addView(r);   // indented sub-option
             }
         }
@@ -916,19 +840,6 @@ public class RemoteActivity extends Activity {
     private void refreshTargets(LinearLayout col, RemoteService svc) {
         buildTargetRows(col, svc);
     }
-    /** One styled checkbox row (drawn ☑/☐ box + label). */
-    private View checkRow(String label, boolean checked, final Runnable onTap) {
-        LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(dp(14), dp(11), dp(16), dp(11)); r.setClickable(true);
-        TextView box = new TextView(this); box.setText(checked ? "☑" : "☐");
-        box.setTextColor(checked ? GOOD : SUB); box.setTextSize(20); box.setPadding(0, 0, dp(12), 0);
-        r.addView(box);
-        TextView t = new TextView(this); t.setText(label); t.setTextColor(TXT); t.setTextSize(15);
-        r.addView(t);
-        r.setOnClickListener(v -> onTap.run());
-        return r;
-    }
-
     static final String[][] CONN_MODES = {
             {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
             {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds live camera + fast library browsing."},
@@ -940,10 +851,10 @@ public class RemoteActivity extends Activity {
         connView = overlay("Connection");
         LinearLayout col = colOf(connView);
         clearRows(col, 1);
-        connStatus = noteText(""); connStatus.setTextColor(TXT); connStatus.setTextSize(13); col.addView(connStatus);
+        connStatus = ui.noteText(""); connStatus.setTextColor(TXT); connStatus.setTextSize(13); col.addView(connStatus);
         connModes = new LinearLayout(this); connModes.setOrientation(LinearLayout.VERTICAL); col.addView(connModes);
         connActions = new LinearLayout(this); connActions.setOrientation(LinearLayout.VERTICAL); col.addView(connActions);
-        Button back = rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
+        Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
         RemoteService svc = RemoteService.get();
         if (svc != null) lastConn = svc.connMode();
         renderConnStatus(); renderConnModes(); renderConnActions();
@@ -983,10 +894,10 @@ public class RemoteActivity extends Activity {
         renderTablets();
         for (final String[] m : CONN_MODES) {
             boolean on = m[0].equals(lastConn);
-            Button b = rowBtn((on ? "●  " : "○  ") + m[1], on ? 0xFF8FD694 : TXT);
+            Button b = ui.rowBtn((on ? "●  " : "○  ") + m[1], on ? 0xFF8FD694 : TXT);
             b.setOnClickListener(v -> setConnMode(m[0]));
             connModes.addView(b);
-            connModes.addView(noteText(m[2]));
+            connModes.addView(ui.noteText(m[2]));
         }
     }
     private void setConnMode(String mode) {
@@ -1001,16 +912,16 @@ public class RemoteActivity extends Activity {
     private void renderConnActions() {
         if (connActions == null) return;
         connActions.removeAllViews();
-        TextView hdr = noteText("— " + lastConn.replace('_', ' ') + " —"); hdr.setGravity(Gravity.CENTER); connActions.addView(hdr);
+        TextView hdr = ui.noteText("— " + lastConn.replace('_', ' ') + " —"); hdr.setGravity(Gravity.CENTER); connActions.addView(hdr);
         switch (lastConn) {
             case "tv_hotspot":
                 if (local) {
-                    connActions.addView(noteText("The TV hosts the hotspot at this level (it turns on automatically). Remotes get the details over Bluetooth, or scan this QR."));
-                    Button qr = rowBtn("Show hotspot QR for a remote to scan", ACCENT);
+                    connActions.addView(ui.noteText("The TV hosts the hotspot at this level (it turns on automatically). Remotes get the details over Bluetooth, or scan this QR."));
+                    Button qr = ui.rowBtn("Show hotspot QR for a remote to scan", ACCENT);
                     qr.setOnClickListener(v -> showWifiQr(HotspotService.currentSsid(), HotspotService.currentPass(), "Scan with the phone remote to join the TV"));
                     connActions.addView(qr);
                 } else {
-                    Button join = rowBtn(hsSsid != null ? "Join TV hotspot  ·  " + hsSsid : "Join TV hotspot  (waiting for the TV to publish it)", ACCENT);
+                    Button join = ui.rowBtn(hsSsid != null ? "Join TV hotspot  ·  " + hsSsid : "Join TV hotspot  (waiting for the TV to publish it)", ACCENT);
                     join.setOnClickListener(v -> {
                         if (hsSsid == null) { toast("The TV hasn't published a hotspot yet — is it on this level?"); return; }
                         WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
@@ -1018,54 +929,54 @@ public class RemoteActivity extends Activity {
                         main.postDelayed(this::probeTv, 6000);
                     });
                     connActions.addView(join);
-                    Button scan = rowBtn("Scan the TV's QR instead", TXT);
+                    Button scan = ui.rowBtn("Scan the TV's QR instead", TXT);
                     scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
                     connActions.addView(scan);
                 }
                 break;
             case "remote_hotspot":
                 if (local) {
-                    connActions.addView(noteText("A remote hosts the hotspot and sends the details over Bluetooth; the TV joins by itself. Or scan the remote's QR here."));
-                    Button scan = rowBtn("Scan the remote's hotspot QR", ACCENT);
+                    connActions.addView(ui.noteText("A remote hosts the hotspot and sends the details over Bluetooth; the TV joins by itself. Or scan the remote's QR here."));
+                    Button scan = ui.rowBtn("Scan the remote's hotspot QR", ACCENT);
                     scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
                     connActions.addView(scan);
                 } else {
                     boolean up = HotspotService.running() && HotspotService.currentSsid() != null;
-                    Button host = rowBtn(up ? "Hotspot on  ·  " + HotspotService.currentSsid() : "Host hotspot for the TV", ACCENT);
+                    Button host = ui.rowBtn(up ? "Hotspot on  ·  " + HotspotService.currentSsid() : "Host hotspot for the TV", ACCENT);
                     host.setOnClickListener(v -> { if (up) toast("Hotspot is running"); else startOwnHotspot(); });
                     connActions.addView(host);
                     if (up) {
-                        Button push = rowBtn("Send Wi-Fi details to the TV (Bluetooth)", TXT);
+                        Button push = ui.rowBtn("Send Wi-Fi details to the TV (Bluetooth)", TXT);
                         push.setOnClickListener(v -> { RemoteService s = RemoteService.get(); if (s != null) s.pushOwnHotspot(); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000); });
                         connActions.addView(push);
-                        Button qr = rowBtn("Show QR for the TV to scan", TXT);
+                        Button qr = ui.rowBtn("Show QR for the TV to scan", TXT);
                         qr.setOnClickListener(v -> showWifiQr(HotspotService.currentSsid(), HotspotService.currentPass(), "On the TV: Settings → Connection → Scan"));
                         connActions.addView(qr);
-                        Button stop = rowBtn("Stop hotspot", TXT);
+                        Button stop = ui.rowBtn("Stop hotspot", TXT);
                         stop.setOnClickListener(v -> { HotspotService.stop(this); main.postDelayed(() -> { renderConnActions(); renderConnStatus(); }, 800); });
                         connActions.addView(stop);
-                    } else connActions.addView(noteText("Once it's up, the details go to the TV over Bluetooth automatically."));
+                    } else connActions.addView(ui.noteText("Once it's up, the details go to the TV over Bluetooth automatically."));
                 }
                 break;
             case "shared":
                 if (local) {
-                    connActions.addView(noteText("Join the TV to your home Wi-Fi: scan a Wi-Fi QR (the phone remote can show one), or let the remote send the details over Bluetooth."));
-                    Button scan = rowBtn("Scan a Wi-Fi QR", ACCENT);
+                    connActions.addView(ui.noteText("Join the TV to your home Wi-Fi: scan a Wi-Fi QR (the phone remote can show one), or let the remote send the details over Bluetooth."));
+                    Button scan = ui.rowBtn("Scan a Wi-Fi QR", ACCENT);
                     scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
                     connActions.addView(scan);
                 } else {
-                    connActions.addView(noteText("Put the TV on the same Wi-Fi as this phone. Enter the network below."));
-                    final EditText ssid = field("Wi-Fi name (SSID)", false), pass = field("Password", true);
+                    connActions.addView(ui.noteText("Put the TV on the same Wi-Fi as this phone. Enter the network below."));
+                    final EditText ssid = ui.field("Wi-Fi name (SSID)", false), pass = ui.field("Password", true);
                     connActions.addView(ssid); connActions.addView(pass);
-                    Button sendBtn = rowBtn("Send to TV over Bluetooth", ACCENT);
+                    Button sendBtn = ui.rowBtn("Send to TV over Bluetooth", ACCENT);
                     sendBtn.setOnClickListener(v -> {
                         String s = ssid.getText().toString().trim(), p = pass.getText().toString();
                         if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; }
                         send("wifi:" + s + "\t" + p); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000);
                     });
                     connActions.addView(sendBtn);
-                    connActions.addView(noteText("Note: this sends the password over Bluetooth unencrypted. Prefer the QR if strangers are in range."));
-                    Button qr = rowBtn("Show as QR for the TV to scan instead", TXT);
+                    connActions.addView(ui.noteText("Note: this sends the password over Bluetooth unencrypted. Prefer the QR if strangers are in range."));
+                    Button qr = ui.rowBtn("Show as QR for the TV to scan instead", TXT);
                     qr.setOnClickListener(v -> { String s = ssid.getText().toString().trim(); if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; } showWifiQr(s, pass.getText().toString(), "On the TV: Settings → Connection → Scan"); });
                     connActions.addView(qr);
                 }
@@ -1076,11 +987,11 @@ public class RemoteActivity extends Activity {
                 boolean btOn = ad != null && ad.isEnabled();
                 RemoteService svc = RemoteService.get();
                 boolean linked = svc != null && svc.bleConnected();
-                connActions.addView(noteText("Bluetooth: " + (btOn ? "on" : "OFF") + "     ·     tablet link: " + (linked ? "connected" : "not connected")));
-                Button bt = rowBtn(btOn ? "Open Bluetooth settings" : "Turn Bluetooth on (system settings)", btOn ? TXT : ACCENT);
+                connActions.addView(ui.noteText("Bluetooth: " + (btOn ? "on" : "OFF") + "     ·     tablet link: " + (linked ? "connected" : "not connected")));
+                Button bt = ui.rowBtn(btOn ? "Open Bluetooth settings" : "Turn Bluetooth on (system settings)", btOn ? TXT : ACCENT);
                 bt.setOnClickListener(v -> { try { startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)); } catch (Exception e) { toast("Couldn't open Bluetooth settings"); } });
                 connActions.addView(bt);
-                connActions.addView(noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera + fast library browsing need a Wi-Fi level."));
+                connActions.addView(ui.noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera + fast library browsing need a Wi-Fi level."));
             }
         }
     }
@@ -1128,8 +1039,8 @@ public class RemoteActivity extends Activity {
         if (attempt < 15) main.postDelayed(() -> loadConfig(attempt + 1), 400);
         else {
             LinearLayout col = colOf(settingsView); clearRows(col, 1);
-            col.addView(noteText("Couldn't read the TV's settings — is it connected?"));
-            Button b = rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
+            col.addView(ui.noteText("Couldn't read the TV's settings — is it connected?"));
+            Button b = ui.rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
         }
     }
     private void applyConfigJson(String json) {
@@ -1149,7 +1060,7 @@ public class RemoteActivity extends Activity {
     private void renderSettings() {
         if (settingsView == null) return;
         LinearLayout col = colOf(settingsView); clearRows(col, 1);
-        col.addView(noteText(cfgOwner ? "The TV's settings — change any of them from here."
+        col.addView(ui.noteText(cfgOwner ? "The TV's settings — change any of them from here."
                 : "The TV's settings. Locked rows need device-owner setup (tap a 🔒 notice to learn more)."));
 
         sSec(col, "Playback");
@@ -1212,13 +1123,13 @@ public class RemoteActivity extends Activity {
             sGated(col);
         }
 
-        Button about = rowBtn("About Anancy & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
-        Button back = rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
+        Button about = ui.rowBtn("About Anancy & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
+        Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
     }
     private void closeSettings() { if (settingsView != null) { frame.removeView(settingsView); settingsView = null; } }
 
     private void changeTvPin() {
-        final EditText a = field("New PIN (4+ digits)", true), b2 = field("Repeat new PIN", true);
+        final EditText a = ui.field("New PIN (4+ digits)", true), b2 = ui.field("Repeat new PIN", true);
         a.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         b2.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(20), dp(10), dp(20), 0);
@@ -1561,7 +1472,7 @@ public class RemoteActivity extends Activity {
     private IconView iconBtn(int mode, int bg, int icon, final String cmd) {
         IconView v = new IconView(this, mode, bg, icon);
         v.setOnClickListener(x -> send(cmd));
-        pressFx(v);
+        ui.pressFx(v);
         return v;
     }
     private LinearLayout actionCard(int mode, int accent, String label, final String cmd) {
@@ -1597,87 +1508,4 @@ public class RemoteActivity extends Activity {
     static int withAlpha(int color, int alpha) { return (color & 0x00FFFFFF) | (alpha << 24); }
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
-    // --- Canvas-drawn icons (no font glyphs -> no tofu), ported from v1 -------
-    class IconView extends View {
-        static final int POWER = 1, PREV = 2, PLAYPAUSE = 3, NEXT = 4, VOLUP = 6, VOLDOWN = 7, SHUFFLE = 8, SLEEP = 9, SUN = 10, WATCH = 11, BEAR = 12, MUTE = 13;
-        final int mode; int bgCol, iconCol; boolean playing = false;
-        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final GradientDrawable bgd = new GradientDrawable();
-        IconView(Context c, int mode, int bgCol, int iconCol) {
-            super(c); this.mode = mode; this.bgCol = bgCol; this.iconCol = iconCol; setClickable(true);
-            bgd.setCornerRadius(dp(mode == PLAYPAUSE ? 42 : 16)); bgd.setColor(bgCol); setBackground(bgd);
-        }
-        void setPlaying(boolean pl) { if (pl != playing) { playing = pl; invalidate(); } }
-        @Override protected void onDraw(Canvas cv) {
-            float cx = getWidth() / 2f, cy = getHeight() / 2f, s = Math.min(getWidth(), getHeight()) * 0.30f;
-            p.setColor(iconCol); p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
-            RectF r;
-            switch (mode) {
-                case POWER:
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(3f, s * 0.22f));
-                    r = new RectF(cx - s, cy - s, cx + s, cy + s);
-                    cv.drawArc(r, -63f, 306f, false, p);
-                    cv.drawLine(cx, cy - s * 1.15f, cx, cy - s * 0.10f, p); break;
-                case PLAYPAUSE:
-                    p.setStyle(Paint.Style.FILL);
-                    if (playing) { float bw = s * 0.40f, gap = s * 0.34f;
-                        cv.drawRoundRect(new RectF(cx - gap - bw, cy - s, cx - gap, cy + s), dp(2), dp(2), p);
-                        cv.drawRoundRect(new RectF(cx + gap, cy - s, cx + gap + bw, cy + s), dp(2), dp(2), p);
-                    } else { Path tp = new Path(); tp.moveTo(cx - s * 0.60f, cy - s); tp.lineTo(cx + s * 0.95f, cy); tp.lineTo(cx - s * 0.60f, cy + s); tp.close(); cv.drawPath(tp, p); }
-                    break;
-                case PREV: case NEXT: {
-                    p.setStyle(Paint.Style.FILL); int dir = (mode == NEXT) ? 1 : -1; float bw = Math.max(2f, s * 0.16f); float bx = cx + dir * s * 0.9f;
-                    cv.drawRoundRect(new RectF(bx - bw, cy - s, bx + bw, cy + s), bw, bw, p);
-                    Path tp = new Path(); tp.moveTo(cx + dir * s * 0.85f, cy); tp.lineTo(cx - dir * s * 0.55f, cy - s); tp.lineTo(cx - dir * s * 0.55f, cy + s); tp.close(); cv.drawPath(tp, p); break; }
-                case VOLUP: case VOLDOWN:
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(3f, s * 0.24f));
-                    cv.drawLine(cx - s, cy, cx + s, cy, p);
-                    if (mode == VOLUP) cv.drawLine(cx, cy - s, cx, cy + s, p); break;
-                case MUTE: {   // a speaker with a mute slash
-                    p.setStyle(Paint.Style.FILL);
-                    Path sp = new Path();
-                    sp.moveTo(cx - s * 0.95f, cy - s * 0.34f); sp.lineTo(cx - s * 0.45f, cy - s * 0.34f);
-                    sp.lineTo(cx + s * 0.12f, cy - s * 0.85f); sp.lineTo(cx + s * 0.12f, cy + s * 0.85f);
-                    sp.lineTo(cx - s * 0.45f, cy + s * 0.34f); sp.lineTo(cx - s * 0.95f, cy + s * 0.34f); sp.close();
-                    cv.drawPath(sp, p);
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2.5f, s * 0.2f));
-                    cv.drawLine(cx + s * 0.42f, cy - s * 0.55f, cx + s * 1.05f, cy + s * 0.6f, p); break; }
-                case SLEEP: {
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2.5f, s * 0.17f));
-                    float bl = cx - s, bt = cy - s * 0.10f, br = cx + s * 0.30f, bb = cy + s * 0.95f;
-                    cv.drawLine(bl, bt, br, bt, p); cv.drawLine(br, bt, bl, bb, p); cv.drawLine(bl, bb, br, bb, p);
-                    float sl = cx + s * 0.22f, st = cy - s * 0.98f, sr = cx + s, sb = cy - s * 0.25f;
-                    cv.drawLine(sl, st, sr, st, p); cv.drawLine(sr, st, sl, sb, p); cv.drawLine(sl, sb, sr, sb, p); break; }
-                case SUN: {
-                    p.setStyle(Paint.Style.FILL); cv.drawCircle(cx, cy, s * 0.55f, p);
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.16f));
-                    for (int k = 0; k < 8; k++) { double a = Math.PI * k / 4; float r0 = s * 0.85f, r1 = s * 1.15f;
-                        cv.drawLine(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, p); }
-                    break; }
-                case SHUFFLE:
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.16f)); float t = s;
-                    cv.drawLine(cx - t, cy - t * 0.55f, cx + t, cy + t * 0.55f, p);
-                    cv.drawLine(cx - t, cy + t * 0.55f, cx + t, cy - t * 0.55f, p); break;
-                case WATCH: {   // a person watching a screen — camera "check-in"
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.15f));
-                    cv.drawRoundRect(new RectF(cx - s * 1.15f, cy - s * 1.3f, cx + s * 1.15f, cy - s * 0.15f), dp(3), dp(3), p);   // screen
-                    p.setStyle(Paint.Style.FILL);
-                    cv.drawCircle(cx, cy + s * 0.62f, s * 0.36f, p);                                                              // viewer's head (from behind)
-                    cv.drawArc(new RectF(cx - s * 0.82f, cy + s * 0.85f, cx + s * 0.82f, cy + s * 1.55f), 180f, 180f, true, p);    // shoulders
-                    break; }
-                case BEAR: {    // teddy — toddler play / lock
-                    p.setStyle(Paint.Style.FILL);
-                    cv.drawCircle(cx - s * 0.72f, cy - s * 0.72f, s * 0.4f, p);                                                   // ears
-                    cv.drawCircle(cx + s * 0.72f, cy - s * 0.72f, s * 0.4f, p);
-                    p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.14f));
-                    cv.drawCircle(cx, cy, s * 0.98f, p);                                                                          // head
-                    cv.drawCircle(cx, cy + s * 0.42f, s * 0.34f, p);                                                              // snout
-                    p.setStyle(Paint.Style.FILL);
-                    cv.drawCircle(cx - s * 0.38f, cy - s * 0.12f, s * 0.13f, p);                                                  // eyes
-                    cv.drawCircle(cx + s * 0.38f, cy - s * 0.12f, s * 0.13f, p);
-                    cv.drawCircle(cx, cy + s * 0.28f, s * 0.14f, p);                                                              // nose
-                    break; }
-            }
-        }
-    }
 }
