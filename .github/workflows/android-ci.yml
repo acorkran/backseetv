@@ -28,6 +28,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''   # skip the action's default install of the obsolete 'tools' package (it 404s); we install exactly what we need next
 
       - name: Install SDK packages
         run: |
