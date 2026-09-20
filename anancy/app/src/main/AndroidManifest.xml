@@ -44,7 +44,8 @@
         android:allowBackup="false"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
-        android:hardwareAccelerated="true">
+        android:hardwareAccelerated="true"
+        android:windowOptOutEdgeToEdgeEnforcement="true">
 
         <!-- Android Auto: MEDIA app (the only surface a car actually shows). See AnancyMediaService. -->
         <meta-data android:name="com.google.android.gms.car.application"

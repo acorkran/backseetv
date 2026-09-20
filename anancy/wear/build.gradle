@@ -25,14 +25,14 @@ tasks.register('writeWearBuildId') {
 
 android {
     namespace 'app.anancy.wear'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         // SAME application id as the phone app: the Wear Data Layer only routes between phone and
         // watch apps that share an id + signing key — that link carries the watch's self-update.
         applicationId 'app.anancy'
         minSdk 30            // Wear OS 3+
-        targetSdk 34
+        targetSdk 35
         versionCode gitCount
         versionName "0.1-$gitShort"
         buildConfigField 'String', 'BUILD_ID', "\"$wearBuildId\""

@@ -108,13 +108,16 @@ Runs daily on a Samsung and a Lenovo tablet plus a Galaxy phone; a Wear OS watch
 Android Auto head unit are supported. Android-TV-as-a-follower is exploratory.
 
 The kiosk ships via GitHub / EMM (device-owner can't come from the Play Store), targets
-API 34, and runs fine on Android 14/15/16. A few forward-looking items are deferred and
-tracked for an online build + on-device pass:
+**API 35** (Android 15), and runs on Android 14/15/16. Modern-platform items handled:
 
-- **targetSdk 35** for a future Play Store consumer flavor (needs the android-35 platform).
-- **16 KB page-size**: bump CameraX to 1.4.1+ and ML Kit barcode to 17.3.0+ so their
-  bundled native libs load on 16 KB-page Android 15+ devices (current test devices are 4 KB).
-- **HotspotService → foreground service** and **edge-to-edge insets** (only bite at target 35).
+- **targetSdk / compileSdk 35** (app + watch) — ready for a Play Store submission.
+- **16 KB page-size**: CameraX 1.4.1 and ML Kit barcode 17.3.0 ship 16 KB-aligned native
+  libs, so the QR scanner / camera load on 16 KB-page Android 15+ devices.
+- **Edge-to-edge**: opted out via `windowOptOutEdgeToEdgeEnforcement` for now (a supported
+  API-35 stopgap); a full `WindowInsets` pass is the proper follow-up.
+
+Still on the list: promoting `HotspotService` to a typed foreground service (works today
+via the device-owner exemption), and on-device verification on a physical Android 15 unit.
 
 ## Contributing
 
