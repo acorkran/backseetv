@@ -81,7 +81,7 @@ public class PlayerController {
     private volatile boolean clkValid = false;
     private volatile long clkBestRtt = Long.MAX_VALUE;
     private static final long START_LEAD = 400;    // ms the follower seeks ahead then waits, so its first frame lands in step
-    private static final long HARD_SEEK_MS = 250;  // drift beyond this = seek; under it = a gentle speed nudge
+    // (clock-offset filtering + drift math live in SyncMath — pure + unit-tested; HARD_SEEK_MS is there)
 
     public void setNapped(boolean n) { napped = n; }
 
@@ -310,10 +310,8 @@ public class PlayerController {
             long tL = new JSONObject(httpGet("http://" + host + ":8090/clock")).optLong("t", -1);
             long t2 = clockNow();
             if (tL < 0) return;
-            long rtt = t2 - t0;
-            long off = (tL + rtt / 2) - t2;             // leaderClock(@t2) ≈ tL + rtt/2  ⇒  leader = local + off
-            if (!clkValid || rtt <= clkBestRtt) { clkBestRtt = rtt; clkOffset = off; clkValid = true; }
-            else if (rtt < clkBestRtt * 2) { clkOffset += (off - clkOffset) / 4; clkBestRtt += clkBestRtt / 32; }  // track slow drift; let a real higher-RTT re-baseline over time
+            SyncMath.Clock c = SyncMath.fold(new SyncMath.Clock(clkOffset, clkBestRtt, clkValid), t0, tL, t2);
+            clkOffset = c.offset; clkBestRtt = c.bestRtt; clkValid = c.valid;
         } catch (Exception ignored) {}
     }
 
@@ -348,12 +346,7 @@ public class PlayerController {
     }
     /** The leader's position RIGHT NOW, extrapolated from a timestamped sample on the shared clock. */
     private long expectedPos(long leaderPos, long leaderClock, boolean lplaying) {
-        long e = leaderPos;
-        if (clkValid && leaderClock > 0 && lplaying) {
-            long adv = leaderNow() - leaderClock;          // ms the leader has advanced since it sampled
-            if (adv > 0 && adv < 60000) e += adv;          // guard a wild clock
-        }
-        return Math.max(0, e);
+        return SyncMath.expectedPos(leaderPos, leaderClock, lplaying, leaderNow(), clkValid);
     }
     /** One mirror step (main thread): match the leader's item + shared-clock position and play/pause. Kept
         muted — a follower's audio would echo the leader. First frame is aligned by a seek-ahead start:
@@ -372,8 +365,8 @@ public class PlayerController {
             syncMute(); return;
         }
         long drift = p.getCurrentPosition() - expected;      // >0 = we're ahead of the leader
-        if (Math.abs(drift) > HARD_SEEK_MS) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
-        else { float sp = 1f - drift / 6000f; sp = Math.max(0.985f, Math.min(1.015f, sp)); p.setPlaybackParameters(new PlaybackParameters(sp)); }
+        if (SyncMath.shouldHardSeek(drift)) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
+        else { p.setPlaybackParameters(new PlaybackParameters(SyncMath.driftSpeed(drift))); }
         if (lplaying && !p.isPlaying()) p.play();
         else if (!lplaying && p.isPlaying()) p.pause();
         syncMute();

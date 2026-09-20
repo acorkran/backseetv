@@ -256,9 +256,9 @@ public class RemoteService extends Service {
     public String syncLeaderId() {
         if (!isSyncGroup()) return null;
         java.util.List<String> order = groupOrder();
-        for (String id : order) if (hostIds.contains(id)) return id;       // a media host is the natural leader
-        for (String id : order) if (deviceIp(id) != null) return id;       // else the first we can reach
-        return order.isEmpty() ? null : order.get(0);
+        java.util.Set<String> reachable = new java.util.HashSet<>();
+        for (String id : order) if (deviceIp(id) != null) reachable.add(id);   // screens we can currently HTTP
+        return CommandRouter.deriveLeader(order, hostIds, reachable);          // host > first-reachable > first
     }
     public String syncLeaderName() { String id = syncLeaderId(); if (id == null) return null; String n = seenTablets.get(id); return n != null ? n : id; }
     /** Audio in a synced group: false = each screen plays its own sound (default); true = only the leader. */
@@ -396,14 +396,13 @@ public class RemoteService extends Service {
     private boolean bleUp() { return ble != null && ble.isConnected(); }
 
     private final Map<String, Long> lastToggle = new ConcurrentHashMap<>();
-    private static boolean isToggleCmd(String c) { return "power".equals(c) || "playpause".equals(c) || "mute".equals(c); }
     public void send(String cmd) {
-        if (isQueryCmd(cmd)) {   // a query has ONE answer — ask the representative only
+        if (CommandRouter.isQueryCmd(cmd)) {   // a query has ONE answer — ask the representative only
             if (bleUp()) ble.sendState(cmd);
             else if (wifi != null) wifi.send(cmd);
             return;
         }
-        if (isToggleCmd(cmd)) {   // debounce spam: rapid toggles could flip screens into different states
+        if (CommandRouter.isToggleCmd(cmd)) {   // debounce spam: rapid toggles could flip screens into different states
             long now = android.os.SystemClock.elapsedRealtime();
             Long t = lastToggle.get(cmd);
             if (t != null && now - t < 350) return;
@@ -413,9 +412,9 @@ public class RemoteService extends Service {
         // it. Everything else is a PER-SCREEN action (power/light/sleep/toddler/volume/mute) and must hit
         // EVERY member — otherwise e.g. Power naps only the leader and leaves the followers' screens on.
         // Volume/mute in leader-only audio mode still go to the leader alone.
-        if (isSyncGroup() && !isPlaybackCmd(cmd)) {
+        if (isSyncGroup() && !CommandRouter.isPlaybackCmd(cmd)) {
             String leader = syncLeaderId();
-            boolean leaderOnly = isVolCmd(cmd) && groupLeaderOnly();
+            boolean leaderOnly = CommandRouter.isVolCmd(cmd) && groupLeaderOnly();
             java.util.Set<String> tgt = new java.util.HashSet<>();
             if (leaderOnly) { if (leader != null) tgt.add(leader); } else tgt.addAll(groupOrder());
             java.util.Set<String> ble2 = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
@@ -435,16 +434,7 @@ public class RemoteService extends Service {
             if (!w.isEmpty()) wifi.sendTo(w, cmd);
         }
     }
-    private static boolean isVolCmd(String c) { return c != null && (c.equals("volup") || c.equals("voldown") || c.equals("mute") || c.startsWith("vol")); }
-    /** Content/position commands that drive the sync LEADER (followers mirror). Everything else is per-screen. */
-    private static boolean isPlaybackCmd(String c) {
-        if (c == null) return false;
-        switch (c) { case "play": case "pause": case "playpause": case "next": case "prev": case "seeknear": case "shuffle": case "loop": return true; }
-        return c.startsWith("jump") || c.startsWith("seek") || c.startsWith("playlist") || c.startsWith("enqueue") || c.startsWith("dequeue") || c.startsWith("savequeue");
-    }
-    private static boolean isQueryCmd(String c) {
-        return c.equals("list") || c.equals("queue") || c.equals("conn") || c.equals("cfg") || c.startsWith("shows") || c.startsWith("eps:");
-    }
+    // (command classification predicates now live in CommandRouter — pure + unit-tested)
     public String state() { return lastState; }
     public boolean isLocal() { return local; }
 
