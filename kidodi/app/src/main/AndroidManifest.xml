@@ -66,7 +66,7 @@
 
         <!-- Player role: the show is the home screen (fullscreen, landscape). -->
         <activity
-            android:name=".PlayerActivity"
+            android:name=".player.PlayerActivity"
             android:exported="true"
             android:launchMode="singleInstance"
             android:screenOrientation="sensorLandscape"
@@ -77,23 +77,23 @@
 
         <!-- Remote role: control UI. -->
         <activity
-            android:name=".RemoteActivity"
+            android:name=".remote.RemoteActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar"
             android:configChanges="orientation|screenSize|keyboardHidden"/>
 
         <!-- QR pairing: display creds/connection info as a QR, and scan one with the camera -->
-        <activity android:name=".QrShareActivity" android:exported="false"
+        <activity android:name=".net.QrShareActivity" android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
-        <activity android:name=".QrScanActivity" android:exported="false"
+        <activity android:name=".net.QrScanActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
 
         <!-- local-only Wi-Fi hotspot (random SSID + passphrase shown as a QR for remotes to scan+join) -->
-        <service android:name=".HotspotService" android:exported="false"/>
+        <service android:name=".net.HotspotService" android:exported="false"/>
 
         <!-- optional "locked" tier: device-owner APIs for inescapable lock-task -->
-        <receiver android:name=".AdminReceiver"
+        <receiver android:name=".admin.AdminReceiver"
             android:permission="android.permission.BIND_DEVICE_ADMIN"
             android:exported="true">
             <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin"/>
@@ -103,41 +103,41 @@
         </receiver>
 
         <!-- TV-side admin settings (behind the unlock gesture + PIN) -->
-        <activity android:name=".SettingsActivity" android:exported="false"
+        <activity android:name=".remote.SettingsActivity" android:exported="false"
             android:theme="@android:style/Theme.Material.NoActionBar"/>
 
         <!-- About / feature levels (opened from device-owner "requires setup" notices) -->
-        <activity android:name=".AboutActivity" android:exported="false"
+        <activity android:name=".remote.AboutActivity" android:exported="false"
             android:theme="@android:style/Theme.Material.NoActionBar"/>
 
         <!-- boot straight into the player (the SHOW is the home screen) -->
-        <receiver android:name=".BootReceiver" android:exported="true">
+        <receiver android:name=".admin.BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
             </intent-filter>
         </receiver>
 
         <!-- after THIS app is updated: push the embedded watch build to the watch (phone role only) -->
-        <receiver android:name=".PackageReplacedReceiver" android:exported="false">
+        <receiver android:name=".admin.PackageReplacedReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
 
         <!-- phone connection service: BLE primary + wifi fallback -->
-        <service android:name=".RemoteService"
+        <service android:name=".remote.RemoteService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
 
         <!-- optional camera-monitor plugin: headless still-image capture (off by default) -->
-        <service android:name=".SnapshotService"
+        <service android:name=".net.SnapshotService"
             android:exported="false"
             android:foregroundServiceType="camera"/>
 
 
         <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
              now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
-        <service android:name=".KidodiMediaService" android:exported="true">
+        <service android:name=".player.KidodiMediaService" android:exported="true">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService"/>
             </intent-filter>

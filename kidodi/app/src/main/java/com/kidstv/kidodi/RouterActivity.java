@@ -1,5 +1,8 @@
 package com.kidstv.kidodi;
 
+import com.kidstv.kidodi.player.PlayerActivity;
+import com.kidstv.kidodi.remote.RemoteActivity;
+
 // ============================================================================
 //  Launcher. One APK, two roles. First run asks "TV (player)" or "Remote";
 //  the choice is remembered and every later launch routes straight through.

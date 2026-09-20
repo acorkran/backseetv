@@ -1,5 +1,7 @@
 package com.kidstv.kidodi;
 
+import com.kidstv.kidodi.net.HotspotService;
+
 // ============================================================================
 //  Kiosk configuration store. The on-device Settings screen writes app prefs;
 //  Settings.Global (adb `settings put global kidodi_*`) stays as a fallback for
@@ -18,7 +20,7 @@ import android.provider.Settings;
 
 import org.json.JSONObject;
 
-class Cfg {
+public class Cfg {
     static final String PREFS = "kidodi";
 
     // {key, type("int"|"str"), default} — the full set a remote can read/write.
@@ -46,22 +48,22 @@ class Cfg {
     };
     private static String[] meta(String key) { for (String[] k : KEYS) if (k[0].equals(key)) return k; return null; }
 
-    static SharedPreferences p(Context c) { return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
+    public static SharedPreferences p(Context c) { return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
 
-    static int getInt(Context c, String k, int d) {
+    public static int getInt(Context c, String k, int d) {
         try { if (p(c).contains(k)) return p(c).getInt(k, d); } catch (Exception ignored) {}
         try { return Settings.Global.getInt(c.getContentResolver(), k, d); } catch (Exception e) { return d; }
     }
-    static String getStr(Context c, String k, String d) {
+    public static String getStr(Context c, String k, String d) {
         try { if (p(c).contains(k)) { String v = p(c).getString(k, d); return (v == null || v.isEmpty()) ? d : v; } } catch (Exception ignored) {}
         try { String x = Settings.Global.getString(c.getContentResolver(), k); return (x == null || x.isEmpty()) ? d : x; } catch (Exception e) { return d; }
     }
-    static void put(Context c, String k, int v) { p(c).edit().putInt(k, v).apply(); }
-    static void put(Context c, String k, String v) { p(c).edit().putString(k, v).apply(); }
+    public static void put(Context c, String k, int v) { p(c).edit().putInt(k, v).apply(); }
+    public static void put(Context c, String k, String v) { p(c).edit().putString(k, v).apply(); }
 
     // --- config sync -----------------------------------------------------------------------------
     /** {"type":"config","device_owner":bool,"pin_set":bool,"values":{key:val,...}} — PIN masked. */
-    static String configJson(Context c, boolean incdo) {
+    public static String configJson(Context c, boolean incdo) {
         JSONObject o = new JSONObject();
         try {
             o.put("type", "config");
@@ -96,7 +98,7 @@ class Cfg {
     /** Write one setting (typed), ignoring unknown keys, and LIVE-APPLY the ones a running player needs
         that don't require PlayerController (conn -> HotspotService). kidodi_loop is applied by the caller
         (ControlServer/BleServer have the PlayerController). */
-    static void applyConfig(Context c, String key, String value) {
+    public static void applyConfig(Context c, String key, String value) {
         String[] m = meta(key);
         if (m == null || value == null) return;   // only known keys — a remote can't write arbitrary prefs
         if ("kidodi_pin".equals(key)) {
