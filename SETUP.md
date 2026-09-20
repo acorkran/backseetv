@@ -135,8 +135,8 @@ tablet's volume, not the car's), and a sticky **power-off** custom action. (It n
 ```bash
 gradle -p camera-monitor --offline assembleDebug
 adb install -r camera-monitor/app/build/outputs/apk/debug/app-debug.apk
-adb shell pm grant io.anancy.cameramon android.permission.CAMERA
-adb shell pm grant io.anancy.cameramon android.permission.POST_NOTIFICATIONS
+adb shell pm grant app.anancy.cameramon android.permission.CAMERA
+adb shell pm grant app.anancy.cameramon android.permission.POST_NOTIFICATIONS
 ```
 
 On-device front-cam + bundled ML Kit (offline) logs eyes-open + head-pitch to a CSV while Kodi plays

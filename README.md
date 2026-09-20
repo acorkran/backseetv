@@ -28,7 +28,7 @@ _A 20-second clip of the phone remote driving two tablets in lock-step will go h
   with an NTP-lite offset (lowest-RTT filtered, slow-drift tracked), extrapolate where the
   leader is *now*, and converge with a seek-ahead scheduled start plus an inaudible ±1.5%
   speed nudge. Measured to ~20–50 ms apart on real hardware. The math is pure and
-  unit-tested: [`player/SyncMath.java`](anancy/app/src/main/java/io/anancy/player/SyncMath.java).
+  unit-tested: [`player/SyncMath.java`](anancy/app/src/main/java/app/anancy/player/SyncMath.java).
 - **Its own EOF-proof player.** A Media3 (ExoPlayer) engine with native shuffle-all +
   deterministic auto-advance, so the "stuck at end-of-file" wedge that plagued the old
   Kodi build structurally cannot happen — no watchdog needed.
@@ -42,7 +42,7 @@ _A 20-second clip of the phone remote driving two tablets in lock-step will go h
 - **Correct command routing.** In a synced group, playback drives the leader alone
   (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —
   the split is pure and unit-tested:
-  [`remote/CommandRouter.java`](anancy/app/src/main/java/io/anancy/remote/CommandRouter.java).
+  [`remote/CommandRouter.java`](anancy/app/src/main/java/app/anancy/remote/CommandRouter.java).
 - **Four control surfaces** from one app: an in-tablet admin remote, a phone remote, a
   Wear OS remote, and an Android Auto media dash.
 
@@ -67,7 +67,7 @@ One APK, two roles (chosen on first run and remembered): **player** (the tablet 
    Synced group: one leader plays; followers poll /clock + /state and mirror in lock-step.
 ```
 
-Inside `anancy/app` the code is grouped by concern (package root `io.anancy`):
+Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 
 | Package | Responsibility |
 |---------|----------------|

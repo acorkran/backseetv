@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'io.anancy.aaremote'
+    namespace 'app.anancy.aaremote'
     compileSdk 34
 
     defaultConfig {
-        applicationId 'io.anancy.aaremote'
+        applicationId 'app.anancy.aaremote'
         minSdk 23
         targetSdk 34
         versionCode 1

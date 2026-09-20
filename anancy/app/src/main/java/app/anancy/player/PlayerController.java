@@ -1,0 +1,783 @@
+package app.anancy.player;
+
+import app.anancy.Cfg;
+import app.anancy.Identity;
+import app.anancy.net.HotspotService;
+
+// ============================================================================
+//  Wraps the ExoPlayer so anything (HTTP control, BLE, remote) can drive it
+//  safely. ExoPlayer is single-threaded (main looper), so every command is
+//  marshaled to main; reads come from a volatile snapshot refreshed on main by a
+//  ticker + player listener — so the control server never touches ExoPlayer off
+//  the main thread.
+//
+//  Library model: every media file gets a stable int id = its index in the global
+//  list sorted by path (rebuilt on each scan). Shows = folders. Playlists =
+//  built-ins (Shuffle All + one per show) + USER playlists (a saved queue,
+//  persisted in files/playlists.json as {name:[paths]}). The QUEUE is
+//  currentItems (play order, mirrored 1:1 in the ExoPlayer timeline);
+//  naturalItems is the loaded playlist's canonical order for un-shuffling.
+// ============================================================================
+
+import android.content.Context;
+import android.net.Uri;
+import android.media.AudioManager;
+import android.os.Handler;
+import android.os.Looper;
+
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Player;
+import androidx.media3.exoplayer.ExoPlayer;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+public class PlayerController {
+    private static PlayerController I;
+    public static synchronized PlayerController get() { if (I == null) I = new PlayerController(); return I; }
+
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private ExoPlayer p;
+    private Context appCtx;
+
+    // volatile snapshot (written on main, read by the HTTP/BLE threads)
+    private volatile int idx, count, posMs, durMs, curId = -1;
+    private volatile long sampleClock;   // elapsedRealtime() when posMs was last sampled (followers extrapolate the leader from it)
+    private volatile boolean playing;
+    // Volume model: the user's loudness is the SYSTEM media volume (what actually comes out of the
+    // speaker); a separate PERSISTED mute drives the ExoPlayer multiplier (0/1). The bug this fixes:
+    // the old code only moved the player multiplier, so remotes "raised" volume while the system
+    // stream sat at 0 — and the kiosk swallows the hardware keys, so there was no way out.
+    private volatile float vol = 0.5f;        // system media volume fraction 0..1
+    private volatile boolean muted = false;   // persisted player mute
+    private AudioManager am; private android.content.SharedPreferences prefs;
+    private volatile String title = "";
+    private volatile boolean napped = false;   // "powered off" = paused + TV blacked
+    private final LinkedHashMap<String, List<MediaItem>> playlists = new LinkedHashMap<>();       // built-ins
+    private final LinkedHashMap<String, List<MediaItem>> userPlaylists = new LinkedHashMap<>();   // saved queues
+    private volatile String currentPl = "Shuffle All";
+    private volatile List<MediaItem> currentItems = new ArrayList<>();   // the QUEUE in play order
+    private volatile List<MediaItem> naturalItems = new ArrayList<>();   // loaded playlist's canonical order
+    private volatile boolean shuffle = false, loop = true;
+    // library index: id = index into libFiles (sorted by path); libShows = show -> ids (episode order)
+    private volatile List<File> libFiles = new ArrayList<>();
+    private volatile LinkedHashMap<String, List<Integer>> libShows = new LinkedHashMap<>();
+    // CLIENT mode (anancy_host set): the library lives on another tablet; items are host /media URLs keyed
+    // by the SAME id the host uses, so a broadcast "play show/episode X" plays the same content on both.
+    private volatile Map<Integer, MediaItem> clientItems = null;   // non-null => this player is a client
+    private volatile Map<String, Integer> idOfPath = null;         // host: local file path -> stable id (for "cur")
+    private volatile boolean syncEnabled = false;                  // follower: continuously mirror the host's playback
+    private volatile boolean syncMuteFollower = false;             // follower: stay silent (leader-only audio) vs play own audio
+    public void setSyncMuteFollower(boolean m) { syncMuteFollower = m; if (p != null) on(this::syncMute); }
+    private Runnable syncTick;
+    private Runnable startPending;                                 // a scheduled seek-ahead start waiting to fire
+    // Shared clock (NTP-lite): leaderClock(now) ≈ elapsedRealtime() + clkOffset. Kept fresh by min-RTT probes.
+    private volatile long clkOffset = 0;
+    private volatile boolean clkValid = false;
+    private volatile long clkBestRtt = Long.MAX_VALUE;
+    private static final long START_LEAD = 400;    // ms the follower seeks ahead then waits, so its first frame lands in step
+    // (clock-offset filtering + drift math live in SyncMath — pure + unit-tested; HARD_SEEK_MS is there)
+
+    public void setNapped(boolean n) { napped = n; }
+
+    /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
+    public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
+    /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
+    public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
+    /** Re-read the library in CLIENT mode (anancy_host just set) so a follower can resolve the leader's ids.
+        autoStart=false: don't blast playback — the sync loop drives what plays. */
+    public void reloadForSync(Context ctx) { loadLibrary(ctx, false, 0); }
+    private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
+        appCtx = ctx.getApplicationContext();
+        final String host = Cfg.getStr(appCtx, "anancy_host", "");
+        if (host != null && !host.isEmpty()) { new Thread(() -> loadClientLibrary(host, autoStart)).start(); return; }
+        clientItems = null;
+        new Thread(() -> {
+            LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
+            // stable ids: global list sorted by absolute path
+            final List<File> files = new ArrayList<>();
+            for (List<File> fs : shows.values()) files.addAll(fs);
+            java.util.Collections.sort(files, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
+            final Map<String, Integer> idOf = new HashMap<>();
+            for (int i = 0; i < files.size(); i++) idOf.put(files.get(i).getAbsolutePath(), i);
+            final LinkedHashMap<String, List<Integer>> showIds = new LinkedHashMap<>();
+            final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
+            final List<MediaItem> all = new ArrayList<>();
+            for (Map.Entry<String, List<File>> e : shows.entrySet()) {
+                List<MediaItem> items = new ArrayList<>(); List<Integer> ids = new ArrayList<>();
+                for (File f : e.getValue()) { MediaItem mi = MediaItem.fromUri(Uri.fromFile(f)); items.add(mi); all.add(mi); ids.add(idOf.get(f.getAbsolutePath())); }
+                built.put(e.getKey(), items); showIds.put(e.getKey(), ids);
+            }
+            // Boot race: the portable SD card can take tens of seconds to mount after boot, so a
+            // scan on launch may find nothing. Retry until content appears (~90s) before giving up.
+            if (all.isEmpty() && autoStart && attempt < 30) {
+                android.util.Log.i("Anancy", "library empty (attempt " + attempt + "); SD may still be mounting, retry in 3s");
+                main.postDelayed(() -> loadLibrary(ctx, true, attempt + 1), 3000);
+                return;
+            }
+            final LinkedHashMap<String, List<MediaItem>> user = readUserPlaylists();
+            on(() -> {
+                libFiles = files; libShows = showIds; idOfPath = idOf; clientItems = null;
+                playlists.clear();
+                playlists.put("Shuffle All", all);
+                playlists.putAll(built);
+                userPlaylists.clear(); userPlaylists.putAll(user);
+                loop = Cfg.getInt(appCtx, "anancy_loop", 1) == 1;
+                if (autoStart) selectPlaylist("Shuffle All");
+            });
+        }).start();
+    }
+
+    /** CLIENT: build the library from the HOST's manifest — same shows/ids, items are host /media URLs
+        (so id X on the client == id X on the host). Retries until the host is reachable. */
+    private void loadClientLibrary(final String host, final boolean autoStart) {
+        try {
+            String base = "http://" + host + ":8090";
+            JSONObject lib = new JSONObject(httpGet(base + "/library"));
+            JSONArray shows = lib.optJSONArray("shows");
+            final LinkedHashMap<String, List<MediaItem>> built = new LinkedHashMap<>();
+            final LinkedHashMap<String, List<Integer>> showIds = new LinkedHashMap<>();
+            final List<MediaItem> all = new ArrayList<>();
+            final Map<Integer, MediaItem> byId = new HashMap<>();
+            if (shows != null) for (int s = 0; s < shows.length(); s++) {
+                String name = shows.getJSONObject(s).optString("name");
+                if (name == null || name.isEmpty()) continue;
+                JSONObject epsO = new JSONObject(httpGet(base + "/library?show=" + enc(name)));
+                JSONArray eps = epsO.optJSONArray("items");
+                List<MediaItem> list = new ArrayList<>(); List<Integer> ids = new ArrayList<>();
+                if (eps != null) for (int i = 0; i < eps.length(); i++) {
+                    int id = eps.getJSONObject(i).optInt("id", -1);
+                    String title = eps.getJSONObject(i).optString("title", "");
+                    if (id < 0) continue;
+                    MediaItem mi = new MediaItem.Builder().setUri(base + "/media?id=" + id)
+                            .setMediaMetadata(new MediaMetadata.Builder().setTitle(title).build()).build();
+                    list.add(mi); all.add(mi); ids.add(id); byId.put(id, mi);
+                }
+                built.put(name, list); showIds.put(name, ids);
+            }
+            if (all.isEmpty()) { main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000); return; }
+            on(() -> {
+                clientItems = byId; idOfPath = null; libFiles = new ArrayList<>(); libShows = showIds;
+                playlists.clear();
+                playlists.put("Shuffle All", all);
+                playlists.putAll(built);
+                loop = Cfg.getInt(appCtx, "anancy_loop", 1) == 1;
+                android.util.Log.i("Anancy", "client library from " + host + ": " + all.size() + " items, " + built.size() + " shows");
+                if (autoStart) selectPlaylist("Shuffle All");
+                syncMuteFollower = Cfg.getInt(appCtx, "anancy_sync_mute", 0) == 1;   // restore leader-only vs own-audio
+                if (Cfg.getInt(appCtx, "anancy_sync", 0) == 1) setSync(true);   // follower: start mirroring the host
+            });
+        } catch (Exception e) {
+            android.util.Log.w("Anancy", "client library from " + host + " failed: " + e + " — retrying");
+            main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000);
+        }
+    }
+    private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
+    private static String httpGet(String url) throws Exception {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        c.setConnectTimeout(3000); c.setReadTimeout(4000);
+        try {
+            java.io.InputStream in = c.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[4096]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n);
+            return bo.toString("UTF-8");
+        } finally { c.disconnect(); }
+    }
+
+    private List<MediaItem> itemsFor(String name) {
+        List<MediaItem> items = playlists.get(name);
+        return items != null ? items : userPlaylists.get(name);
+    }
+
+    /** Switch to a playlist by name: Shuffle All -> shuffled; a show / user playlist -> in order. */
+    public void selectPlaylist(final String name) {
+        on(() -> {
+            List<MediaItem> items = itemsFor(name);
+            if (items == null || items.isEmpty() || p == null) return;
+            currentPl = name;
+            // Shuffle All: pre-shuffle the LIST (not ExoPlayer's shuffle mode) so the visible queue order
+            // IS the play order — a remote can show "what's next" and jump to any item.
+            shuffle = "Shuffle All".equals(name);
+            naturalItems = new ArrayList<>(items);
+            List<MediaItem> order = shuffle ? shuffled(items) : new ArrayList<>(items);
+            currentItems = order;
+            p.setShuffleModeEnabled(false);
+            p.setRepeatMode(loop ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
+            p.setMediaItems(order);
+            p.prepare();
+            keepMute();   // audio-safety: a new media list must never start audible while muted
+            p.play();
+        });
+    }
+    /** Re-assert the mute/volume multiplier (call after any setMediaItems). Cheap insurance so a
+        freshly-built queue can never boot to full volume while muted — the nap-safe invariant. */
+    private void keepMute() { if (p != null && !sleeping) p.setVolume(effMult()); }
+    private static List<MediaItem> shuffled(List<MediaItem> in) { List<MediaItem> out = new ArrayList<>(in); java.util.Collections.shuffle(out); return out; }
+
+    /** Jump to item i of the current queue and play. */
+    public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { p.seekToDefaultPosition(i); p.play(); } }); }
+    /** The current queue as JSON: titles in PLAY order + current index. n>0 = a window of center±n (fits BLE); n<=0 = full list. */
+    public String queueJson(int center, int n) { return queueJson(center, n, Integer.MAX_VALUE); }
+    /** maxTitle bounds each item title so a BLE window fits ONE MTU (~509 bytes); HTTP passes MAX_VALUE. */
+    public String queueJson(int center, int n, int maxTitle) {
+        JSONObject o = new JSONObject();
+        try {
+            List<MediaItem> items = currentItems;
+            int total = items.size();
+            if (center < 0) center = idx;   // default the window around the current item
+            int from = n <= 0 ? 0 : Math.max(0, center - n), to = n <= 0 ? total : Math.min(total, center + n + 1);
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (int i = from; i < to; i++) {
+                String t = titleOf(items.get(i));
+                if (t.length() > maxTitle) t = t.substring(0, maxTitle);
+                a.put(t);
+            }
+            o.put("type", "queue"); o.put("playlist", currentPl); o.put("index", idx); o.put("total", total); o.put("from", from); o.put("items", a);
+            o.put("shuffle", shuffle); o.put("loop", loop);
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+
+    /** Playlist names as a one-shot payload (BLE "list" / HTTP /playlists): built-ins first, then user. */
+    public String playlistsJson() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("type", "playlists");
+            JSONArray a = new JSONArray(), u = new JSONArray();
+            for (String n : playlists.keySet()) a.put(n);
+            for (String n : userPlaylists.keySet()) { a.put(n); u.put(n); }
+            o.put("names", a); o.put("user", u);
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+
+    // --- queue editing ------------------------------------------------------
+    private MediaItem itemFor(int id) {
+        Map<Integer, MediaItem> c = clientItems;
+        if (c != null) return c.get(id);   // client: host /media URL for this id
+        List<File> f = libFiles;
+        return (id >= 0 && id < f.size()) ? MediaItem.fromUri(Uri.fromFile(f.get(id))) : null;
+    }
+    /** The library file for a stable id, or null. Lets the host serve it over HTTP (/media) so a client
+        tablet can play it by the same id the library manifest advertises. */
+    public File fileForId(int id) {
+        List<File> f = libFiles;
+        return (id >= 0 && id < f.size()) ? f.get(id) : null;
+    }
+    /** Client playback: play a single item from a URL (a host's /media?id=N). Muted-safe — a client
+        streaming from the host must never start audible. Used to verify host/client streaming. */
+    public void playUrl(final String url) {
+        if (url == null || url.isEmpty()) return;
+        on(() -> {
+            if (p == null) return;
+            p.setMediaItems(java.util.Collections.singletonList(MediaItem.fromUri(url)));
+            p.prepare(); keepMute(); p.play();
+        });
+    }
+
+    /** Stable library id of the CURRENT item — host: from its file path; client: parsed from the
+        /media?id URL. Lets a follower know exactly what the leader is playing. -1 if unknown. */
+    private int currentLibId() {
+        try {
+            MediaItem m = p != null ? p.getCurrentMediaItem() : null;
+            if (m == null || m.localConfiguration == null) return -1;
+            android.net.Uri u = m.localConfiguration.uri;
+            String us = u.toString();
+            int q = us.indexOf("media?id=");
+            if (q >= 0) return Integer.parseInt(us.substring(q + 9).replaceAll("\\D.*", ""));   // client URL
+            Map<String, Integer> map = idOfPath;
+            if (map != null) { Integer id = map.get(u.getPath()); if (id != null) return id; }   // host file
+        } catch (Exception ignored) {}
+        return -1;
+    }
+
+    // --- SYNCED playback (follower): mirror the host's current item + position; muted, speed-nudged ----
+    public boolean isSync() { return syncEnabled; }
+    public void setSync(boolean on) { syncEnabled = on; if (on) startSyncLoop(); else stopSyncLoop(); }
+
+    // NTP-lite: one probe of the leader's /clock. Keep the offset from the LOWEST-RTT sample (least jitter).
+    private long clockNow() { return android.os.SystemClock.elapsedRealtime(); }
+    private long leaderNow() { return clockNow() + clkOffset; }
+    private void resetClock() { clkOffset = 0; clkValid = false; clkBestRtt = Long.MAX_VALUE; }
+    private void probeClock(String host) {
+        try {
+            long t0 = clockNow();
+            long tL = new JSONObject(httpGet("http://" + host + ":8090/clock")).optLong("t", -1);
+            long t2 = clockNow();
+            if (tL < 0) return;
+            SyncMath.Clock c = SyncMath.fold(new SyncMath.Clock(clkOffset, clkBestRtt, clkValid), t0, tL, t2);
+            clkOffset = c.offset; clkBestRtt = c.bestRtt; clkValid = c.valid;
+        } catch (Exception ignored) {}
+    }
+
+    private void startSyncLoop() {
+        if (syncTick != null) return;
+        final String host = Cfg.getStr(appCtx, "anancy_host", "");
+        if (host == null || host.isEmpty()) { syncEnabled = false; return; }   // only a client can follow
+        resetClock();
+        new Thread(() -> { for (int i = 0; i < 6 && syncEnabled; i++) { probeClock(host); try { Thread.sleep(120); } catch (Exception ignored) {} } }).start();
+        syncTick = new Runnable() { long lastClk = 0; public void run() {
+            if (!syncEnabled) { syncTick = null; return; }
+            new Thread(() -> {
+                try {
+                    long n = clockNow();
+                    if (n - lastClk > 5000) { probeClock(host); lastClk = n; }   // keep the offset fresh (drift)
+                    JSONObject s = new JSONObject(httpGet("http://" + host + ":8090/state"));
+                    final int cur = s.optInt("cur", -1);
+                    final boolean lplaying = s.optBoolean("playing", false);
+                    final long lpos = (long) s.optDouble("position_ms", 0);
+                    final long lclock = s.optLong("clock", -1);   // leader's monotonic clock at that position sample
+                    on(() -> mirror(cur, lpos, lclock, lplaying));
+                } catch (Exception ignored) {}
+            }).start();
+            main.postDelayed(this, 350);
+        }};
+        main.post(syncTick);
+    }
+    private void stopSyncLoop() {
+        if (syncTick != null) { main.removeCallbacks(syncTick); syncTick = null; }
+        if (startPending != null) { main.removeCallbacks(startPending); startPending = null; }
+        on(() -> { try { if (p != null) { p.setPlaybackParameters(new PlaybackParameters(1f)); keepMute(); } } catch (Exception ignored) {} });   // restore the device's own volume (no longer a forced-silent follower)
+    }
+    /** The leader's position RIGHT NOW, extrapolated from a timestamped sample on the shared clock. */
+    private long expectedPos(long leaderPos, long leaderClock, boolean lplaying) {
+        return SyncMath.expectedPos(leaderPos, leaderClock, lplaying, leaderNow(), clkValid);
+    }
+    /** One mirror step (main thread): match the leader's item + shared-clock position and play/pause. Kept
+        muted — a follower's audio would echo the leader. First frame is aligned by a seek-ahead start:
+        seek START_LEAD past the leader, wait that long, then play, so we begin exactly where it will be. */
+    private void mirror(int cur, long leaderPos, long leaderClock, boolean lplaying) {
+        if (p == null || cur < 0) return;
+        if (startPending != null) { syncMute(); return; }   // a scheduled start is mid-flight; don't fight it
+        final long expected = expectedPos(leaderPos, leaderClock, lplaying);
+        if (currentLibId() != cur) {                         // wrong item -> switch + scheduled seek-ahead start
+            MediaItem mi = itemFor(cur);
+            if (mi != null) {
+                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); syncMute();
+                if (lplaying) { p.seekTo(expected + START_LEAD); p.pause(); schedulePlayAfter(START_LEAD); }
+                else { p.seekTo(expected); p.pause(); }
+            }
+            syncMute(); return;
+        }
+        long drift = p.getCurrentPosition() - expected;      // >0 = we're ahead of the leader
+        if (SyncMath.shouldHardSeek(drift)) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
+        else { p.setPlaybackParameters(new PlaybackParameters(SyncMath.driftSpeed(drift))); }
+        if (lplaying && !p.isPlaying()) p.play();
+        else if (!lplaying && p.isPlaying()) p.pause();
+        syncMute();
+    }
+    /** Follower audio each mirror tick. In LEADER-ONLY mode force gain 0 (audio comes from the leader, no
+        echo — and a stray broadcast unmute can't make it sound). In EACH-SCREEN mode play its own volume. */
+    private void syncMute() { if (p != null && !sleeping) p.setVolume(syncMuteFollower ? 0f : effMult()); }
+    /** Wait `ms` (the seek-ahead lead) then start — by then the leader has reached the frame we seeked to. */
+    private void schedulePlayAfter(long ms) {
+        if (startPending != null) main.removeCallbacks(startPending);
+        startPending = () -> { startPending = null; if (syncEnabled && p != null) { syncMute(); p.play(); } };
+        main.postDelayed(startPending, Math.max(0, ms));
+    }
+    /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
+    public boolean enqueue(final int id, final boolean next, final boolean now) {
+        final MediaItem mi = itemFor(id);
+        if (mi == null) return false;
+        List<MediaItem> one = new ArrayList<>(); one.add(mi);
+        enqueueItems(one, next || now, now);
+        return true;
+    }
+    /** Append a whole show in episode order. False = unknown show. */
+    public boolean enqueueShow(String show) {
+        List<Integer> ids = libShows.get(show);
+        if (ids == null) return false;
+        List<MediaItem> items = new ArrayList<>();
+        for (int id : ids) { MediaItem mi = itemFor(id); if (mi != null) items.add(mi); }
+        if (items.isEmpty()) return false;
+        enqueueItems(items, false, false);
+        return true;
+    }
+    private void enqueueItems(final List<MediaItem> items, final boolean afterCurrent, final boolean jump) {
+        on(() -> {
+            if (p == null) return;
+            List<MediaItem> q = new ArrayList<>(currentItems);
+            if (p.getMediaItemCount() == 0) {   // empty player: this becomes the queue
+                q.addAll(items); currentItems = q;
+                p.setRepeatMode(loop ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
+                p.setMediaItems(q); p.prepare(); keepMute(); p.play(); return;
+            }
+            int at = afterCurrent ? Math.min(q.size(), p.getCurrentMediaItemIndex() + 1) : q.size();
+            q.addAll(at, items); currentItems = q;
+            p.addMediaItems(at, items);
+            if (jump) { p.seekToDefaultPosition(at); p.play(); }
+        });
+    }
+    /** Remove queue index i (never the item that's playing). */
+    public void dequeue(final int i) {
+        on(() -> {
+            if (p == null || i < 0 || i >= p.getMediaItemCount() || i == p.getCurrentMediaItemIndex()) return;
+            List<MediaItem> q = new ArrayList<>(currentItems);
+            if (i < q.size()) q.remove(i);
+            currentItems = q;
+            p.removeMediaItem(i);
+        });
+    }
+    public boolean isShuffle() { return shuffle; }
+    public boolean isLoop() { return loop; }
+    /** Shuffle ON: random order with the playing item kept first, playback continues where it is.
+        OFF: back to the loaded playlist's natural order (enqueued extras keep following). */
+    public void setShuffle(final boolean on) {
+        on(() -> {
+            if (p == null || currentItems.isEmpty()) return;
+            int ci = Math.max(0, Math.min(currentItems.size() - 1, p.getCurrentMediaItemIndex()));
+            MediaItem cur = currentItems.get(ci);
+            long pos = p.getCurrentPosition();
+            boolean wasPlaying = p.getPlayWhenReady();
+            List<MediaItem> order;
+            int start;
+            if (on) {
+                List<MediaItem> rest = new ArrayList<>(currentItems); rest.remove(ci);
+                java.util.Collections.shuffle(rest);
+                order = new ArrayList<>(); order.add(cur); order.addAll(rest);
+                start = 0;
+            } else {
+                order = new ArrayList<>(naturalItems);
+                for (MediaItem m : currentItems) if (!naturalItems.contains(m)) order.add(m);   // enqueued extras
+                start = Math.max(0, order.indexOf(cur));
+            }
+            shuffle = on; currentItems = order;
+            p.setMediaItems(order, start, pos);
+            p.prepare();
+            keepMute();
+            if (wasPlaying) p.play();
+        });
+    }
+    /** loop = REPEAT_MODE_ALL (EOF-proof default). Off = stop at the end of the queue -> TV off (napNow). */
+    public void setLoop(final boolean on) {
+        loop = on;
+        try { if (appCtx != null) Cfg.put(appCtx, "anancy_loop", on ? 1 : 0); } catch (Exception ignored) {}
+        on(() -> { if (p != null) p.setRepeatMode(on ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF); });
+    }
+
+    // --- user playlists (saved queues) -------------------------------------
+    private File playlistsFile() { return new File(appCtx.getFilesDir(), "playlists.json"); }
+    /** Persist the current queue under a name (overwrites the same name). */
+    public boolean saveQueue(String name) {
+        if (name == null || name.trim().isEmpty() || currentItems.isEmpty()) return false;
+        name = name.trim();
+        if (playlists.containsKey(name)) return false;   // don't shadow a built-in
+        userPlaylists.put(name, new ArrayList<>(currentItems));
+        writeUserPlaylists();
+        return true;
+    }
+    /** Delete a USER playlist; built-ins can't be deleted (false). */
+    public boolean deletePlaylist(String name) {
+        if (name == null || !userPlaylists.containsKey(name)) return false;
+        userPlaylists.remove(name);
+        writeUserPlaylists();
+        return true;
+    }
+    private void writeUserPlaylists() {
+        try {
+            JSONObject o = new JSONObject();
+            for (Map.Entry<String, List<MediaItem>> e : userPlaylists.entrySet()) {
+                JSONArray a = new JSONArray();
+                for (MediaItem m : e.getValue()) { String path = pathOf(m); if (path != null) a.put(path); }
+                o.put(e.getKey(), a);
+            }
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(playlistsFile());
+            fo.write(o.toString().getBytes("UTF-8")); fo.close();
+        } catch (Exception e) { android.util.Log.w("Anancy", "playlists save: " + e); }
+    }
+    private LinkedHashMap<String, List<MediaItem>> readUserPlaylists() {
+        LinkedHashMap<String, List<MediaItem>> out = new LinkedHashMap<>();
+        try {
+            File f = playlistsFile();
+            if (!f.isFile()) return out;
+            byte[] b = new byte[(int) f.length()];
+            java.io.FileInputStream fi = new java.io.FileInputStream(f); int n = 0, r;
+            while (n < b.length && (r = fi.read(b, n, b.length - n)) > 0) n += r;
+            fi.close();
+            JSONObject o = new JSONObject(new String(b, 0, n, "UTF-8"));
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) {
+                String name = it.next();
+                JSONArray a = o.optJSONArray(name);
+                List<MediaItem> items = new ArrayList<>();
+                if (a != null) for (int i = 0; i < a.length(); i++) { File mf = new File(a.optString(i)); if (mf.isFile()) items.add(MediaItem.fromUri(Uri.fromFile(mf))); }
+                if (!items.isEmpty()) out.put(name, items);
+            }
+        } catch (Exception e) { android.util.Log.w("Anancy", "playlists load: " + e); }
+        return out;
+    }
+    private static String pathOf(MediaItem m) {
+        try { return (m != null && m.localConfiguration != null) ? m.localConfiguration.uri.getPath() : null; } catch (Exception e) { return null; }
+    }
+
+    // --- library browsing ---------------------------------------------------
+    /** {"type":"library","shows":[{"name","count"}...]} — HTTP: everything. */
+    public String libraryJson() { return libraryJson(0, Integer.MAX_VALUE); }
+    /** Paged variant for BLE: as many shows from `from` as fit in maxBytes (+ "from"/"total"). */
+    public String libraryJson(int from, int maxBytes) {
+        try {
+            LinkedHashMap<String, List<Integer>> shows = libShows;
+            List<String> names = new ArrayList<>(shows.keySet());
+            int total = names.size();
+            from = Math.max(0, Math.min(from, total));
+            JSONArray a = new JSONArray();
+            JSONObject o = new JSONObject();
+            o.put("type", "library"); o.put("from", from); o.put("total", total); o.put("shows", a);
+            for (int i = from; i < total; i++) {
+                JSONObject s = new JSONObject().put("name", names.get(i)).put("count", shows.get(names.get(i)).size());
+                a.put(s);
+                if (o.toString().length() > maxBytes) { a.remove(a.length() - 1); break; }
+            }
+            return o.toString();
+        } catch (Exception e) { return "{\"type\":\"library\",\"shows\":[]}"; }
+    }
+    /** {"type":"episodes","show","from","total","items":[{"id","title"}...]}; max items / title length for BLE pages. */
+    public String episodesJson(String show, int from, int max, int titleMax) {
+        try {
+            List<Integer> ids = libShows.get(show);
+            JSONObject o = new JSONObject();
+            o.put("type", "episodes"); o.put("show", show);
+            int total = ids == null ? 0 : ids.size();
+            from = Math.max(0, Math.min(from, total));
+            JSONArray a = new JSONArray();
+            for (int i = from; i < total && a.length() < max; i++) {
+                int id = ids.get(i);
+                String t = stripExt(libFiles.get(id).getName());
+                if (titleMax > 0 && t.length() > titleMax) t = t.substring(0, titleMax);
+                a.put(new JSONObject().put("id", id).put("title", t));
+            }
+            o.put("from", from); o.put("total", total); o.put("items", a);
+            return o.toString();
+        } catch (Exception e) { return "{\"type\":\"episodes\",\"items\":[]}"; }
+    }
+    private static String stripExt(String n) { int d = n.lastIndexOf('.'); return d > 0 ? n.substring(0, d) : n; }
+
+    // --- connectivity level ---------------------------------------------------
+    /** {"type":"conn","mode","ip","hotspot":{ssid,pass}|null,"wifi":{ssid}|null} */
+    public String connJson() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("type", "conn");
+            o.put("mode", appCtx != null ? HotspotService.mode(appCtx) : "ble");
+            o.put("ip", wifiIp());
+            if (HotspotService.running() && HotspotService.currentSsid() != null)
+                o.put("hotspot", new JSONObject().put("ssid", HotspotService.currentSsid()).put("pass", HotspotService.currentPass() == null ? "" : HotspotService.currentPass()));
+            else o.put("hotspot", JSONObject.NULL);
+            String ssid = currentWifiSsid();
+            o.put("wifi", ssid != null ? new JSONObject().put("ssid", ssid) : JSONObject.NULL);
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+    @SuppressWarnings("deprecation")
+    private String currentWifiSsid() {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) appCtx.getSystemService(Context.WIFI_SERVICE);
+            android.net.wifi.WifiInfo wi = wm != null ? wm.getConnectionInfo() : null;
+            String s = wi != null ? wi.getSSID() : null;
+            if (s == null || s.contains("unknown") || s.isEmpty()) return null;
+            return s.replaceAll("^\"|\"$", "");
+        } catch (Exception e) { return null; }
+    }
+
+    // sleep timer
+    private volatile boolean sleeping;
+    private volatile long sleepEnd;
+    private float sleepFromVol;
+    private int sleepMin;
+    private Runnable sleepTick;
+    private Runnable ticker;
+
+    void attach(ExoPlayer player) {
+        p = player;
+        count = p.getMediaItemCount();
+        p.addListener(new Player.Listener() {
+            @Override public void onIsPlayingChanged(boolean ip) { playing = ip; }
+            // loop off: the queue ran out -> TV off, exactly like the sleep-timer end
+            @Override public void onPlaybackStateChanged(int s) { if (s == Player.STATE_ENDED && !loop) PlayerActivity.napNow(); }
+        });
+        ticker = new Runnable() { public void run() {
+            if (p != null) try {
+                playing = p.isPlaying();
+                idx = p.getCurrentMediaItemIndex();
+                count = p.getMediaItemCount();
+                posMs = (int) p.getCurrentPosition();
+                sampleClock = android.os.SystemClock.elapsedRealtime();   // stamp the position for followers to extrapolate
+                long d = p.getDuration();
+                durMs = d > 0 ? (int) d : 0;
+                title = titleOf(p.getCurrentMediaItem());
+                curId = currentLibId();   // cache on main thread; the control server never touches ExoPlayer
+            } catch (Exception ignored) {}
+            main.postDelayed(this, 500);
+        }};
+        main.post(ticker);
+    }
+
+    private String titleOf(MediaItem m) {
+        try {
+            if (m != null) {
+                if (m.mediaMetadata != null && m.mediaMetadata.title != null) return m.mediaMetadata.title.toString();   // client URL items
+                if (m.localConfiguration != null) { String seg = m.localConfiguration.uri.getLastPathSegment(); return seg != null ? seg : ""; }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    // --- commands (marshaled to main) --------------------------------------
+    public void play()      { on(() -> {
+        if (!sleeping) p.setVolume(effMult());   // restore the multiplier (a sleep fade may have zeroed it)
+        if (p.getPlaybackState() == Player.STATE_ENDED) p.seekToDefaultPosition(0);   // loop-off ended: start over
+        p.play();
+    }); }
+    public void pause()     { on(() -> p.pause()); }
+    public void toggle()    { on(() -> { if (p.isPlaying()) p.pause(); else play(); }); }
+    public void next()      { on(() -> p.seekToNextMediaItem()); }
+    public void prev()      { on(() -> p.seekToPreviousMediaItem()); }
+    public void seekNearEnd(){ on(() -> { long d = p.getDuration(); if (d > 0) p.seekTo(Math.max(0, d - 3000)); }); }
+    /** Bind system audio: read the current media volume, restore the persisted mute, and make sure the
+        appliance never boots stuck silent (system volume 0 -> 50%). */
+    public void setAudio(Context ctx) {
+        appCtx = ctx.getApplicationContext();
+        am = (AudioManager) ctx.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
+        prefs = ctx.getApplicationContext().getSharedPreferences("anancy", Context.MODE_PRIVATE);
+        muted = prefs.getBoolean("muted", true);   // first run = MUTED (nap-safe default); volume-up unmutes
+        vol = readSystemVol();
+        if (vol <= 0.001f) writeSystemVol(0.5f);   // a 0 system stream makes "unmute" do nothing -> give it a floor (does NOT unmute)
+        applyMute();
+    }
+    private float readSystemVol() {
+        try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); return max > 0 ? (float) am.getStreamVolume(AudioManager.STREAM_MUSIC) / max : 0f; }
+        catch (Exception e) { return 0f; }
+    }
+    private void writeSystemVol(float v) {
+        vol = clamp(v);
+        try { int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC); am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(vol * max), 0); }
+        catch (Exception ignored) {}
+    }
+    /** SYSTEM media volume — the real loudness. The player multiplier stays at 1 unless muted.
+     *  RAISING it while muted UNMUTES (TV-remote behaviour: the volume UI must never move while the
+     *  device stays silent — that was the nap-run confusion). Lowering never unmutes. */
+    public void setVolume(float v) {
+        boolean up = v > vol + 0.001f;
+        if (up) unmuteSystemStream();   // a hard-muted STREAM_MUSIC (some devices force it) stays silent at
+                                        // any level; clear it AS WE RAISE — safe, since the level steps up from here
+        writeSystemVol(v);
+        if (up && muted) setMuted(false);
+    }
+    @SuppressWarnings("deprecation")
+    private void unmuteSystemStream() {
+        if (am == null) return;
+        try { am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0); } catch (Exception ignored) {}
+        try { am.setStreamMute(AudioManager.STREAM_MUSIC, false); } catch (Exception ignored) {}   // deprecated but clears a device-forced mute (e.g. Android 10 Lenovo)
+    }
+    public void nudge(float d)     { setVolume(vol + d); }
+    public void setMuted(boolean m) { muted = m; try { if (prefs != null) prefs.edit().putBoolean("muted", m).apply(); } catch (Exception ignored) {} applyMute(); }
+    public boolean isMuted() { return muted; }
+    // Play mode's "sound source" can force the SHOW audio on/off for its duration WITHOUT touching the
+    // persisted mute: null = follow the mute flag, TRUE = audible, FALSE = silent. Restored (null) on exit.
+    private volatile Boolean audioOverride = null;
+    public void overrideShowAudio(Boolean b) { audioOverride = b; applyMute(); }
+    private float effMult() { return audioOverride != null ? (audioOverride ? 1f : 0f) : (muted ? 0f : 1f); }
+    private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(effMult()); }); }
+
+    // --- sleep timer (fade volume then pause) ------------------------------
+    public void startSleep(final int min) {
+        on(() -> {
+            cancelSleepInternal();
+            if (min <= 0) return;
+            sleeping = true; sleepMin = min; sleepFromVol = muted ? 0f : 1f;   // fade the PLAYER multiplier, never the system volume
+            sleepEnd = System.currentTimeMillis() + min * 60000L;
+            sleepTick = new Runnable() { public void run() {
+                if (!sleeping) return;
+                long left = sleepEnd - System.currentTimeMillis();
+                if (left <= 0) {   // faded out: TV off + display off, exactly like the power button
+                    try { if (p != null) p.setVolume(0f); } catch (Exception ignored) {}
+                    pause(); sleeping = false; PlayerActivity.napNow(); return;
+                }
+                float frac = Math.max(0f, Math.min(1f, (float) left / (sleepMin * 60000f)));
+                try { if (p != null) p.setVolume(sleepFromVol * frac); } catch (Exception ignored) {}
+                main.postDelayed(this, 3000);
+            }};
+            main.post(sleepTick);
+        });
+    }
+    public void cancelSleep() { on(() -> { cancelSleepInternal(); if (p != null) p.setVolume(effMult()); }); }
+    private void cancelSleepInternal() { sleeping = false; if (sleepTick != null) main.removeCallbacks(sleepTick); sleepTick = null; }
+
+    /** Kept under ~450 bytes: it travels in one BLE MTU (title truncated to 100 chars). */
+    public String stateJson() {
+        JSONObject o = new JSONObject();
+        try {
+            String t = title;
+            if (t.length() > 100) t = t.substring(0, 100);
+            o.put("engine", "ExoPlayer");
+            if (appCtx != null) {   // WHICH tablet this is: a remote that can hear two of them needs to tell them apart
+                o.put("id", Identity.id(appCtx));
+                o.put("name", Identity.name(appCtx));
+            }
+            o.put("playlist", currentPl);
+            o.put("count", count);
+            o.put("index", idx);
+            o.put("title", t);
+            o.put("playing", playing);
+            o.put("napped", napped);
+            o.put("position_ms", posMs);
+            o.put("duration_ms", durMs);
+            o.put("cur", curId);   // stable library id of the current item (cached by the ticker) — followers mirror it
+            o.put("clock", sampleClock);   // leader's monotonic clock when position_ms was sampled (synced-playback extrapolation)
+            o.put("client", clientItems != null);   // true = streams from a host (never the sync leader); false = holds the library
+            o.put("volume", Math.round(vol * 100) / 100.0);
+            o.put("muted", muted);
+            o.put("sleeping", sleeping);
+            o.put("sleep_remaining_ms", sleeping ? Math.max(0, sleepEnd - System.currentTimeMillis()) : 0);
+            o.put("ip", wifiIp());   // so a remote can fetch /snapshot.jpg directly (BLE carries this; no mDNS needed)
+            o.put("shuffle", shuffle);
+            o.put("loop", loop);
+            o.put("playmode", PlayerActivity.isPlayModeActive());   // toddler overlay up? (remotes show an on/off toggle)
+            if (appCtx != null) {   // TV battery so remotes can show level + whether it's charging
+                try {
+                    android.os.BatteryManager bm = (android.os.BatteryManager) appCtx.getSystemService(Context.BATTERY_SERVICE);
+                    int lvl = bm != null ? bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) : -1;
+                    if (lvl >= 0 && lvl <= 100) o.put("battery", lvl);
+                    o.put("charging", bm != null && bm.isCharging());
+                } catch (Exception ignored) {}
+            }
+            o.put("conn", appCtx != null ? HotspotService.mode(appCtx) : "ble");
+            o.put("flash_ms", appCtx != null ? Cfg.getInt(appCtx, "anancy_flash_ms", 3000) : 3000);
+            if (HotspotService.running() && HotspotService.currentSsid() != null)   // only while the TV hotspot is up
+                o.put("hotspot", new JSONObject().put("ssid", HotspotService.currentSsid()).put("pass", HotspotService.currentPass() == null ? "" : HotspotService.currentPass()));
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+
+    /** This device's site-local IPv4 (e.g. 192.168.x) so a remote can reach the control server
+        without relying on mDNS resolution (which proved flaky). "" if not on a LAN. */
+    static String wifiIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                java.net.NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private void on(Runnable r) { if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main.post(r); }
+    private static float clamp(float v) { return Math.max(0f, Math.min(1f, v)); }
+
+    void detach() { main.removeCallbacksAndMessages(null); p = null; }
+}
