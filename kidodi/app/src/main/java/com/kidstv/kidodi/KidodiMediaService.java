@@ -66,7 +66,11 @@ public class KidodiMediaService extends MediaBrowserServiceCompat {
 
     @Override public void onCreate() {
         super.onCreate();
-        RemoteService.acquire(this, "aa");                 // hold the BLE/Wi-Fi link while AA is up
+        // Hold the BLE/Wi-Fi link while AA is up. Guarded: if AA connects while the app is backgrounded,
+        // A12+ can refuse the foreground-service start (ForegroundServiceStartNotAllowedException) — that
+        // must not crash the media service (AA browsing still works; the link comes up on next foreground).
+        try { RemoteService.acquire(this, "aa"); }
+        catch (Exception e) { android.util.Log.w("Kidodi", "AA link acquire deferred (FGS background-start): " + e); }
         session = new MediaSessionCompat(this, "Kidodi");
         session.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
         session.setCallback(callback);

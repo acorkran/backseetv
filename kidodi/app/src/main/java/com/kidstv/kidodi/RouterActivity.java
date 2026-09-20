@@ -66,9 +66,14 @@ public class RouterActivity extends Activity {
     private void requestBlePerms() {
         try {
             if (android.os.Build.VERSION.SDK_INT < 31) return;
-            String[] all = {"android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_ADVERTISE"};
+            java.util.List<String> want = new java.util.ArrayList<>(java.util.Arrays.asList(
+                    "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_ADVERTISE"));
+            // A13+ needs a runtime grant to SHOW the remote's foreground-service notification. On the
+            // device-owner TV it's DPM-granted already (so it's filtered out below); this covers the
+            // NON-owner remote / Play flavor, where nothing else requests it.
+            if (android.os.Build.VERSION.SDK_INT >= 33) want.add("android.permission.POST_NOTIFICATIONS");
             java.util.List<String> need = new java.util.ArrayList<>();
-            for (String p : all) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) need.add(p);
+            for (String p : want) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) need.add(p);
             if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), 1);
         } catch (Exception ignored) {}
     }
