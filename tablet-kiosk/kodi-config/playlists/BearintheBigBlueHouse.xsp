@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<smartplaylist type="episodes">
-    <name>Bear in the Big Blue House</name>
-    <match>all</match>
-    <rule field="tvshow" operator="is"><value>Bear in the Big Blue House</value></rule>
-    <order direction="ascending">episode</order>
-</smartplaylist>

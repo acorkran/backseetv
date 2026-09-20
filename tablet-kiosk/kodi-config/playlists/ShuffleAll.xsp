@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<smartplaylist type="episodes">
-    <name>Shuffle All Shows</name>
-    <match>all</match>
-    <rule field="path" operator="doesnotcontain"><value>!hidden</value></rule>
-    <order direction="ascending">random</order>
-</smartplaylist>

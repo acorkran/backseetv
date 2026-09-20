@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<smartplaylist type="episodes">
-    <name>Piri Penguins</name>
-    <match>all</match>
-    <rule field="tvshow" operator="is"><value>Piri Penguins</value></rule>
-    <order direction="ascending">episode</order>
-</smartplaylist>

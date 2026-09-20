@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<smartplaylist type="episodes">
-    <name>Andy's Aquatic Adventures</name>
-    <match>all</match>
-    <rule field="tvshow" operator="is"><value>Andy's Aquatic Adventures</value></rule>
-    <order direction="ascending">episode</order>
-</smartplaylist>
