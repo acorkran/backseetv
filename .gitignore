@@ -2,9 +2,12 @@
 build/
 *.idsig
 
-# gradle (kidodi/ etc.): caches + machine-specific SDK path
+# gradle (anancy/ etc.): caches + machine-specific SDK path
 .gradle/
 local.properties
 
-# kept intentionally: source, kodi-config, Pi scripts, prebuilt *.apk (handy for sideloading),
-# and the debug.keystore files (stable signature avoids reinstall-signature errors)
+# never commit signing keystores (debug keystores regenerate locally via each build.sh / gradle)
+*.keystore
+debug.keystore
+
+# kept intentionally: source, kodi-config, Pi scripts, prebuilt *.apk (handy for sideloading)

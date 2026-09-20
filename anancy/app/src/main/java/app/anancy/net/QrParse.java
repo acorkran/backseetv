@@ -39,7 +39,7 @@ final class QrParse {
         return (w.ssid != null && !w.ssid.isEmpty()) ? w : null;
     }
 
-    /** ANANCY:ip=192.168.1.2[;k=v...] -> the ip value, or null if absent. Caller passes an ANANCY: payload. */
+    /** ANANCY:ip=192.168.1.50[;k=v...] -> the ip value, or null if absent. Caller passes an ANANCY: payload. */
     static String anancyIp(String raw) {
         for (String kv : raw.substring(7).split(";")) {
             int e = kv.indexOf('=');
