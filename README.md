@@ -1,57 +1,130 @@
-# Kidodi
+# Anancy
 
-A self-contained, **offline** in-car kids' TV appliance: an Android tablet locked down as a
-device-owner **Kodi** kiosk that boots straight into a shuffle of the shows, driven from the front
-seat by a custom phone remote. Built for a toddler — no menus to escape into, no internet, no ads.
+[![Android CI](../../actions/workflows/android-ci.yml/badge.svg)](../../actions/workflows/android-ci.yml)
 
-*(The name is Kid + Kodi. The repo used to be called `jellyfin-wheels`, from an earlier Raspberry
-Pi + Jellyfin approach that was too weak; the project pivoted to media-local-on-tablet + Kodi.)*
+A self-contained, **fully offline** in-car and multi-screen media appliance. An Android tablet is
+locked down as a **device-owner kiosk** that boots straight into a shuffle of local media —
+no launcher, no menus to escape into, no internet, no ads — and is driven from a phone, a
+smartwatch, or the car's Android Auto screen. Multiple screens can be driven at once, either
+**independently** or **synced frame-to-frame** so several show the same thing in step.
 
-## What's here
+Built as a real appliance for real drives, then hardened into a portfolio piece: one cohesive
+Android app, unit-tested core logic, CI, and no cloud anywhere.
 
-- **`tablet-kiosk/`** — the device-owner kiosk app (`com.kidstv.kiosk`) + `kodi-config/`. Boots to
-  playback (the show *is* the home screen), a full-screen touch-block overlay makes the screen
-  inert, hardware volume keys are bridged into Kodi's own volume, nap/wake blanks and restores the
-  screen, smart playlists (shuffle-all / per-show / naptime), and a self-healing autoplay addon
-  keeps the show alive. Fully local — no scraper, metadata baked as NFO/art.
-- **`remote-app/`** — the front-seat phone remote (`com.kidstv.remote`). Talks straight to Kodi's raw
-  JSON-RPC (port 9090) by IP, so it behaves identically over WiFi or a Bluetooth-PAN tether.
-  **Zero-config:** since the phone is the hotspot, the app sweeps its own subnet for Kodi and finds
-  the tablet automatically — no IP to type. A live tile per real playlist, transport / seek / volume
-  / D-pad, nap/wake power, a "Go to sleep" fade, an in-app Settings page, a Files browser (tablet
-  uploads + a phone folder browser + the system file picker), and a home-screen widget.
-- **`androidauto-remote/`** — the car head-unit remote (`com.kidstv.aaremote`), a MediaBrowserService
-  media app: browse playlists, play/pause/skip, tablet volume, and a sticky power-off, from Android
-  Auto. Gradle.
-- **`camera-monitor/`** — optional child monitor (`com.kidstv.cameramon`): on-device front-cam + ML
-  Kit (offline) logs eyes-open / head-pitch; the kiosk watchdog auto-starts + recovers it. Gradle. A
-  glanceable aid, **not** a safety monitor.
+> **Name:** *Anancy* — the trickster-**storyteller spider** of West African and Caribbean
+> folklore, who bargained for and owns all the world's stories. The spider's web says the
+> whole idea in one image: a single story mirrored across many connected screens.
+> *(Formerly **Kidodi** — the in-car kids-TV origin is now just one use case.)*
 
-(The Pi tooling from the old approach was removed; it's in git history if ever needed.)
+## Demo
 
-## Setup
+<!-- TODO(owner): drop a screen recording here — phone remote driving two tablets in sync.
+     See docs/README.md for how to record the clip, convert it, and drop it in
+     (save it as docs/demo.gif and swap this comment for: ![Anancy demo](docs/demo.gif)). -->
+_A 20-second clip of the phone remote driving two tablets in lock-step will go here._
 
-See **[`SETUP.md`](SETUP.md)** for the full from-scratch process: media onto the SD, Kodi + the
-autoplay addon, generating a per-show smart playlist for every show, device-owner provisioning (the
-one un-reversible step), and installing the four apps.
+## What makes it interesting
 
-## Status
+- **Clock-aligned multi-device playback.** Followers estimate the leader's monotonic clock
+  with an NTP-lite offset (lowest-RTT filtered, slow-drift tracked), extrapolate where the
+  leader is *now*, and converge with a seek-ahead scheduled start plus an inaudible ±1.5%
+  speed nudge. Measured to ~20–50 ms apart on real hardware. The math is pure and
+  unit-tested: [`player/SyncMath.java`](anancy/app/src/main/java/app/anancy/player/SyncMath.java).
+- **Its own EOF-proof player.** A Media3 (ExoPlayer) engine with native shuffle-all +
+  deterministic auto-advance, so the "stuck at end-of-file" wedge that plagued the old
+  Kodi build structurally cannot happen — no watchdog needed.
+- **Device-owner kiosk done properly.** Lock-task mode, boot-into-show as the home screen,
+  a hidden gesture + PIN admin escape, self-granted permissions, and a self-update path
+  that even pushes the watch build over the Bluetooth Data Layer.
+- **Two transports, one control plane.** BLE is primary (works with no network at all);
+  Wi-Fi/mDNS runs alongside for higher bandwidth and for screens that don't advertise BLE.
+  A **pull model** (the phone is a passive bulletin the tablet polls) sidesteps the
+  Wi-Fi Direct single-radio + directional-firewall problem.
+- **Correct command routing.** In a synced group, playback drives the leader alone
+  (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —
+  the split is pure and unit-tested:
+  [`remote/CommandRouter.java`](anancy/app/src/main/java/app/anancy/remote/CommandRouter.java).
+- **Four control surfaces** from one app: an in-tablet admin remote, a phone remote, a
+  Wear OS remote, and an Android Auto media dash.
 
-Working and road-tested. The remote's playlist list is now dynamic (it enumerates the tablet's real
-`.xsp`), but the repo isn't yet scrubbed of install-specific details (IPs, hotspot SSID, PIN) for a
-public release.
+## Architecture
 
-## Building the apps
+One APK, two roles (chosen on first run and remembered): **player** (the tablet kiosk) and
+**remote** (the phone). The same code ships both.
 
-- `tablet-kiosk/` and `remote-app/`: **no Gradle** — `./build.sh` (needs an Android SDK with
-  build-tools + a platform); compiles, signs with the local `debug.keystore`, produces a `*.apk`.
-- `androidauto-remote/` and `camera-monitor/`: **Gradle** — `gradle -p <dir> assembleDebug` (they
-  pull real AARs — media-compat, CameraX, ML Kit — that the no-Gradle build can't).
+```
+        Phone / Watch / Android Auto  ──BLE (primary)──┐
+                    (remote role)      ──Wi-Fi/mDNS─────┤
+                                                        ▼
+                                            Tablet kiosk (player role)
+                                            ┌───────────────────────────┐
+                                            │ ControlServer  :8090 HTTP  │
+                                            │ BleServer      GATT        │
+                                            │        │                   │
+                                            │        ▼                   │
+                                            │ PlayerController ─ ExoPlayer│
+                                            │  (queue, sync, volume)     │
+                                            └───────────────────────────┘
+   Synced group: one leader plays; followers poll /clock + /state and mirror in lock-step.
+```
+
+Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
+
+| Package | Responsibility |
+|---------|----------------|
+| `player/` | ExoPlayer engine, queue/playlists, the clock-sync math, media session |
+| `remote/` | Phone remote UI + service, command routing, settings/about screens |
+| `net/`    | HTTP control server, BLE server/client, Wi-Fi client, hotspot, QR pairing, camera snapshot |
+| `admin/`  | Device-owner receiver, unlock gesture, boot + package-replaced receivers |
+| _(root)_  | Launcher/role router and the small shared core (`Cfg`, `Identity`) |
+
+## Repo layout
+
+| Path | What it is | State |
+|------|------------|-------|
+| [`anancy/`](anancy/) | **The app.** `:app` (phone + tablet) and `:wear` (Wear OS). Gradle. | Production |
+| [`camera-monitor/`](camera-monitor/) | Front-cam + ML Kit still-image child monitor. Gradle. | Prototype |
+| [`server/`](server/) | Home-server helper scripts (media sync over adb). | Utility |
+| [`legacy/`](legacy/) | v1 (Kodi-bridge) apps + v2 prototypes, superseded. Not built. | Archived |
+
+## Build & test
+
+The app is a standard Gradle project (Java 17, Android SDK build-tools 34 / platform 34).
+`local.properties` is gitignored; set `ANDROID_SDK_ROOT` or add your own.
+
+```bash
+cd anancy
+gradle :app:testDebugUnitTest     # run the unit tests (SyncMath, CommandRouter)
+gradle :app:assembleDebug         # build the APK (also builds + embeds the watch app)
+```
+
+CI runs both on every push — see [`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml).
+
+_(The archived `legacy/` apps use a no-Gradle `./build.sh`; they're kept only for history.)_
+
+## Status & Android compatibility
+
+Runs daily on a Samsung and a Lenovo tablet plus a Galaxy phone; a Wear OS watch and an
+Android Auto head unit are supported. Android-TV-as-a-follower is exploratory.
+
+The kiosk ships via GitHub / EMM (device-owner can't come from the Play Store), targets
+**API 35** (Android 15), and runs on Android 14/15/16. Modern-platform items handled:
+
+- **targetSdk / compileSdk 35** (app + watch) — ready for a Play Store submission.
+- **16 KB page-size**: CameraX 1.4.1 and ML Kit barcode 17.3.0 ship 16 KB-aligned native
+  libs, so the QR scanner / camera load on 16 KB-page Android 15+ devices.
+- **Edge-to-edge**: opted out via `windowOptOutEdgeToEdgeEnforcement` for now (a supported
+  API-35 stopgap); a full `WindowInsets` pass is the proper follow-up.
+
+Still on the list: promoting `HotspotService` to a typed foreground service (works today
+via the device-owner exemption), and on-device verification on a physical Android 15 unit.
+
+## Contributing
+
+This is a personal portfolio project — issues and pull requests aren't being accepted. You're welcome to fork it under the license below.
 
 ## License
 
-Everything here is licensed **PolyForm Noncommercial 1.0.0** (see [`LICENSE.md`](LICENSE.md)):
-free for any non-commercial use, but **commercial use requires a separate license** from the
-copyright holder. It is source-available, not OSI "open source."
-
-It runs on **Kodi** (GPL-2.0), which you install separately — Kodi itself is not part of this repo.
+**PolyForm Noncommercial 1.0.0** (see [`LICENSE.md`](LICENSE.md)): free for any
+non-commercial use; commercial use requires a separate license from the copyright holder.
+Source-available, not OSI "open source."

@@ -1,5 +1,0 @@
-<!-- Rounded chip behind each icon button (power/wifi/volume). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#FF35516E"/>
-    <corners android:radius="12dp"/>
-</shape>

@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<smartplaylist type="episodes">
-    <name>Ms Rachel</name>
-    <match>all</match>
-    <rule field="tvshow" operator="is"><value>Ms Rachel</value></rule>
-    <order direction="ascending">episode</order>
-</smartplaylist>

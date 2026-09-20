@@ -1,5 +1,0 @@
-<!-- Rounded dark panel behind the whole widget (matches the app BG). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#F210151C"/>
-    <corners android:radius="20dp"/>
-</shape>

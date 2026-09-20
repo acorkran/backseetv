@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Git-derived version for display ("0.1-3945c93").
+def gitShort = { try { 'git rev-parse --short HEAD'.execute([], rootDir).text.trim() } catch (e) { 'dev' } }()
+def gitCount = { try { 'git rev-list --count HEAD'.execute([], rootDir).text.trim().toInteger() } catch (e) { 1 } }()
+
+// BUILD ID = SHA-256 of this module's SOURCES (src/** + this file). The watch self-update keys on it
+// (see WearUpdater / WearPusher): APK bytes are not reproducible across clean builds, but the source
+// hash is, so an unchanged watch app is never re-pushed. Baked in as BuildConfig.BUILD_ID and also
+// written to build/wear-build-id.txt for the phone module to embed alongside the APK.
+def wearBuildId = {
+    def md = java.security.MessageDigest.getInstance('SHA-256')
+    def files = (fileTree(dir: 'src', include: '**/*').files + [file('build.gradle')]).sort { it.path }
+    files.each { f -> md.update(f.path.substring(projectDir.path.length()).bytes); md.update(f.bytes) }
+    md.digest().encodeHex().toString()
+}()
+tasks.register('writeWearBuildId') {
+    def out = layout.buildDirectory.file('wear-build-id.txt')
+    inputs.property('wearBuildId', wearBuildId)   // without this Gradle treats an outputs-only task as up-to-date forever
+    outputs.file(out)
+    doLast { out.get().asFile.text = wearBuildId }
+}
+
+android {
+    namespace 'app.anancy.wear'
+    compileSdk 35
+
+    defaultConfig {
+        // SAME application id as the phone app: the Wear Data Layer only routes between phone and
+        // watch apps that share an id + signing key — that link carries the watch's self-update.
+        applicationId 'app.anancy'
+        minSdk 30            // Wear OS 3+
+        targetSdk 35
+        versionCode gitCount
+        versionName "0.1-$gitShort"
+        buildConfigField 'String', 'BUILD_ID', "\"$wearBuildId\""
+    }
+
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint { abortOnError false }
+}
+
+dependencies {
+    // Glanceable Tile (needs a one-time ONLINE fetch; offline after).
+    implementation 'androidx.wear.tiles:tiles:1.4.1'
+    implementation 'androidx.wear.protolayout:protolayout:1.2.1'
+    implementation 'androidx.wear.protolayout:protolayout-material:1.2.1'
+    implementation 'com.google.guava:guava:33.2.1-android'
+    // Data Layer (phone <-> watch over the Bluetooth companion link): receives the self-update APK
+    implementation 'com.google.android.gms:play-services-wearable:18.2.0'
+}

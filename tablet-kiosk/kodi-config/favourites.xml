@@ -1,8 +1,0 @@
-<favourites>
-    <favourite name="Shuffle All Shows">RunScript(script.kidstv.play,ShuffleAll)</favourite>
-    <favourite name="Naptime (calm)">RunScript(script.kidstv.play,Naptime)</favourite>
-    <favourite name="Bluey">RunScript(script.kidstv.play,Bluey)</favourite>
-    <favourite name="Big Lizard">RunScript(script.kidstv.play,BigLizard)</favourite>
-    <favourite name="Mini Kids">RunScript(script.kidstv.play,MiniKids)</favourite>
-    <favourite name="Ms Rachel">RunScript(script.kidstv.play,MsRachel)</favourite>
-</favourites>

@@ -1,0 +1,55 @@
+name: Android CI
+
+# Builds the Anancy v2 app (:app + :wear) and runs the unit tests on every push
+# and PR. The app is a plain Gradle project with no committed wrapper, so we
+# provision Gradle 8.7 explicitly. local.properties is gitignored — the SDK path
+# comes from the runner's ANDROID_SDK_ROOT.
+on:
+  push:
+    branches: [ main, "v2/**" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: anancy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''   # skip the action's default install of the obsolete 'tools' package (it 404s); we install exactly what we need next
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Unit tests (SyncMath, CommandRouter)
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Assemble debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: anancy-debug-apk
+          path: anancy/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

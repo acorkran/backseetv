@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Toddler Lock</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <!-- The idle desktop the parent sees before locking. In the Tauri build this whole
+       page IS the lock window; in a browser it's a one-button launcher. -->
+  <main class="home" id="home">
+    <h1>🔒🧸 Toddler Lock</h1>
+    <p class="tag">Lock the keyboard so your kid can mash while your work stays safe.</p>
+    <button class="big-lock" id="lock-btn">Lock now</button>
+    <label class="idle-opt">
+      <input type="checkbox" id="idle-toggle">
+      auto-lock after <span id="idle-min-val">5</span> min idle
+      <input type="range" id="idle-range" min="1" max="30" value="5">
+    </label>
+    <button class="settings-btn home-settings" id="home-settings-btn">⚙️ Settings (voice &amp; sound)</button>
+    <label class="idle-opt"><input type="checkbox" id="soundplay-toggle"> 🎤 Sound Play <span class="beta">beta</span> — turn the kid's sounds into letters while locked (uses mic)</label>
+    <p class="hint">An adult unlocks with a timed 6-digit code.</p>
+    <p class="kb-note" id="kb-note" hidden>⚠️ This browser can't lock the <b>Windows key</b>. Use <b>Chrome</b> or <b>Edge</b> for a full screen lock — or get the desktop app for a guaranteed lock.</p>
+
+    <!-- Launch footer (the funnel). Links come from config.js; empty ones auto-hide. -->
+    <footer class="home-foot" id="home-foot" hidden>
+      <a class="foot-link" id="link-win" target="_blank" rel="noopener" hidden>🪟 Get the Windows app</a>
+      <a class="foot-link foot-survey" id="link-survey" target="_blank" rel="noopener" hidden>💬 Would you pay for more voices &amp; languages? (30 sec)</a>
+      <a class="foot-link" id="link-kofi" target="_blank" rel="noopener" hidden>☕ Tip jar</a>
+      <a class="foot-link" id="link-github" target="_blank" rel="noopener" hidden>★ Open source on GitHub</a>
+      <div class="foot-crypto" id="foot-crypto" hidden>tip crypto: <code id="foot-crypto-addr"></code></div>
+    </footer>
+  </main>
+
+  <!-- the fun lock surface -->
+  <div class="lock-overlay" id="lock-overlay" hidden>
+    <button class="adult-unlock-btn" id="adult-unlock-btn">🔒 adult unlock</button>
+    <div class="sp-status" id="sp-status" hidden></div>
+
+    <div class="unlock-panel" id="unlock-panel" hidden>
+      <button class="up-close" id="up-close" aria-label="back to playing">&times;</button>
+      <div id="unlock-view">
+        <div class="up-title">Grown-up unlock</div>
+        <div class="unlock-instr">type this code, no mistakes, within <b><span id="unlock-timer">30</span>s</b></div>
+        <div class="unlock-code" id="unlock-code">· · · · · ·</div>
+        <input class="unlock-input" id="unlock-input" inputmode="numeric" autocomplete="off"
+               maxlength="6" aria-label="unlock code" placeholder="type the code">
+        <div class="unlock-msg" id="unlock-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Standalone settings modal: reachable from the home screen AND from the locked
+       cog. Same controls in both contexts. -->
+  <div class="settings-panel" id="settings-panel" hidden>
+    <button class="up-close" id="settings-close" aria-label="close settings">&times;</button>
+    <div class="up-title">Settings</div>
+    <div class="setting-row">
+      <div class="setting-label">Language</div>
+      <select class="settings-select" id="lang-select">
+        <option value="en">English</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
+      </select>
+      <div class="setting-hint">letters, words &amp; numbers — English, Español &amp; Français use neural voices; other languages fall back to your system voice.</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Voice</div>
+      <select class="settings-select" id="clip-voice" aria-label="voice"></select>
+      <div class="setting-hint">the voice that reads each letter &amp; number aloud</div>
+    </div>
+    <div class="setting-row" id="device-row" hidden>
+      <div class="setting-label">Audio output device</div>
+      <div class="device-current" id="device-current">using: system default</div>
+      <div class="device-list" id="device-list"><div class="device-empty">loading outputs…</div></div>
+      <button class="settings-btn" id="scan-device">🔊 choose / change speaker</button>
+      <div class="setting-hint" id="device-browser-hint">Pick once and it sticks. In a browser the OS shows its own one-time chooser to reveal speaker names.</div>
+      <div class="setting-hint" id="device-native-note" hidden>🔊 Plays on the system default device. Picking a specific speaker is being rebuilt with native audio — landing in the next update.</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Volume <span class="vol-val" id="volume-val">80%</span></div>
+      <input type="range" class="vol-slider" id="volume-range" min="0" max="100" value="80" aria-label="output volume">
+    </div>
+    <button class="settings-btn" id="test-sound">🔊 test sound</button>
+    <div class="setting-row" id="tray-row" hidden>
+      <div class="setting-label">System tray icon</div>
+      <label class="idle-opt"><input type="checkbox" id="tray-toggle"> show a tray icon (right-click → Lock / Show / Quit)</label>
+      <div class="setting-hint">Windows may keep new tray icons in the hidden “^” overflow — whether it's always shown is a Windows setting we can't change for you.</div>
+    </div>
+    <div class="setting-row" id="float-row" hidden>
+      <div class="setting-label">Floating lock button</div>
+      <label class="idle-opt"><input type="checkbox" id="float-toggle"> show an always-on-top padlock to tap-to-lock</label>
+      <div class="float-opts">
+        <label class="float-opt">corner
+          <select class="settings-select" id="float-corner">
+            <option value="br">bottom-right</option>
+            <option value="bl">bottom-left</option>
+            <option value="tr">top-right</option>
+            <option value="tl">top-left</option>
+          </select>
+        </label>
+        <label class="float-opt">size <span id="float-size-val">96</span>px
+          <input type="range" id="float-size" min="48" max="200" value="96"></label>
+        <label class="float-opt">opacity <span id="float-opacity-val">85</span>%
+          <input type="range" id="float-opacity" min="20" max="100" value="85"></label>
+      </div>
+      <div class="setting-hint">A small padlock that hovers over everything — tap it to lock instantly.</div>
+    </div>
+    <div class="setting-row" id="shortcut-row" hidden>
+      <div class="setting-label">Lock keyboard shortcut</div>
+      <div class="device-current" id="shortcut-current">Ctrl+Alt+Shift+L</div>
+      <button class="settings-btn" id="shortcut-record">⌨️ record new shortcut</button>
+      <div class="setting-hint">Locks from anywhere while the app is running. Click record, then press your combo. (Ctrl+Alt+Del and Win+L can't be captured.)</div>
+    </div>
+    <button class="settings-back" id="settings-back">← back</button>
+  </div>
+
+  <!-- Sound Play consent (shown when enabling the toggle). The play surface is the normal
+       lock overlay — enable this, then press "Lock now" to use it. -->
+  <div class="sp-consent" id="sp-consent" hidden>
+    <div class="sp-consent-card">
+      <h2>🎤 Sound Play</h2>
+      <p>Turns the sounds your child makes into letters on the screen, live.</p>
+      <p class="sp-private">Everything runs <b>on this device</b> — the microphone audio is <b>never uploaded or recorded</b>. The first time, it downloads a ~40&nbsp;MB voice model.</p>
+      <div class="sp-consent-btns">
+        <button class="big-lock" id="sp-consent-start">Start</button>
+        <button class="settings-btn" id="sp-consent-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="kid-audio" preload="auto"></audio>
+  <script src="config.js"></script>
+  <script src="soundplay.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

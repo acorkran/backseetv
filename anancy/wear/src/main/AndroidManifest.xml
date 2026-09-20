@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.type.watch"/>
+
+    <!-- BLE central to the tablet-player -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <!-- Wear OS 3 (API 30) BLE scan path -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+    <!-- keep the BLE link alive in a foreground service (survives screen-off; feeds the Tile) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Wi-Fi /live MJPEG from the tablet (LAN, cleartext) -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- self-update over the Data Layer: install the phone-pushed build on ourselves (silent once
+         this app is its own installer of record; see WearUpdater for the one-time bootstrap) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
+
+    <application
+        android:label="Anancy Remote"
+        android:icon="@android:drawable/ic_media_play"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false">
+        <activity
+            android:name=".WearRemoteActivity"
+            android:exported="true"
+            android:theme="@style/AnancyWear">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <service android:name=".BleService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"/>
+
+        <!-- glanceable Tile -->
+        <service android:name=".AnancyTileService"
+            android:label="Anancy"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER"/>
+            </intent-filter>
+            <meta-data android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@android:drawable/ic_media_play"/>
+        </service>
+
+        <!-- self-update: Play services wakes this when the phone publishes a new watch build -->
+        <service android:name=".WearUpdateService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED"/>
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/anancy/wear-update"/>
+            </intent-filter>
+        </service>
+        <receiver android:name=".InstallResultReceiver" android:exported="false"/>
+    </application>
+</manifest>
