@@ -87,7 +87,7 @@ public class PlayerController {
     private static final long START_LEAD = 400;    // ms the follower seeks ahead then waits, so its first frame lands in step
     // (clock-offset filtering + drift math live in SyncMath — pure + unit-tested; HARD_SEEK_MS is there)
 
-    public void setNapped(boolean n) { napped = n; }
+    public void setNapped(boolean n) { napped = n; applyMute(); }   // re-assert volume so a napped ("off") player goes silent immediately
 
     /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
     public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
@@ -685,7 +685,10 @@ public class PlayerController {
     // persisted mute: null = follow the mute flag, TRUE = audible, FALSE = silent. Restored (null) on exit.
     private volatile Boolean audioOverride = null;
     public void overrideShowAudio(Boolean b) { audioOverride = b; applyMute(); }
-    private float effMult() { return audioOverride != null ? (audioOverride ? 1f : 0f) : (muted ? 0f : 1f); }
+    private float effMult() {
+        if (napped) return 0f;   // a napped ("off") player is GUARANTEED silent, regardless of mute/override — nap-safe by design
+        return audioOverride != null ? (audioOverride ? 1f : 0f) : (muted ? 0f : 1f);
+    }
     private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(effMult()); }); }
 
     // --- sleep timer (fade volume then pause) ------------------------------

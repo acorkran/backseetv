@@ -235,6 +235,10 @@ public class PlayerActivity extends Activity {
     private void setNapScreen(boolean nap) {
         napped = nap;
         PlayerController.get().setNapped(nap);
+        // Audio-safety: powering a screen OFF PERSISTS mute, so a later resume (including a spurious
+        // wake on a flaky device) stays silent until the user deliberately raises the volume. Root cause
+        // of the past "napped tablet blasted audio" incidents: nap paused but never muted.
+        if (nap) PlayerController.get().setMuted(true);
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         napOverlay.setVisibility(nap ? View.VISIBLE : View.GONE);
         lp.screenBrightness = nap ? 0.02f : -1.0f;   // -1 = system default -> reliably ON again
