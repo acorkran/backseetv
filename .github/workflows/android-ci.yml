@@ -6,7 +6,7 @@ name: Android CI
 # comes from the runner's ANDROID_SDK_ROOT.
 on:
   push:
-    branches: [ main, "v2/**" ]
+    branches: [ main, dev ]
   pull_request:
   workflow_dispatch:
 
