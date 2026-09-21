@@ -82,7 +82,10 @@ public final class Library {
         } catch (Exception e) { Log.w(TAG, "grantStorage: " + e); }
     }
 
-    /** Candidate "Anancy" roots across primary + removable volumes (portable, no hardcoded UUID). */
+    // Media folder names to scan: the current "Anancy" plus legacy names, so an upgraded/rebranded or
+    // re-provisioned install finds existing media WITHOUT the user moving it (all matches are merged).
+    static final String[] MEDIA_DIRS = { "Anancy", "KidsTV", "Kidodi" };
+    /** Candidate media roots across primary + removable volumes (portable, no hardcoded UUID). */
     private static List<File> roots(Context ctx) {
         grantStorage(ctx);
         LinkedHashSet<File> roots = new LinkedHashSet<>();
@@ -92,11 +95,11 @@ public final class Library {
             // older releases are covered by the external-storage + /storage/* sweep below
             if (sm != null && android.os.Build.VERSION.SDK_INT >= 30) for (StorageVolume v : sm.getStorageVolumes()) {
                 File d = v.getDirectory();
-                if (d != null) roots.add(new File(d, "Anancy"));
+                if (d != null) for (String n : MEDIA_DIRS) roots.add(new File(d, n));
             }
         } catch (Exception ignored) {}
-        try { roots.add(new File(Environment.getExternalStorageDirectory(), "Anancy")); } catch (Exception ignored) {}
-        try { File[] vs = new File("/storage").listFiles(); if (vs != null) for (File v : vs) roots.add(new File(v, "Anancy")); } catch (Exception ignored) {}
+        try { for (String n : MEDIA_DIRS) roots.add(new File(Environment.getExternalStorageDirectory(), n)); } catch (Exception ignored) {}
+        try { File[] vs = new File("/storage").listFiles(); if (vs != null) for (File v : vs) for (String n : MEDIA_DIRS) roots.add(new File(v, n)); } catch (Exception ignored) {}
         boolean afm = false;
         try { if (android.os.Build.VERSION.SDK_INT >= 30) afm = Environment.isExternalStorageManager(); } catch (Exception ignored) {}
         StringBuilder sb = new StringBuilder("roots(allFilesAccess=" + afm + "):");
