@@ -264,11 +264,16 @@ public class RemoteActivity extends Activity {
     }
 
     // A card per connected screen: checkbox + name + placeholder media art + its own show/progress. 2 per row.
+    /** Ids the cards were last drawn for: discovery finishes AFTER the tab is built, so state
+        arriving with a new screen has to trigger a re-render or the list stays empty forever. */
+    private java.util.Set<String> renderedDevIds = new java.util.HashSet<>();
+
     private void refreshDeviceCards() {
         if (deviceCards == null) return;
         deviceCards.removeAllViews();
         RemoteService svc = RemoteService.get();
         java.util.List<java.util.Map.Entry<String, String>> devs = svc != null ? new java.util.ArrayList<>(svc.tablets().entrySet()) : new java.util.ArrayList<>();
+        renderedDevIds = svc != null ? new java.util.HashSet<>(svc.tablets().keySet()) : new java.util.HashSet<>();
         if (devs.isEmpty()) { deviceCards.addView(ui.noteText("No screens connected yet — tap Anancy → Connection.")); return; }
         boolean all = allSelected(svc);
         LinearLayout rowL = null;
@@ -483,6 +488,8 @@ public class RemoteActivity extends Activity {
             hsSsid = hs != null ? hs.optString("ssid", null) : null; hsPass = hs != null ? hs.optString("pass", null) : null;
             if (connView != null) renderConnStatus();
             refreshScreenToggles();   // pick up newly-heard screens (Sync group appears once 2+ are known)
+            RemoteService sv2 = RemoteService.get();   // ...and the per-screen CARDS, which were built once with an empty list
+            if (sv2 != null && curTab == 0 && !sv2.tablets().keySet().equals(renderedDevIds)) refreshDeviceCards();
         } catch (Exception ignored) {}
     }
 
