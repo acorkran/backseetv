@@ -716,7 +716,12 @@ public class PlayerController {
     private void cancelSleepInternal() { sleeping = false; if (sleepTick != null) main.removeCallbacks(sleepTick); sleepTick = null; }
 
     /** Kept under ~450 bytes: it travels in one BLE MTU (title truncated to 100 chars). */
-    public String stateJson() {
+    public String stateJson() { return stateJson(false); }
+
+    /** @param ble trim to fit ONE notification. Adding id/name/ip/hotspot pushed this past the
+        payload limit (MTU-3 = 514 at our negotiated 517), and the tail - the hotspot creds - was
+        being cut, so a remote never saw them and could not auto-join the TV's hotspot. */
+    public String stateJson(boolean ble) {
         JSONObject o = new JSONObject();
         try {
             String t = title;
@@ -758,7 +763,27 @@ public class PlayerController {
             if (HotspotService.running() && HotspotService.currentSsid() != null)   // only while the TV hotspot is up
                 o.put("hotspot", new JSONObject().put("ssid", HotspotService.currentSsid()).put("pass", HotspotService.currentPass() == null ? "" : HotspotService.currentPass()));
         } catch (Exception ignored) {}
-        return o.toString();
+        return ble ? fitOneNotification(o) : o.toString();
+    }
+
+    private static final int BLE_STATE_MAX = 460;   // headroom for smaller MTUs (the watch)
+    private static int blen(String s) { return s.getBytes(java.nio.charset.StandardCharsets.UTF_8).length; }
+    /** Shed cosmetics, then clamp the title, until the state fits one BLE notification. */
+    private static String fitOneNotification(JSONObject o) {
+        String s = o.toString();
+        if (blen(s) <= BLE_STATE_MAX) return s;
+        for (String k : new String[]{"engine", "flash_ms", "charging", "battery", "playlist"}) {
+            o.remove(k);
+            s = o.toString();
+            if (blen(s) <= BLE_STATE_MAX) return s;
+        }
+        for (int cap = 60; cap >= 16; cap -= 16) {
+            String t = o.optString("title", "");
+            if (t.length() > cap) { try { o.put("title", t.substring(0, cap)); } catch (Exception ignored) {} }
+            s = o.toString();
+            if (blen(s) <= BLE_STATE_MAX) return s;
+        }
+        return s;   // still over: a cut tail beats sending nothing
     }
 
     /** This device's site-local IPv4 (e.g. 192.168.x) so a remote can reach the control server

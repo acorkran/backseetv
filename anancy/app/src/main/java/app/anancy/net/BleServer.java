@@ -160,7 +160,7 @@ public class BleServer {
         }
         @Override public void onCharacteristicReadRequest(BluetoothDevice dev, int rid, int off, BluetoothGattCharacteristic ch) {
             if (Ble.STATE.equals(ch.getUuid()) && gatt != null)
-                gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, ctrl.stateJson().getBytes());
+                gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, ctrl.stateJson(true).getBytes());
         }
     };
 
@@ -296,7 +296,7 @@ public class BleServer {
     private String lastSig = null; private long lastPushMs = 0;
     private void pushStateIfChanged() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        String json = ctrl.stateJson();
+        String json = ctrl.stateJson(true);
         String sig = json.replaceAll("\"(position_ms|sleep_remaining_ms)\":-?\\d+", "");
         long now = System.currentTimeMillis();
         if (sig.equals(lastSig) && now - lastPushMs < HEARTBEAT_MS) return;
@@ -307,7 +307,7 @@ public class BleServer {
     /** Immediate push (after a command) so the remote that sent it sees the result at once. */
     private void pushState() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        String json = ctrl.stateJson();
+        String json = ctrl.stateJson(true);
         lastSig = json.replaceAll("\"(position_ms|sleep_remaining_ms)\":-?\\d+", ""); lastPushMs = System.currentTimeMillis();
         stateChar.setValue(json.getBytes());
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
