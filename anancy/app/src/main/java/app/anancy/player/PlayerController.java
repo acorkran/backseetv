@@ -772,17 +772,21 @@ public class PlayerController {
     private static String fitOneNotification(JSONObject o) {
         String s = o.toString();
         if (blen(s) <= BLE_STATE_MAX) return s;
-        for (String k : new String[]{"engine", "flash_ms", "charging", "battery", "playlist"}) {
+        // NOT "playlist": the remote reads it to show which playlist is current, and without it the UI
+        // silently falls back to "Shuffle All" - every label then disagrees with what was pressed.
+        for (String k : new String[]{"engine", "flash_ms", "charging", "battery"}) {
             o.remove(k);
             s = o.toString();
             if (blen(s) <= BLE_STATE_MAX) return s;
         }
-        for (int cap = 60; cap >= 16; cap -= 16) {
+        for (int cap = 48; cap >= 12; cap -= 12) {
             String t = o.optString("title", "");
             if (t.length() > cap) { try { o.put("title", t.substring(0, cap)); } catch (Exception ignored) {} }
             s = o.toString();
             if (blen(s) <= BLE_STATE_MAX) return s;
         }
+        o.remove("playlist");   // last resort only, after the title has been clamped right down
+        s = o.toString();
         return s;   // still over: a cut tail beats sending nothing
     }
 
