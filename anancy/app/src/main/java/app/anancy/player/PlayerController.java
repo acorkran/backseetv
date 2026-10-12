@@ -598,6 +598,11 @@ public class PlayerController {
 
     void attach(ExoPlayer player) {
         p = player;
+        // A fresh engine starts at volume 1.0. Apply the persisted mute UNCONDITIONALLY here:
+        // keepMute()/applyMute() are gated on !sleeping, so a player recreated while a sleep fade
+        // was armed would otherwise come back AUDIBLE despite muted==true.
+        try { p.setVolume(effMult()); } catch (Exception ignored) {}
+        android.util.Log.i("Anancy", "attach: applied volume=" + effMult() + " (muted=" + muted + " napped=" + napped + " sleeping=" + sleeping + ")");
         count = p.getMediaItemCount();
         p.addListener(new Player.Listener() {
             @Override public void onIsPlayingChanged(boolean ip) { playing = ip; }
@@ -811,5 +816,10 @@ public class PlayerController {
     private void on(Runnable r) { if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main.post(r); }
     private static float clamp(float v) { return Math.max(0f, Math.min(1f, v)); }
 
-    void detach() { main.removeCallbacksAndMessages(null); p = null; }
+    void detach() {
+        main.removeCallbacksAndMessages(null);   // this kills sleepTick...
+        sleeping = false; sleepTick = null;      // ...so the flag must not outlive it - it gates keepMute()/applyMute()
+        napped = false;                          // a stale 'napped' pins effMult() to 0 and the next player is silent forever
+        p = null;
+    }
 }

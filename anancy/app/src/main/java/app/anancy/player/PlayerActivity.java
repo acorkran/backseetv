@@ -56,8 +56,10 @@ public class PlayerActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
-    private ControlServer server;
-    private BleServer ble;
+    // App-scoped on purpose: these must OUTLIVE any single activity instance. Tying them to onDestroy
+    // left the tablet with the app running but NO HTTP listener - dead TV-side remote, no Wi-Fi tier.
+    private static ControlServer server;
+    private static BleServer ble;
     private FrameLayout root;                              // holds the video + overlays (incl. play mode)
     private android.webkit.WebView playWeb;               // toddler play-mode overlay (transparent, over the show)
     private View flash;
@@ -69,6 +71,8 @@ public class PlayerActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        PlayerActivity prior = sRef.get();   // a HOME launch can start a SECOND player in its own task
+        if (prior != null && prior != this) try { prior.finish(); } catch (Exception ignored) {}
         sRef = new WeakReference<>(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
@@ -103,13 +107,20 @@ public class PlayerActivity extends Activity {
             @Override public void onPlaybackStateChanged(int s) { if (s == Player.STATE_READY) Log.i(TAG, "STATE_READY (playing muted)"); }
         });
 
-        PlayerController.get().attach(player);
+        // setAudio FIRST: it loads the persisted mute. Attaching before it meant the engine was built
+        // with the default muted=false and sat at volume 1.0 until the next apply - an audible window
+        // on every cold boot, since setAudio also floors the system stream at 50%.
         PlayerController.get().setAudio(this);   // system media volume + persisted mute; never boots stuck silent
+        PlayerController.get().attach(player);
         PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
-        server = new ControlServer(this, PlayerController.get());
-        server.start();
-        ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
-        ble.start();
+        if (server == null) {   // created once for the app, not per activity
+            server = new ControlServer(this, PlayerController.get());
+            server.start();
+        }
+        if (ble == null) {
+            ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
+            ble.start();
+        }
         HotspotService.applyMode(this, HotspotService.mode(this));   // connectivity level: keeps the TV hotspot up when chosen
 
         // Physical POWER button = same as the remote's Power: screen off -> nap (pause), screen on -> wake (play).
@@ -571,11 +582,12 @@ public class PlayerActivity extends Activity {
 
     @Override protected void onDestroy() {
         try { if (screenRx != null) unregisterReceiver(screenRx); } catch (Exception ignored) {}
-        if (ble != null) { ble.stop(); ble = null; }
-        if (server != null) { server.stop(); server = null; }
-        PlayerController.get().detach();
-        if (player != null) { player.release(); player = null; }
-        if (sRef.get() == this) sRef = new WeakReference<>(null);
+        // servers are app-scoped and deliberately NOT stopped here (see the field comment)
+        if (sRef.get() == this) {   // only the CURRENT instance owns the shared engine
+            PlayerController.get().detach();
+            sRef = new WeakReference<>(null);
+        }
+        if (player != null) { player.release(); player = null; }   // each instance still releases its OWN ExoPlayer
         super.onDestroy();
     }
 }
