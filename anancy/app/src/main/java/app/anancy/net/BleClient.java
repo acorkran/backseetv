@@ -276,13 +276,16 @@ public class BleClient {
     }
     /** Send only to the state-source tablet (queries have a single answer, not a fan-out). */
     public void sendState(String cmd) { Conn c = stateConn(); if (c != null) write(c, cmd.getBytes()); }
-    private void write(Conn c, byte[] b) {
+    private void write(Conn c, byte[] b) { write(c, b, 0); }
+    /** GATT runs ONE operation at a time: a tap landing while the link is busy was silently dropped
+        (the return value was ignored). Retry briefly so "I pressed pause and nothing happened" stops. */
+    private void write(Conn c, byte[] b, int attempt) {
         try {
-            if (c != null && c.gatt != null && c.cmdCh != null) {
-                c.cmdCh.setValue(b);
-                c.cmdCh.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
-                c.gatt.writeCharacteristic(c.cmdCh);
-            }
+            if (c == null || c.gatt == null || c.cmdCh == null) return;
+            c.cmdCh.setValue(b);
+            c.cmdCh.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+            boolean ok = c.gatt.writeCharacteristic(c.cmdCh);
+            if (!ok && attempt < 6) main.postDelayed(() -> write(c, b, attempt + 1), 120);
         } catch (Exception ignored) {}
     }
 

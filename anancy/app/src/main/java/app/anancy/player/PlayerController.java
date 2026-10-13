@@ -248,17 +248,51 @@ public class PlayerController {
     }
 
     /** Playlist names as a one-shot payload (BLE "list" / HTTP /playlists): built-ins first, then user. */
-    public String playlistsJson() {
+    public String playlistsJson() { return playlistsJson(0, Integer.MAX_VALUE); }
+    /** Paged for BLE: names from `from` that fit in maxBytes, plus from/total. The whole list is 600+
+        bytes - more than one notification - which is why the phone's Playlists tab arrived EMPTY. */
+    public String playlistsJson(int from, int maxBytes) {
         JSONObject o = new JSONObject();
         try {
-            o.put("type", "playlists");
+            List<String> all = new ArrayList<>(playlists.keySet());
+            all.addAll(userPlaylists.keySet());
+            int total = all.size();
+            from = Math.max(0, Math.min(from, total));
             JSONArray a = new JSONArray(), u = new JSONArray();
-            for (String n : playlists.keySet()) a.put(n);
-            for (String n : userPlaylists.keySet()) { a.put(n); u.put(n); }
+            o.put("type", "playlists"); o.put("from", from); o.put("total", total);
             o.put("names", a); o.put("user", u);
+            for (String n : userPlaylists.keySet()) u.put(n);
+            for (int i = from; i < total; i++) {
+                a.put(all.get(i));
+                if (o.toString().length() > maxBytes) { a.remove(a.length() - 1); break; }
+            }
         } catch (Exception ignored) {}
         return o.toString();
     }
+
+    /** Paged queue for BLE: items from `from` that fit in maxBytes. The old fixed +/-3 window is why the
+        phone showed ~7 of 1362 items with no way to scroll. from < 0 starts at the current item. */
+    public String queuePageJson(int from, int maxBytes, int maxTitle) {
+        JSONObject o = new JSONObject();
+        try {
+            List<MediaItem> items = currentItems;
+            int total = items.size();
+            if (from < 0) from = idx;
+            from = Math.max(0, Math.min(from, total));
+            JSONArray a = new JSONArray();
+            o.put("type", "queue"); o.put("playlist", currentPl); o.put("index", idx);
+            o.put("total", total); o.put("from", from); o.put("items", a);
+            o.put("shuffle", shuffle); o.put("loop", loop);
+            for (int i = from; i < total; i++) {
+                String t = titleOf(items.get(i));
+                if (t.length() > maxTitle) t = t.substring(0, maxTitle);
+                a.put(t);
+                if (o.toString().length() > maxBytes) { a.remove(a.length() - 1); break; }
+            }
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+
 
     // --- queue editing ------------------------------------------------------
     private MediaItem itemFor(int id) {

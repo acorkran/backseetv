@@ -100,7 +100,10 @@ public class RemoteService extends Service {
     public String typedJson(String type) { return typed.get(type); }
     public String queueJson() { return typed.get("queue"); }
     public void requestQueue() { requestTyped("queue", "queue"); }
-    public void requestPlaylists() { send("list"); }
+    public void requestPlaylists() { playlistTotal = -1; requestTyped("list", "playlists"); }   // clears the cache: a saved/deleted playlist used to never show
+    public void requestQueueFrom(int from) { requestTyped("queue:" + from, "queue"); }
+    private volatile int playlistTotal = -1;
+    public int playlistTotal() { return playlistTotal; }
     public void requestShows(int from) { requestTyped(from > 0 ? "shows:" + from : "shows", "library"); }
     public void requestEpisodes(String show, int from) { requestTyped("eps:" + show + ":" + from, "episodes"); }
     public void requestConn() { requestTyped("conn", "conn"); }
@@ -125,10 +128,19 @@ public class RemoteService extends Service {
         try {
             JSONObject o = new JSONObject(json);
             org.json.JSONArray a = o.optJSONArray("names"), u = o.optJSONArray("user");
-            java.util.List<String> out = new java.util.ArrayList<>(), usr = new java.util.ArrayList<>();
-            if (a != null) for (int i = 0; i < a.length(); i++) out.add(a.optString(i));
+            java.util.List<String> page = new java.util.ArrayList<>(), usr = new java.util.ArrayList<>();
+            if (a != null) for (int i = 0; i < a.length(); i++) page.add(a.optString(i));
             if (u != null) for (int i = 0; i < u.length(); i++) usr.add(u.optString(i));
-            playlistNames = out; userPlaylistNames = usr;
+            int from = o.optInt("from", 0), total = o.optInt("total", page.size());
+            playlistTotal = total;
+            if (from == 0) playlistNames = page;                  // first page replaces
+            else {                                                 // later pages append (BLE sends it in slices)
+                java.util.List<String> merged = new java.util.ArrayList<>(playlistNames);
+                merged.addAll(page);
+                playlistNames = merged;
+            }
+            if (!usr.isEmpty() || from == 0) userPlaylistNames = usr;
+            if (playlistNames.size() < total) send("list:" + playlistNames.size());   // pull the rest, unprompted
         } catch (Exception ignored) {}
     }
     /** Route one incoming payload: typed answers go to the cache, everything else is state. */

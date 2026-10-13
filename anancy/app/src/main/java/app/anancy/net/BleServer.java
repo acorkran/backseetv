@@ -42,6 +42,8 @@ import java.util.Set;
 @SuppressLint("MissingPermission")
 public class BleServer {
     static final String TAG = "Anancy";
+    /** Payload budget for one notification (MTU-3 at the 517 we negotiate, with headroom for smaller clients). */
+    static final int BLE_JSON_MAX = 460;
     /** Scan-response tag "<id>:<name>", read by the remote's BleClient to list tablets WITHOUT connecting.
         0xFFFF is the SIG's test/development company id; 27 = the 31-byte payload less len+type+company. */
     public static final int MFG_ID = 0xFFFF;
@@ -148,6 +150,7 @@ public class BleServer {
         @Override public void onCharacteristicWriteRequest(BluetoothDevice dev, int rid, BluetoothGattCharacteristic ch,
                 boolean prep, boolean resp, int off, byte[] val) {
             if (Ble.CMD.equals(ch.getUuid()) && val != null) { String cmd = new String(val).trim(); Log.i(TAG, "BLE cmd: " + cmd); exec(cmd); }
+                main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
             if (resp && gatt != null) gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, null);
         }
         @Override public void onDescriptorWriteRequest(BluetoothDevice dev, int rid, BluetoothGattDescriptor desc,
@@ -170,8 +173,8 @@ public class BleServer {
             return;
         }
         if (cmd.startsWith("play:")) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(cmd.substring(5)); return; }
-        if (cmd.equals("list")) { pushPlaylists(); return; }                              // one-shot playlist names
-        if (cmd.equals("queue")) { pushQueue(); return; }                                 // one-shot queue window (play order)
+        if (cmd.equals("list") || cmd.startsWith("list:")) { pushPlaylists(cmd.length() > 5 ? pi(cmd.substring(5)) : 0); return; }   // paged
+        if (cmd.equals("queue") || cmd.startsWith("queue:")) { pushQueue(cmd.length() > 6 ? pi(cmd.substring(6)) : -1); return; }   // paged                                 // one-shot queue window (play order)
         if (cmd.startsWith("jump:")) { try { ctrl.jumpTo(Integer.parseInt(cmd.substring(5).trim())); PlayerActivity.wakeScreen(); } catch (Exception ignored) {} return; }
         if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
         if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
@@ -313,15 +316,17 @@ public class BleServer {
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 
-    private void pushPlaylists() {
+    private void pushPlaylists() { pushPlaylists(0); }
+    private void pushPlaylists(int from) {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.playlistsJson().getBytes());
+        stateChar.setValue(ctrl.playlistsJson(from, BLE_JSON_MAX).getBytes());
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
     /** A window of the queue around the current item (±4 -> fits one MTU); Wi-Fi /queue gives the full list. */
-    private void pushQueue() {
+    private void pushQueue() { pushQueue(-1); }
+    private void pushQueue(int from) {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.queueJson(-1, 3, 34).getBytes());   // ±3 items, titles ≤34 -> fits one MTU
+        stateChar.setValue(ctrl.queuePageJson(from, BLE_JSON_MAX, 34).getBytes());   // a PAGE, not a fixed window
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 

@@ -197,6 +197,20 @@ public class RemoteActivity extends Activity {
         refreshDeviceCards();
         tabRoot.addView(cardsScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
+        // Now playing. These views existed but were never added to the layout, so over BLE (where the
+        // per-device cards have no HTTP data) the remote showed NO title, position or progress at all.
+        title.setTextColor(TXT); title.setTextSize(16); title.setMaxLines(1);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END); title.setGravity(Gravity.CENTER);
+        subtitle.setTextColor(SUB); subtitle.setTextSize(12); subtitle.setMaxLines(1);
+        subtitle.setEllipsize(android.text.TextUtils.TruncateAt.END); subtitle.setGravity(Gravity.CENTER);
+        timeText.setTextColor(SUB); timeText.setTextSize(11); timeText.setGravity(Gravity.CENTER);
+        LinearLayout np = new LinearLayout(this); np.setOrientation(LinearLayout.VERTICAL);
+        np.setPadding(dp(6), dp(8), dp(6), 0);
+        np.addView(title); np.addView(subtitle);
+        np.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
+        np.addView(timeText);
+        tabRoot.addView(np, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         // Slim transport above the grid: back / play-pause / forward.
         LinearLayout tr = new LinearLayout(this); tr.setOrientation(LinearLayout.HORIZONTAL); tr.setGravity(Gravity.CENTER);
         tr.addView(iconBtn(IconView.PREV, BTN, TXT, "prev"), lp(dp(54), dp(48), dp(12)));
@@ -522,10 +536,15 @@ public class RemoteActivity extends Activity {
                 });
                 col.addView(row);
             }
-        } else if (attempt < 8) {
-            TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0);
-            col.addView(t);
-            main.postDelayed(() -> { if (picker != null) populatePicker(col, attempt + 1); }, 400);   // list arrives async
+        }
+        int total = svc != null ? svc.playlistTotal() : 0;
+        boolean incomplete = names == null || names.isEmpty() || (total > 0 && names.size() < total);
+        if (incomplete && attempt < 20) {   // BLE delivers the list in pages; keep redrawing until they have all arrived
+            if (names == null || names.isEmpty()) {
+                TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0);
+                col.addView(t);
+            }
+            main.postDelayed(() -> { if (picker != null) populatePicker(col, attempt + 1); }, 400);
         }
     }
     private LinearLayout.LayoutParams wlp(float w) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(40), w); p.setMargins(dp(2), 0, dp(2), 0); return p; }
@@ -554,7 +573,7 @@ public class RemoteActivity extends Activity {
     private void populateQueue(final LinearLayout col, final int attempt) {
         RemoteService svc = RemoteService.get();
         String json = svc != null ? svc.queueJson() : null;
-        if (json != null) { if (col.getChildCount() <= 3) renderQueue(col, json); return; }   // don't clobber a wider Wi-Fi render
+        if (json != null) { renderQueue(col, json); return; }   // always render: the old childCount guard froze this list forever
         if (attempt < 12) main.postDelayed(() -> { if (queueView != null) populateQueue(col, attempt + 1); }, 400);
     }
     private void renderQueue(final LinearLayout col, String json) {
@@ -565,7 +584,9 @@ public class RemoteActivity extends Activity {
             if (o.has("shuffle")) lastShuffle = o.optBoolean("shuffle");
             if (o.has("loop")) lastLoop = o.optBoolean("loop");
             renderQueueBar(col);
-            while (col.getChildCount() > 2) col.removeViewAt(2);
+            boolean append = from > 0 && from == queueFrom + queueShown && col.getChildCount() > 2;
+            if (append) while (col.getChildCount() > 2 + queueShown) col.removeViewAt(col.getChildCount() - 1);
+            else { while (col.getChildCount() > 2) col.removeViewAt(2); queueFrom = from; queueShown = 0; }
             ((TextView) col.getChildAt(0)).setText("Up next  ·  " + o.optString("playlist", currentPl) + "   (" + total + ")");
             if (items == null) return;
             for (int i = 0; i < items.length(); i++) {
@@ -583,9 +604,20 @@ public class RemoteActivity extends Activity {
                 });
                 col.addView(row);
             }
+            queueShown += items.length();
+            final int end = queueFrom + queueShown;
+            if (end < total) {   // the queue arrives in pages over BLE - let them pull the next one
+                Button more = ui.rowBtn("Load more…   (" + queueShown + " of " + total + ")", ACCENT);
+                more.setOnClickListener(v -> {
+                    RemoteService s2 = RemoteService.get();
+                    if (s2 != null) { s2.requestQueueFrom(end); populateQueue(col, 0); }
+                });
+                col.addView(more);
+            }
             col.addView(ui.noteText("Tap to jump  ·  long-press to remove"));
         } catch (Exception ignored) {}
     }
+    private int queueFrom = 0, queueShown = 0;   // absolute range currently rendered, so pages append instead of replacing
     private void saveQueueAs() {
         final EditText e = ui.field("Playlist name", false);
         LinearLayout box = new LinearLayout(this); box.setPadding(dp(20), dp(8), dp(20), 0);
