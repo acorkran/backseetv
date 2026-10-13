@@ -104,7 +104,8 @@ final class RemoteUi {
     Button rowBtn(String text, int color) {
         Button row = new Button(ctx);
         row.setAllCaps(false); row.setText(text); row.setTextColor(color); row.setTextSize(14); row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMaxLines(2);
+        row.setMaxLines(3);   // 2 lines cut long episode names mid-word with no ellipsis
+        row.setEllipsize(android.text.TextUtils.TruncateAt.END);
         GradientDrawable g = new GradientDrawable(); g.setColor(RemoteActivity.CARD); g.setCornerRadius(dp(12)); row.setBackground(g);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);

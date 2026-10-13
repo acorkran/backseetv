@@ -436,7 +436,14 @@ public class RemoteActivity extends Activity {
         sh.setOnClickListener(v -> { send("shuffle:toggle"); toast(lastShuffle ? "Shuffle off" : "Shuffle on"); main.postDelayed(() -> loadQueue(col), 800); });
         lo.setOnClickListener(v -> { send("loop:toggle"); toast(lastLoop ? "Will stop at the end (TV off)" : "Looping forever"); main.postDelayed(() -> loadQueue(col), 800); });
         save.setOnClickListener(v -> saveQueueAs());
-        bar.addView(sh, wlp(1f)); bar.addView(lo, wlp(1.2f)); bar.addView(save, wlp(1.5f));
+        Button clr = ui.smallBtn("Clear");
+        clr.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Clear the queue?")
+                .setMessage(lastPlaying ? "Keeps the episode that's playing and drops the rest."
+                                        : "Nothing is playing, so the queue will be emptied.")
+                .setPositiveButton("Clear", (d, w) -> { send("clearq"); main.postDelayed(() -> loadQueue(col), 900); })
+                .setNegativeButton("Cancel", null).show());
+        bar.addView(sh, wlp(1f)); bar.addView(lo, wlp(1.2f)); bar.addView(save, wlp(1.5f)); bar.addView(clr, wlp(0.9f));
         col.addView(bar);
         TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
         qCol = col; queueView = sv;
@@ -652,10 +659,19 @@ public class RemoteActivity extends Activity {
         ScrollView sv = new ScrollView(this); sv.setBackgroundColor(BG);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL); col.setPadding(dp(16), dp(20), dp(16), dp(16));
+        // Header row with a VISIBLE way out: these full-screen overlays used to rely on the system
+        // Back gesture alone, which left the Library looking like a dead end with no tab bar.
+        LinearLayout hrow = new LinearLayout(this); hrow.setOrientation(LinearLayout.HORIZONTAL);
+        hrow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        Button back = ui.smallBtn("‹  Back"); back.setTextColor(ACCENT);
+        back.setOnClickListener(v -> onBackPressed());
+        hrow.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView h = new TextView(this);
         h.setText(title); h.setTextColor(TXT); h.setTextSize(20);
         h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD); h.setPadding(0, 0, 0, dp(10));
-        col.addView(h);
+        h.setPadding(dp(10), 0, 0, 0);
+        hrow.addView(h);
+        col.addView(hrow);
         TextView t = new TextView(this); t.setText("loading…"); t.setTextColor(SUB); t.setPadding(dp(6), dp(10), 0, 0); col.addView(t);
         sv.addView(col); frame.addView(sv);
         return sv;

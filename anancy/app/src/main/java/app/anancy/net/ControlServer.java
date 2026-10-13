@@ -123,6 +123,7 @@ public class ControlServer {
                     if (now) PlayerActivity.wakeScreen();
                     body = okk ? ok() : "{\"ok\":false,\"error\":\"unknown item\"}"; break;
                 }
+                case "/clearqueue": ctrl.clearQueue(); body = ok(); break;
                 case "/dequeue": ctrl.dequeue((int) pf(param(q, "i"), -1)); body = ok(); break;
                 case "/shuffle": { String on = param(q, "on"); ctrl.setShuffle(on == null ? !ctrl.isShuffle() : ("1".equals(on) || "true".equals(on))); body = ok(); break; }
                 case "/loop":    { String on = param(q, "on"); ctrl.setLoop(on == null ? !ctrl.isLoop() : ("1".equals(on) || "true".equals(on))); body = ok(); break; }

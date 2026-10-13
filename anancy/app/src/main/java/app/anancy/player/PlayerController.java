@@ -467,6 +467,26 @@ public class PlayerController {
         });
     }
     /** Remove queue index i (never the item that's playing). */
+    /** Empty the queue. Playing: keep the episode that is on and drop everything else, so the screen
+        doesn't go black mid-show. Stopped: clear it out entirely. */
+    public void clearQueue() {
+        on(() -> {
+            if (p == null) return;
+            int n = p.getMediaItemCount(), cur = p.getCurrentMediaItemIndex();
+            if (p.isPlaying() && n > 0) {
+                if (cur + 1 < n) p.removeMediaItems(cur + 1, n);
+                if (cur > 0) p.removeMediaItems(0, cur);
+                List<MediaItem> one = new ArrayList<>();
+                if (cur >= 0 && cur < currentItems.size()) one.add(currentItems.get(cur));
+                currentItems = one; naturalItems = new ArrayList<>(one);
+            } else {
+                p.clearMediaItems();
+                currentItems = new ArrayList<>(); naturalItems = new ArrayList<>();
+            }
+            count = p.getMediaItemCount(); idx = p.getCurrentMediaItemIndex();
+        });
+    }
+
     public void dequeue(final int i) {
         on(() -> {
             if (p == null || i < 0 || i >= p.getMediaItemCount() || i == p.getCurrentMediaItemIndex()) return;

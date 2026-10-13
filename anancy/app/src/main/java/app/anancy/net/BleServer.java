@@ -185,6 +185,7 @@ public class BleServer {
         if (cmd.startsWith("enqnext:")) { ctrl.enqueue(pi(cmd.substring(8)), true, false); return; }
         if (cmd.startsWith("enqnow:"))  { PlayerActivity.wakeScreen(); ctrl.enqueue(pi(cmd.substring(7)), true, true); return; }
         if (cmd.startsWith("enqshow:")) { ctrl.enqueueShow(cmd.substring(8).trim()); return; }
+        if (cmd.equals("clearq"))       { ctrl.clearQueue(); return; }
         if (cmd.startsWith("deq:"))     { ctrl.dequeue(pi(cmd.substring(4))); return; }
         if (cmd.startsWith("shuffle:")) { String v = cmd.substring(8).trim(); ctrl.setShuffle("toggle".equals(v) ? !ctrl.isShuffle() : "on".equals(v)); return; }
         if (cmd.startsWith("loop:"))    { String v = cmd.substring(5).trim(); ctrl.setLoop("toggle".equals(v) ? !ctrl.isLoop() : "on".equals(v)); return; }

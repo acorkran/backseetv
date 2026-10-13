@@ -176,8 +176,12 @@ public class RemoteService extends Service {
         applyConnMode();
     }
     private void noteConn(String mode, JSONObject hotspot) {
+        String wasSsid = hsSsid, wasPass = hsPass;
         if (hotspot != null) { hsSsid = hotspot.optString("ssid", null); hsPass = hotspot.optString("pass", null); }
         else { hsSsid = null; hsPass = null; }
+        // New creds (the TV rebooted and its hotspot picked a new random SSID) -> a fresh rejoin budget,
+        // otherwise the tries spent on the stale pair leave nothing for the one that would work.
+        if (hsSsid != null && (!hsSsid.equals(wasSsid) || !String.valueOf(hsPass).equals(String.valueOf(wasPass)))) rejoinTries = 0;
         if (mode != null && !mode.isEmpty() && !mode.equals(connMode)) { connMode = mode; Cfg.put(this, "anancy_conn", mode); }
         applyConnMode();
     }
@@ -202,6 +206,11 @@ public class RemoteService extends Service {
                 joinedKey = ok ? key : null;
             }
         }
+        // ARM ONCE. applyConnMode runs on every state update, so posting here unconditionally either
+        // stacked copies (whole retry budget gone in seconds) or, with removeCallbacks, pushed the delay
+        // out on every update so it never fired at all. The runnable re-posts itself.
+        if ("tv_hotspot".equals(mode)) { if (!rejoinArmed) { rejoinArmed = true; main.postDelayed(rejoin, 15000); } }
+        else { rejoinArmed = false; main.removeCallbacks(rejoin); }
         if ("remote_hotspot".equals(mode)) {
             if (!HotspotService.running()) { try { HotspotService.start(this); } catch (Exception e) { Log.w(TAG, "hotspot: " + e); } }
             String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
@@ -211,6 +220,30 @@ public class RemoteService extends Service {
             } else main.postDelayed(this::applyConnMode, 2000);   // creds arrive once the hotspot is up
         } else if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
     }
+    // A TV hotspot restarts with the SAME creds but a NEW subnet whenever the tablet reboots, which
+    // silently drops us back to Bluetooth until someone taps Join again - no good in a moving car. Once a
+    // direct join has worked on an SSID we re-issue it ourselves, a few times, spaced out.
+    private int rejoinTries = 0;
+    private boolean rejoinArmed = false;
+    private final Runnable rejoin = new Runnable() {
+        @Override public void run() {
+            if (local || !"tv_hotspot".equals(connMode)) { rejoinTries = 0; rejoinArmed = false; return; }
+            // A join already in flight owns the screen: re-issuing releases it, and the system prompt
+            // disappears from under the finger that was about to tap Connect.
+            if (WifiJoiner.directPending()) { main.postDelayed(this, 30000); return; }
+            String s = hsSsid, pw = hsPass;
+            if (s != null && pw != null && !s.equals(WifiJoiner.boundSsid())) {
+                if (WifiJoiner.directJoinKnown(RemoteService.this) && rejoinTries < 5) {
+                    rejoinTries++;
+                    Log.i(TAG, "tv hotspot not bound - auto-rejoin " + s + " (try " + rejoinTries + ")");
+                    WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = s; c.type = "WPA"; c.pass = pw;
+                    try { WifiJoiner.joinDirect(RemoteService.this, c, null, null); } catch (Exception e) { Log.w(TAG, "auto-rejoin: " + e); }
+                }
+            } else rejoinTries = 0;   // bound: forget the failures, so a later restart gets a fresh budget
+            main.postDelayed(this, 30000);
+        }
+    };
+
     /** Push the phone-hosted hotspot creds to the TV again (UI "Send Wi-Fi to TV"). */
     public void pushOwnHotspot() { pushedKey = null; applyConnMode(); }
 

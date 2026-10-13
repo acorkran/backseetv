@@ -190,6 +190,7 @@ public class WifiClient {
         if (cmd.startsWith("enqnow:")) return "/enqueue?id=" + cmd.substring(7) + "&now=1";
         if (cmd.startsWith("enqshow:")) return "/enqueue?show=" + enc(cmd.substring(8));
         if (cmd.startsWith("enq:")) return "/enqueue?id=" + cmd.substring(4);
+        if (cmd.equals("clearq")) return "/clearqueue";
         if (cmd.startsWith("deq:")) return "/dequeue?i=" + cmd.substring(4);
         if (cmd.startsWith("shuffle:")) return onOffToggle("/shuffle", cmd.substring(8));
         if (cmd.startsWith("loop:")) return onOffToggle("/loop", cmd.substring(5));

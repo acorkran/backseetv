@@ -33,6 +33,19 @@ public final class WifiJoiner {
         it, which is why the car tier never engaged. A NetworkSpecifier request connects to THIS network
         and hands back a Network we bind the process to, so HTTP stops leaking to cellular. The system
         shows a one-time picker, so it must be driven from the foreground (the Connection screen button). */
+    private static volatile String boundSsid = null;   // the hotspot this process is currently bound to
+    private static volatile boolean directPending = false;   // a request is live and its prompt may be on screen
+    /** True while a direct join is outstanding: re-issuing one now would cancel the prompt mid-tap. */
+    public static boolean directPending() { return directPending; }
+    /** The hotspot we are bound to right now, or null - the Wi-Fi tier is only live while this is set. */
+    public static String boundSsid() { return boundSsid; }
+    /** True once a direct join has actually worked on this phone - the signal that rejoining is wanted.
+        It is NOT keyed to the SSID: a Samsung TV hotspot picks a new random SSID (and pass) every start,
+        so an SSID match would never fire after the tablet reboots, which is exactly when we need it. */
+    public static boolean directJoinKnown(Context ctx) {
+        try { return app.anancy.Cfg.p(ctx).getString("direct_ssid", null) != null; } catch (Exception e) { return false; }
+    }
+
     public static boolean joinDirect(Context ctx, Creds c, final Runnable onOk, final Runnable onFail) {
         if (c == null || c.ssid == null || Build.VERSION.SDK_INT < 29) return false;
         try {
@@ -51,11 +64,14 @@ public final class WifiJoiner {
             directCb = new android.net.ConnectivityManager.NetworkCallback() {
                 @Override public void onAvailable(android.net.Network n) {
                     try { cm.bindProcessToNetwork(n); } catch (Exception ignored) {}
+                    boundSsid = c.ssid; directPending = false;
+                    try { app.anancy.Cfg.p(ctx).edit().putString("direct_ssid", c.ssid).apply(); } catch (Exception ignored) {}
                     Log.i(TAG, "wifi joinDirect: bound to " + n);
                     if (onOk != null) onOk.run();
                 }
-                @Override public void onUnavailable() { Log.w(TAG, "wifi joinDirect: unavailable"); if (onFail != null) onFail.run(); }
+                @Override public void onUnavailable() { boundSsid = null; directPending = false; Log.w(TAG, "wifi joinDirect: unavailable"); if (onFail != null) onFail.run(); }
                 @Override public void onLost(android.net.Network n) {
+                    boundSsid = null; directPending = false;
                     try { cm.bindProcessToNetwork(null); } catch (Exception ignored) {}
                     Log.i(TAG, "wifi joinDirect: lost, unbound");
                 }
@@ -63,12 +79,14 @@ public final class WifiJoiner {
             // NO timeout: the system dialog waits for a human, and a 30s request expired before the
             // user could tap Connect ("joinDirect: unavailable"). releaseDirect() ends it instead.
             cm.requestNetwork(req, directCb);
+            directPending = true;
             return true;
         } catch (Exception e) { Log.w(TAG, "joinDirect: " + e); return false; }
     }
 
     /** Drop the request and unbind, so the phone goes back to its normal network. */
     public static void releaseDirect(Context ctx) {
+        boundSsid = null; directPending = false;
         try { if (directCm != null) directCm.bindProcessToNetwork(null); } catch (Exception ignored) {}
         try { if (directCm != null && directCb != null) directCm.unregisterNetworkCallback(directCb); } catch (Exception ignored) {}
         directCb = null;
