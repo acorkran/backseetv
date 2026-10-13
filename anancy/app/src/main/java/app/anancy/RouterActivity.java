@@ -46,6 +46,7 @@ public class RouterActivity extends Activity {
         root.addView(bigBtn("This is the TV (player)", "player"));
         root.addView(bigBtn("This is a Remote", "remote"));
         setContentView(root);
+        SysBars.pad(root);   // keep the nav bar off the content (edge-to-edge)
     }
 
     private Button bigBtn(String label, final String role) {

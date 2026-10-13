@@ -55,6 +55,7 @@ public class SettingsActivity extends Activity {
         col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(24), dp(20), dp(24), dp(24));
         sv.addView(col); setContentView(sv);
+        app.anancy.SysBars.pad(sv);   // keep the nav bar off the content (edge-to-edge)
         build();
     }
     @Override protected void onResume() { super.onResume(); refreshStatus(); }

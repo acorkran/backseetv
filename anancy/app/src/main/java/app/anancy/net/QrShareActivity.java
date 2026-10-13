@@ -49,6 +49,7 @@ public class QrShareActivity extends Activity {
         root.addView(cap);
 
         setContentView(root);
+        app.anancy.SysBars.pad(root);   // keep the nav bar off the content (edge-to-edge)
     }
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }

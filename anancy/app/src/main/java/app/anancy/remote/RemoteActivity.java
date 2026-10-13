@@ -157,6 +157,7 @@ public class RemoteActivity extends Activity {
 
         frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(frame);
+        app.anancy.SysBars.pad(frame);   // keep the nav bar off the content (edge-to-edge)
         showTab(0);
 
         local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote

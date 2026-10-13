@@ -25,6 +25,7 @@ public class AboutActivity extends Activity {
         col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(24), dp(22), dp(24), dp(28));
         sv.addView(col); setContentView(sv);
+        app.anancy.SysBars.pad(sv);   // keep the nav bar off the content (edge-to-edge)
 
         head("Anancy — feature levels");
         sub("Anancy works at three levels. Each one builds on the last. Here's what you get, and how to unlock it.");
