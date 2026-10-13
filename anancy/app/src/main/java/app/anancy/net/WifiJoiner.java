@@ -24,6 +24,55 @@ import java.util.List;
 
 public final class WifiJoiner {
     static final String TAG = "Anancy";
+
+    private static android.net.ConnectivityManager.NetworkCallback directCb;
+    private static android.net.ConnectivityManager directCm;
+
+    /** Join a hotspot that has NO internet, and route our sockets over it.
+        A WifiNetworkSuggestion is only advisory: Android keeps the internet-bearing network and ignores
+        it, which is why the car tier never engaged. A NetworkSpecifier request connects to THIS network
+        and hands back a Network we bind the process to, so HTTP stops leaking to cellular. The system
+        shows a one-time picker, so it must be driven from the foreground (the Connection screen button). */
+    public static boolean joinDirect(Context ctx, Creds c, final Runnable onOk, final Runnable onFail) {
+        if (c == null || c.ssid == null || Build.VERSION.SDK_INT < 29) return false;
+        try {
+            releaseDirect(ctx);
+            android.net.wifi.WifiNetworkSpecifier.Builder b =
+                    new android.net.wifi.WifiNetworkSpecifier.Builder().setSsid(c.ssid);
+            if (c.pass != null && !c.pass.isEmpty()) b.setWpa2Passphrase(c.pass);
+            android.net.NetworkRequest req = new android.net.NetworkRequest.Builder()
+                    .addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                    .removeCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)   // the TV hotspot has none
+                    .setNetworkSpecifier(b.build()).build();
+            final android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) ctx.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            directCm = cm;
+            directCb = new android.net.ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(android.net.Network n) {
+                    try { cm.bindProcessToNetwork(n); } catch (Exception ignored) {}
+                    Log.i(TAG, "wifi joinDirect: bound to " + n);
+                    if (onOk != null) onOk.run();
+                }
+                @Override public void onUnavailable() { Log.w(TAG, "wifi joinDirect: unavailable"); if (onFail != null) onFail.run(); }
+                @Override public void onLost(android.net.Network n) {
+                    try { cm.bindProcessToNetwork(null); } catch (Exception ignored) {}
+                    Log.i(TAG, "wifi joinDirect: lost, unbound");
+                }
+            };
+            // NO timeout: the system dialog waits for a human, and a 30s request expired before the
+            // user could tap Connect ("joinDirect: unavailable"). releaseDirect() ends it instead.
+            cm.requestNetwork(req, directCb);
+            return true;
+        } catch (Exception e) { Log.w(TAG, "joinDirect: " + e); return false; }
+    }
+
+    /** Drop the request and unbind, so the phone goes back to its normal network. */
+    public static void releaseDirect(Context ctx) {
+        try { if (directCm != null) directCm.bindProcessToNetwork(null); } catch (Exception ignored) {}
+        try { if (directCm != null && directCb != null) directCm.unregisterNetworkCallback(directCb); } catch (Exception ignored) {}
+        directCb = null;
+    }
     private WifiJoiner() {}
 
     public static class Creds { public String ssid, type, pass; }

@@ -35,6 +35,8 @@
     <!-- Wi-Fi provisioning: device-owner add/join + local-only hotspot (random SSID shared via QR) -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <!-- requestNetwork() with a WifiNetworkSpecifier needs this; without it the join threw SecurityException -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"/>
 
@@ -91,7 +93,8 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
 
         <!-- local-only Wi-Fi hotspot (random SSID + passphrase shown as a QR for remotes to scan+join) -->
-        <service android:name=".net.HotspotService" android:exported="false"/>
+        <service android:name=".net.HotspotService" android:exported="false"
+            android:foregroundServiceType="connectedDevice"/>
 
         <!-- optional "locked" tier: device-owner APIs for inescapable lock-task -->
         <receiver android:name=".admin.AdminReceiver"

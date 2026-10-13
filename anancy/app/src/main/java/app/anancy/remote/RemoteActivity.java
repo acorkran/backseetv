@@ -964,7 +964,12 @@ public class RemoteActivity extends Activity {
                     join.setOnClickListener(v -> {
                         if (hsSsid == null) { toast("The TV hasn't published a hotspot yet — is it on this level?"); return; }
                         WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
-                        toast(WifiJoiner.join(this, c) ? "Joining " + hsSsid + "… (accept the prompt if asked)" : "Couldn't request the join");
+                        // joinDirect binds our sockets to the TV's hotspot even though it has no internet;
+                        // the old suggestion-only path left Android free to ignore it entirely.
+                        boolean asked = WifiJoiner.joinDirect(this, c,
+                                () -> main.post(() -> { toast("Joined " + c.ssid); probeTv(); }),
+                                () -> main.post(() -> toast("Couldn't join " + c.ssid)));
+                        if (!asked) toast(WifiJoiner.join(this, c) ? "Asked Android to join " + hsSsid + "…" : "Couldn't request the join");
                         main.postDelayed(this::probeTv, 6000);
                     });
                     connActions.addView(join);

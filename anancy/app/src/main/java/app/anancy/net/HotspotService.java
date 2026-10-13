@@ -63,9 +63,23 @@ public class HotspotService extends Service {
     private WifiManager.LocalOnlyHotspotReservation reservation;
     private boolean showQr = true;
 
+    private android.app.Notification note() {
+        String ch = "anancy_remote";
+        android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= 26 && nm != null && nm.getNotificationChannel(ch) == null)
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "Anancy", android.app.NotificationManager.IMPORTANCE_LOW));
+        android.app.Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                ? new android.app.Notification.Builder(this, ch) : new android.app.Notification.Builder(this);
+        return b.setContentTitle("Anancy hotspot").setContentText("Sharing Wi-Fi with the screens")
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).build();
+    }
+
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        // RemoteService starts this from the background, where a plain startService throws on API 26+.
+        // That exception was swallowed, so picking "Remote hotspot" silently did nothing.
+        try { startForeground(74, note()); } catch (Exception e) { Log.w(TAG, "startForeground: " + e); }
         showQr = intent == null || intent.getBooleanExtra("qr", true);
         if (reservation == null) startHotspot();
         return START_STICKY;

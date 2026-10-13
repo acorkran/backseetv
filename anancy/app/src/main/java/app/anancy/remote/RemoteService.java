@@ -187,14 +187,19 @@ public class RemoteService extends Service {
         String mode = connMode;
         if ("ble".equals(mode)) {   // pure Bluetooth: no Wi-Fi client, no hotspot of ours
             if (wifi != null) { try { wifi.stop(); } catch (Exception ignored) {} wifi = null; }
+            try { WifiJoiner.releaseDirect(this); } catch (Exception ignored) {}   // unbind: give the phone its normal network back
+            joinedKey = null;
         } else if (wifi == null) startWifi(null, 0);   // a Wi-Fi tier runs mDNS CONCURRENTLY with BLE so we
         // discover + can reach EVERY tablet (multi-target / both-in-unison), not just as a BLE fallback
         if ("tv_hotspot".equals(mode) && hsSsid != null && hsPass != null) {
             String key = hsSsid + "|" + hsPass;
             if (!key.equals(joinedKey)) {   // join the TV's hotspot once per creds (non-owner phone: a system prompt)
-                joinedKey = key;
                 WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
-                try { WifiJoiner.join(this, c); } catch (Exception e) { Log.w(TAG, "join tv hotspot: " + e); }
+                boolean ok = false;
+                try { ok = WifiJoiner.join(this, c); } catch (Exception e) { Log.w(TAG, "join tv hotspot: " + e); }
+                // Only remember it as attempted if the request was accepted. Marking the key BEFORE the
+                // attempt meant one refusal (the usual case) stopped it ever trying that network again.
+                joinedKey = ok ? key : null;
             }
         }
         if ("remote_hotspot".equals(mode)) {
