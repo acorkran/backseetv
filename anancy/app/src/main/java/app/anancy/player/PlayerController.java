@@ -99,7 +99,7 @@ public class PlayerController {
     private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         appCtx = ctx.getApplicationContext();
         final String host = Cfg.getStr(appCtx, "anancy_host", "");
-        if (host != null && !host.isEmpty()) { new Thread(() -> loadClientLibrary(host, autoStart)).start(); return; }
+        if (host != null && !host.isEmpty()) { new Thread(() -> loadClientLibrary(host, autoStart, 0)).start(); return; }
         clientItems = null;
         new Thread(() -> {
             LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
@@ -139,7 +139,7 @@ public class PlayerController {
 
     /** CLIENT: build the library from the HOST's manifest — same shows/ids, items are host /media URLs
         (so id X on the client == id X on the host). Retries until the host is reachable. */
-    private void loadClientLibrary(final String host, final boolean autoStart) {
+    private void loadClientLibrary(final String host, final boolean autoStart, final int attempt) {
         try {
             String base = "http://" + host + ":8090";
             JSONObject lib = new JSONObject(httpGet(base + "/library"));
@@ -164,7 +164,7 @@ public class PlayerController {
                 }
                 built.put(name, list); showIds.put(name, ids);
             }
-            if (all.isEmpty()) { main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000); return; }
+            if (all.isEmpty()) { retryClientLibrary(host, autoStart, attempt); return; }
             on(() -> {
                 clientItems = byId; idOfPath = null; libFiles = new ArrayList<>(); libShows = showIds;
                 playlists.clear();
@@ -177,10 +177,25 @@ public class PlayerController {
                 if (Cfg.getInt(appCtx, "anancy_sync", 0) == 1) setSync(true);   // follower: start mirroring the host
             });
         } catch (Exception e) {
-            android.util.Log.w("Anancy", "client library from " + host + " failed: " + e + " — retrying");
-            main.postDelayed(() -> loadClientLibrary(host, autoStart), 4000);
+            android.util.Log.w("Anancy", "client library from " + host + " failed: " + e);
+            retryClientLibrary(host, autoStart, attempt);
         }
     }
+    /** A client tablet used to retry an absent host FOREVER and never fall back, so one sync session
+        left it booting to a black screen with no escape from any remote. Give up and play our own SD. */
+    private void retryClientLibrary(final String host, final boolean autoStart, final int attempt) {
+        if (attempt >= 4) {
+            android.util.Log.w("Anancy", "host " + host + " unreachable after " + (attempt + 1) + " tries - falling back to the local library");
+            try { Cfg.put(appCtx, "anancy_host", ""); } catch (Exception ignored) {}
+            clientItems = null;
+            main.post(() -> loadLibrary(appCtx, true, 0));
+            return;
+        }
+        // off the main thread: the retry used to run there and die instantly with
+        // NetworkOnMainThreadException, so client mode could never recover from a blip.
+        main.postDelayed(() -> new Thread(() -> loadClientLibrary(host, autoStart, attempt + 1)).start(), 4000);
+    }
+
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
     private static String httpGet(String url) throws Exception {
         java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();

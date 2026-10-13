@@ -292,18 +292,24 @@ public class RemoteService extends Service {
         if (isSyncGroup()) armGroup();   // push the new audio mode to the current followers
     }
     /** Arm/disarm a synced group over the CURRENT selection. */
-    public void setSyncGroup(boolean on) {
+    public boolean setSyncGroup(boolean on) {
         if (!on) {
             java.util.HashSet<String> known = new java.util.HashSet<>(seenTablets.keySet()); known.addAll(deviceIps.keySet());
             for (String id : known) httpArm(deviceIp(id), "/sync?on=0");   // everyone stops following
             Cfg.p(this).edit().putString(PREF_SYNCGROUP, "").apply();
             aimLinks();
-            return;
+            return true;
         }
-        if (groupOrder().size() < 2) return;                               // need a leader + at least one follower
+        if (groupOrder().size() < 2) return false;                         // need a leader + at least one follower
+        // Arming is HTTP-only (there is no "sync" verb over BLE), so on a Bluetooth-only link the group
+        // silently did nothing while send() still routed playback away from the followers. Refuse instead.
+        boolean anyReachable = false;
+        for (String id : groupOrder()) if (deviceIp(id) != null) { anyReachable = true; break; }
+        if (!anyReachable) { Log.w(TAG, "sync group refused: no screen is reachable over Wi-Fi"); return false; }
         Cfg.p(this).edit().putString(PREF_SYNCGROUP, "1").apply();         // set first so syncLeaderId() derives
         armGroup();
         aimLinks();
+        return true;
     }
     /** (Re)arm the current group: leader plays, non-member screens stop, follower members mirror the leader. */
     private void armGroup() {

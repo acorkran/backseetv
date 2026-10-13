@@ -88,6 +88,7 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
     // and gets dropped, so the camera never starts. Re-arm from the ticker until stills actually flow.
     private int cambleTries = 0;
     private void ensureCamera() {
+        if (app.anancy.Cfg.getInt(this, "anancy_aa_camera", 0) != 1) return;   // opt-in: never turn the child camera on just because a car connected
         if (RemoteService.latestStill() != null) { cambleTries = 0; return; }   // stills flowing -> done
         if (cambleTries++ % 3 == 0) send("camble:on");   // retry ~every 3 ticks until they do
     }

@@ -246,7 +246,7 @@ public class BleServer {
         a background thread pushes a fresh low-res still on the IMG characteristic ~once/second. */
     private void setCamble(boolean on) {
         if (on) {
-            cambleWant++;
+            cambleWant = 1;   // clamp: Android Auto re-sends "camble:on" every few ticks, which grew this forever
             SnapshotService.want(ctx, "ble", true);
             if (imgExec == null) {
                 imgExec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();

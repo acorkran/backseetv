@@ -42,6 +42,7 @@ public class Cfg {
             {"anancy_chal_len",      "int", "6"},   // Randomized PIN: number of digits shown on screen
             {"anancy_chal_secs",     "int", "30"},  // Randomized PIN: seconds allowed to enter it
             {"anancy_chal_tries",    "int", "3"},   // Randomized PIN: wrong attempts allowed before it drops back to locked
+            {"anancy_aa_camera",     "int", "0"},   // Android Auto check-in camera: OFF by default (privacy; opt in)
             {"anancy_host",          "str", ""},    // CLIENT mode: host tablet's IP to stream the library from ("" = standalone/host)
             {"anancy_sync",          "int", "0"},   // FOLLOWER: 1 = mirror the host's item+position (synced viewing); 0 = independent
             {"anancy_sync_mute",     "int", "0"},   // FOLLOWER: 1 = stay silent while syncing (leader-only audio); 0 = play own audio
