@@ -124,11 +124,15 @@
   // Voices are per-language now (each language has its own neural clip set).
   function voicesForLang(lang) { return (window.__tlVoices || []).filter(function (v) { return (v.lang || "en") === lang; }); }
   function hasClips(lang) { return voicesForLang(lang).length > 0; }
+  // Cori (British, HQ) is the default: LibriVox public domain, cleared for commercial use.
+  // Picked by name, not by list order, so reordering voices.json can't silently change it.
+  var DEFAULT_VOICE = "cori";
   function clipVoice() {
     var lang = curLang(), list = voicesForLang(lang);
     var saved = localStorage.getItem("tl_clip_voice_" + lang);
     if (saved && list.some(function (v) { return v.dir === saved; })) return saved;
-    return list[0] ? list[0].dir : (lang === "en" ? "jenny" : "");
+    if (list.some(function (v) { return v.dir === DEFAULT_VOICE; })) return DEFAULT_VOICE;
+    return list[0] ? list[0].dir : (lang === "en" ? DEFAULT_VOICE : "");
   }
   // Route to the saved speaker. deviceIds can rotate between sessions, so if the saved
   // id fails we re-resolve by the saved LABEL (stable) and rewrite it — that's what makes
@@ -456,10 +460,9 @@
       vs.forEach(function (v) { var o = document.createElement("option"); o.value = v.dir; o.textContent = v.label || v.dir; if (v.dir === cur) o.selected = true; clipSel.appendChild(o); });
     }
     if (window.__tlVoices) { fill(); return; }
-    // NOTE: on the Android kiosk this page runs from file://, where fetch() is refused, so
-    // this lands in the catch and the voice list stays empty -- the playground then always
-    // speaks the "jenny" default and this picker has nothing in it. Harmless but wrong;
-    // the fix is to ship voices as a <script> assignment the way audio/timings.js is.
+    // Only reached if audio/voices.js didn't load: on the Android kiosk this page runs from
+    // file://, where fetch() is refused, which used to leave this picker empty and pin the
+    // playground to a hardcoded voice. The <script> assignment above is what it reads now.
     fetch("audio/voices.json").then(function (r) { return r.json(); }).then(function (l) { window.__tlVoices = l || []; fill(); }).catch(function () { window.__tlVoices = []; });
   }
   loadVoices(); // load the voice manifest at startup so the first keypress has clips ready

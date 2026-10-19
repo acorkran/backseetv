@@ -167,6 +167,16 @@ public class PlayerActivity extends Activity {
     private void doStartPlayMode() {
         if (playWeb != null || root == null) return;
         if (napped) { setNapScreen(false); PlayerController.get().play(); }   // can't play over a black nap screen
+        // Opt-in, debug builds only: exposes the playground on a WebView devtools socket so it
+        // can be driven over CDP from a dev box, which is the only way to test real multi-finger
+        // touch (`adb shell input` can't do more than one). OFF unless asked for, because the
+        // kiosk runs a debug build every day and the socket is open to anything on the device:
+        //   adb shell settings put global anancy_webview_debug 1   (and 0 to close it again)
+        try {
+            boolean dbg = (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            if (dbg && Cfg.getInt(this, "anancy_webview_debug", 0) == 1)
+                android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+        } catch (Exception ignored) {}
         android.webkit.WebView w = new android.webkit.WebView(this);
         android.webkit.WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
