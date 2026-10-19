@@ -61,7 +61,7 @@
   var overlay = document.getElementById("lock-overlay");
   var lockBtn = document.getElementById("lock-btn");
   var home = document.getElementById("home");
-  var locked = false, refsTimer = null, lastSpark = 0, settingsOpen = false;
+  var locked = false, refsTimer = null, lastSpark = {}, settingsOpen = false;
 
   var ANIMALS = {
     A: ["Alligator", "🐊"], B: ["Bear", "🐻"], C: ["Cat", "🐱"], D: ["Dad", "👨"],
@@ -177,26 +177,69 @@
   }
   applySink(); // arm the saved speaker on load
 
+  // ---- per-clip timing (audio/timings.json, built by scripts/gen-timings.sh) ----
+  // [clip ms, animal-word ms] per voice per key. The letter gate waits the clip's OWN
+  // length -- muted or not -- so the pacing a child learns never changes with the volume.
+  // Loaded by a <script> tag, NOT fetched: this page is served from file:// inside the
+  // Android WebView, where fetch() is blocked by the opaque origin and would leave every
+  // clip on the fallback guess. (audio/voices.json is still fetched -- see the note there.)
+  var LETTER_TAIL = 140, FALLBACK_TIMING = [1600, 900];
+  function clipTiming(key) {
+    var T = window.__tlTimings, v = clipVoice(), m = T && T[v] && T[v][key];
+    if (!m || m.length < 2) m = FALLBACK_TIMING;
+    return { d: m[0], w: m[1] };
+  }
+  // Land on the touch point, but keep the whole thing on screen when a finger hits an edge.
+  // The margins aren't square: the letter is centred on the finger and the animal + caption
+  // hang BELOW it, so the bottom needs far more room than the top.
+  var EDGE = { x: 140, top: 100, bottom: 215 };
+  function placeAt(el, x, y) {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (typeof x !== "number" || typeof y !== "number") {
+      x = W * (0.15 + Math.random() * 0.7);
+      y = H * (0.22 + Math.random() * 0.45);
+    }
+    var mx = Math.min(EDGE.x, W / 2), top = Math.min(EDGE.top, H / 2), bot = Math.min(EDGE.bottom, H / 2);
+    el.style.left = Math.max(mx, Math.min(W - mx, x)) + "px";
+    el.style.top = Math.max(top, Math.min(H - bot, y)) + "px";
+  }
+
   // ---- fun: letters & sparkles ----
-  function showLetter(key) {
+  // The letter appears under the finger as its name is spoken; the animal picture is held
+  // back until the clip reaches the word, so "A" lands with "A" and the alligator lands
+  // with "Alligator". The whole thing lives exactly as long as its clip.
+  function showLetter(key, x, y) {
     var L = (key || "").toUpperCase();
     var pk = letterPack();
+    var t = clipTiming(L);
+    var life = t.d + LETTER_TAIL;
     var el = document.createElement("div"); el.className = "fly-letter";
-    el.style.color = rand(COLORS); el.style.left = (12 + Math.random() * 66) + "vw"; el.style.top = (22 + Math.random() * 42) + "vh";
+    el.style.color = rand(COLORS);
+    el.style.setProperty("--life", life + "ms");
+    placeAt(el, x, y);
     if (pk.letters[L]) {
       var word = pk.letters[L][0], emoji = pk.letters[L][1];
-      el.innerHTML = '<span class="fl-big">' + L + '</span><span class="fl-word">' + pk.isFor + " " + word + " " + emoji + "</span>";
+      // .fl-stage is absolutely positioned, so revealing it can't nudge the letter.
+      el.innerHTML = '<span class="fl-big">' + L + '</span>'
+                   + '<span class="fl-stage" hidden><span class="fl-pic">' + emoji + '</span>'
+                   + '<span class="fl-word">' + pk.isFor + " " + word + '</span></span>';
       speakKey(L, L + " " + pk.isFor + " " + word, pk.locale);
+      var stage = el.querySelector(".fl-stage");
+      setTimeout(function () { if (stage && stage.parentNode) stage.hidden = false; }, t.w);
     } else if (/^[0-9]$/.test(L)) {
       el.innerHTML = '<span class="fl-big">' + L + "</span>";
       speakKey(L, pk.numbers ? pk.numbers[+L] : L, pk.locale);
     } else {
       el.innerHTML = '<span class="fl-big">' + rand(BURSTS) + "</span>";
     }
-    overlay.appendChild(el); setTimeout(function () { el.remove(); }, 1500);
+    overlay.appendChild(el); setTimeout(function () { el.remove(); }, life);
   }
-  function sparkle(x, y) {
-    var now = Date.now(); if (now - lastSpark < 26) return; lastSpark = now;
+  // id = the finger (pointerId/touch identifier). The throttle is PER FINGER: a single
+  // shared one meant a four-finger mash only ever drew one trail.
+  function sparkle(x, y, id) {
+    var k = id == null ? "m" : String(id), now = Date.now();
+    if (now - (lastSpark[k] || 0) < 26) return;
+    lastSpark[k] = now;
     var s = document.createElement("div"); s.className = "sparkle"; s.textContent = rand(SPARKS);
     s.style.left = x + "px"; s.style.top = y + "px"; s.style.fontSize = (12 + Math.random() * 18) + "px";
     overlay.appendChild(s); setTimeout(function () { s.remove(); }, 720);
@@ -205,9 +248,14 @@
   // ---- one letter clip at a time + colorful gap-fill shapes ----
   // Mashing used to fire 2-5 letter clips at once (overloaded playback). Now a tap/key speaks a
   // letter ONLY when no clip is playing; while one plays it drops a random colorful SHAPE instead
-  // (SoundPool gives no completion callback, so we gate on an estimated ~1.3s clip length).
-  var audioBusy = false;
-  function markAudio() { audioBusy = true; setTimeout(function () { audioBusy = false; }, 1300); }
+  // SoundPool gives no completion callback, so the wait came from a flat ~1.3s guess -- but the
+  // clips run 0.7-2.0s, so letters overlapped. The wait is now the clip's mapped length.
+  var audioBusy = false, audioTimer = null;
+  function markAudio(ms) {
+    audioBusy = true;
+    if (audioTimer) clearTimeout(audioTimer);
+    audioTimer = setTimeout(function () { audioBusy = false; audioTimer = null; }, ms);
+  }
   var SHAPES = ["circle", "square", "triangle", "star"];
   function spawnShape(x, y) {
     if (typeof x !== "number") x = window.innerWidth * (0.15 + Math.random() * 0.7);
@@ -224,7 +272,8 @@
   // Fire a spoken letter if free, otherwise a shape. x/y optional (keyboard -> random placement).
   function fireOrShape(key, x, y) {
     if (audioBusy) { spawnShape(x, y); return; }
-    showLetter(key); markAudio();
+    showLetter(key, x, y);
+    markAudio(clipTiming(String(key || "").toUpperCase()).d + LETTER_TAIL);
   }
 
   // ---- fullscreen + keyboard lock (browser-side defence) ----
@@ -251,8 +300,20 @@
     fireOrShape(e.key, null, null);   // keyboard still works; gated by the same one-clip-at-a-time rule
     e.preventDefault(); e.stopImmediatePropagation();
   }
-  function onPointer(e) { if (locked && !inUnlock(e.target)) sparkle(e.clientX, e.clientY); }
-  function onTouch(e) { if (!locked) return; var t = e.touches && e.touches[0]; if (t && !inUnlock(e.target)) sparkle(t.clientX, t.clientY); }
+  // Mouse/pen only -- touch goes through onTouch, which walks every finger. Handling touch
+  // here as well would draw each trail twice.
+  function onPointer(e) {
+    if (e.pointerType === "touch") return;
+    if (locked && !inUnlock(e.target)) sparkle(e.clientX, e.clientY, e.pointerId);
+  }
+  // Every finger trails from its OWN position. This read e.touches[0] and nothing else, so a
+  // four-finger mash piled the whole stream onto the first finger's spot.
+  function onTouch(e) {
+    if (!locked || inUnlock(e.target)) return;
+    var ts = e.changedTouches && e.changedTouches.length ? e.changedTouches : e.touches;
+    if (!ts) return;
+    for (var i = 0; i < ts.length; i++) sparkle(ts[i].clientX, ts[i].clientY, ts[i].identifier);
+  }
   // Touch-native mash: a tap/click fires a RANDOM letter (the physical keyboard still fires
   // the real key). This is what makes the playground work on tablets/phones with no keyboard.
   function onTapLetter(e) {
@@ -262,7 +323,7 @@
     if (!isFs()) goFullscreen();
     var L = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".charAt(Math.floor(Math.random() * 26));
     fireOrShape(L, e.clientX, e.clientY);   // letter if free, else a colorful shape at the touch point
-    if (typeof e.clientX === "number") sparkle(e.clientX, e.clientY);
+    if (typeof e.clientX === "number") sparkle(e.clientX, e.clientY, e.pointerId);
   }
   var OTHERS = ["keyup", "keypress", "contextmenu", "wheel"];
 
@@ -395,6 +456,10 @@
       vs.forEach(function (v) { var o = document.createElement("option"); o.value = v.dir; o.textContent = v.label || v.dir; if (v.dir === cur) o.selected = true; clipSel.appendChild(o); });
     }
     if (window.__tlVoices) { fill(); return; }
+    // NOTE: on the Android kiosk this page runs from file://, where fetch() is refused, so
+    // this lands in the catch and the voice list stays empty -- the playground then always
+    // speaks the "jenny" default and this picker has nothing in it. Harmless but wrong;
+    // the fix is to ship voices as a <script> assignment the way audio/timings.js is.
     fetch("audio/voices.json").then(function (r) { return r.json(); }).then(function (l) { window.__tlVoices = l || []; fill(); }).catch(function () { window.__tlVoices = []; });
   }
   loadVoices(); // load the voice manifest at startup so the first keypress has clips ready

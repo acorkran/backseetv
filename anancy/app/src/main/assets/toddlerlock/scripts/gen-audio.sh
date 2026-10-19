@@ -77,3 +77,7 @@ for spec in "${VOICES[@]}"; do
 done
 printf '[%s]\n' "$(IFS=,; echo "${entries[*]}")" > "$OUT/voices.json"
 echo "done: $((${#VOICES[@]} * 36)) clips in $OUT"
+
+# The playground waits each clip's OWN length before it will speak another letter, so the
+# timing map has to be rebuilt whenever the clips are. Never ship one without the other.
+"$(dirname "$0")/gen-timings.sh"

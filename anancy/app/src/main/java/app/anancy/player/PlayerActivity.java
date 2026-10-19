@@ -173,6 +173,15 @@ public class PlayerActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setAllowFileAccess(true);
+        // A toddler's two-finger grab was pinch-zooming the playground. The page asks for this
+        // too (user-scalable=no), but only the WebView setting can't be worked around.
+        s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
+        s.setTextZoom(100);   // the playground sizes itself; ignore the system font scale
+        w.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
+        w.setVerticalScrollBarEnabled(false);
+        w.setHorizontalScrollBarEnabled(false);
         w.setBackgroundColor(Color.TRANSPARENT);   // let the video show through
         w.addJavascriptInterface(new WebAudioBridge(this), "AndroidAudio");
         w.addJavascriptInterface(new Object() {
