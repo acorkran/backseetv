@@ -179,7 +179,7 @@ public class WifiClient {
         if (cmd.startsWith("jump:")) return "/jump?i=" + cmd.substring(5);
         if (cmd.startsWith("snap:")) return "/snap?on=" + onOff(cmd.substring(5));
         if (cmd.startsWith("hotspot:")) return "/hotspot?on=" + onOff(cmd.substring(8));
-        if (cmd.startsWith("playmode:")) return "/playmode?on=" + onOff(cmd.substring(9));
+        if (cmd.startsWith("playmode:")) return onOffToggle("/playmode", cmd.substring(9));
         // library / queue editing / playlists
         if (cmd.startsWith("eps:")) {   // eps:SHOW:FROM -> HTTP returns the whole show at once
             String rest = cmd.substring(4); int k = rest.lastIndexOf(':');

@@ -87,7 +87,7 @@ public class RemoteActivity extends Activity {
     private boolean local;              // running ON the TV as its admin remote (loopback, no BLE)
     // Last pushed clock values; the TV pushes on change + a 10s heartbeat (battery), so we tick locally.
     private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol;
-    private boolean lastPlaying, lastSleeping, lastNapped; private int tickN;
+    private boolean lastPlaying, lastSleeping, lastNapped, lastPlaymode; private int tickN;
     private int lastBattery = -1; private boolean lastCharging;   // TV battery, shown on the now-playing line
     private final Runnable uiTick = new Runnable() { public void run() {
         renderClock();
@@ -233,7 +233,11 @@ public class RemoteActivity extends Activity {
         g1.addView(ui.gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
         LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); tabRoot.addView(g1, g1p);
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
-        g2.addView(ui.gridCell(IconView.BEAR, PURPLE, "Toddler", () -> { send("playmode:on"); toast("Play mode on the TV"); }, false), gcLp(1f));
+        // Toddler was send("playmode:on") with no way back: the front seat could start the playground
+        // and then had no way to stop it (the escape gesture is on the tablet, in the back seat).
+        g2.addView(ui.gridCell(IconView.BEAR, PURPLE, "Toddler", () -> {
+            send("playmode:toggle"); toast(lastPlaymode ? "Play mode off" : "Play mode on the TV");
+        }, false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
@@ -505,10 +509,19 @@ public class RemoteActivity extends Activity {
             if (!ip.isEmpty() && !local) tabletIp = ip;   // local stays on loopback
             // queue mode + connection level + the TV's hotspot creds (present only while it runs)
             lastShuffle = o.optBoolean("shuffle", lastShuffle); lastLoop = o.optBoolean("loop", lastLoop);
+            lastPlaymode = o.optBoolean("playmode", lastPlaymode);
             if (o.has("conn")) lastConn = o.optString("conn", lastConn);
             JSONObject hs = o.optJSONObject("hotspot");
+            String wasHs = hsSsid;
             hsSsid = hs != null ? hs.optString("ssid", null) : null; hsPass = hs != null ? hs.optString("pass", null) : null;
-            if (connView != null) renderConnStatus();
+            if (connView != null) {
+                renderConnStatus();
+                // The TV needs a few seconds to raise its hotspot, so the Join button was built before
+                // the creds arrived and then sat on "waiting for the TV to publish it" until you left
+                // the screen and came back -- the one tier that needs a tap looked dead. Rebuild it when
+                // the creds actually change, and only then: rebuilding every tick cancels a tap mid-press.
+                if (!String.valueOf(wasHs).equals(String.valueOf(hsSsid))) { renderConnActions(); probeTv(); }
+            }
             refreshScreenToggles();   // pick up newly-heard screens (Sync group appears once 2+ are known)
             RemoteService sv2 = RemoteService.get();   // ...and the per-screen CARDS, which were built once with an empty list
             if (sv2 != null && curTab == 0 && !sv2.tablets().keySet().equals(renderedDevIds)) refreshDeviceCards();

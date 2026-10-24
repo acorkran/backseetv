@@ -155,8 +155,11 @@ public class ControlServer {
                     if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) HotspotService.start(ctx); else HotspotService.stop(ctx);
                     body = ok(); break;
                 }
-                case "/playmode": {   // toddler play mode; optional &vol=0..1 sets the (default-muted) audio gain
-                    if ("1".equals(param(q, "on")) || "true".equals(param(q, "on"))) {
+                case "/playmode": {   // toddler play mode; optional &vol=0..1 sets the (default-muted) audio gain.
+                    // No &on at all = TOGGLE (same as /shuffle and /loop), so a remote can turn it off again.
+                    String pmOn = param(q, "on");
+                    if (pmOn == null ? !PlayerActivity.isPlayModeActive()
+                                     : ("1".equals(pmOn) || "true".equals(pmOn))) {
                         String vol = param(q, "vol"); if (vol != null) PlayModeActivity.setGain(pf(vol, 0f));
                         PlayModeActivity.begin(ctx);
                     } else PlayModeActivity.end();

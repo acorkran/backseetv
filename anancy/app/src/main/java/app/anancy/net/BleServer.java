@@ -177,7 +177,12 @@ public class BleServer {
         if (cmd.equals("queue") || cmd.startsWith("queue:")) { pushQueue(cmd.length() > 6 ? pi(cmd.substring(6)) : -1); return; }   // paged                                 // one-shot queue window (play order)
         if (cmd.startsWith("jump:")) { try { ctrl.jumpTo(Integer.parseInt(cmd.substring(5).trim())); PlayerActivity.wakeScreen(); } catch (Exception ignored) {} return; }
         if (cmd.startsWith("snap:")) { SnapshotService.set(ctx, "on".equals(cmd.substring(5).trim())); return; }  // still-image capture toggle
-        if (cmd.startsWith("playmode:")) { if ("on".equals(cmd.substring(9).trim())) PlayModeActivity.begin(ctx); else PlayModeActivity.end(); return; }  // toddler play mode
+        if (cmd.startsWith("playmode:")) {   // toddler play mode; "toggle" so a remote can turn it OFF again
+            String v = cmd.substring(9).trim();
+            boolean on = "toggle".equals(v) ? !PlayerActivity.isPlayModeActive() : "on".equals(v);
+            if (on) PlayModeActivity.begin(ctx); else PlayModeActivity.end();
+            return;
+        }
         if (cmd.startsWith("hotspot:")) { if ("on".equals(cmd.substring(8).trim())) HotspotService.start(ctx); else HotspotService.stop(ctx); return; }  // host hotspot + show QR
         if (cmd.startsWith("camble:")) { setCamble("on".equals(cmd.substring(7).trim())); return; }  // reduced-res stills over BLE
         // --- library / queue editing / user playlists (replies are one-shot typed payloads on STATE) ---
