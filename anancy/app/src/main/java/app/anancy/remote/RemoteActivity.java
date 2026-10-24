@@ -491,6 +491,12 @@ public class RemoteActivity extends Activity {
     private void showState(String json) {
         try {
             JSONObject o = new JSONObject(json);
+            // Feed the per-screen card from THIS state too. It used to be filled only by the HTTP
+            // poller, so on the Bluetooth tier the card sat on "-" forever, and after a Wi-Fi session
+            // it kept showing whatever episode was playing when the hotspot went away - the card and
+            // the line under it disagreed. The BLE state carries id/title/position, so just use it.
+            String devId = o.optString("id", "");
+            if (!devId.isEmpty()) devState.put(devId, json);
             boolean playing = o.optBoolean("playing", false);
             playPause.setPlaying(playing);
             String t = o.optString("title", "").replaceAll("\\.(mp4|mkv|m4v)$", "");
@@ -524,7 +530,8 @@ public class RemoteActivity extends Activity {
             }
             refreshScreenToggles();   // pick up newly-heard screens (Sync group appears once 2+ are known)
             RemoteService sv2 = RemoteService.get();   // ...and the per-screen CARDS, which were built once with an empty list
-            if (sv2 != null && curTab == 0 && !sv2.tablets().keySet().equals(renderedDevIds)) refreshDeviceCards();
+            if (sv2 != null && curTab == 0
+                    && (!sv2.tablets().keySet().equals(renderedDevIds) || !devId.isEmpty())) refreshDeviceCards();
         } catch (Exception ignored) {}
     }
 
