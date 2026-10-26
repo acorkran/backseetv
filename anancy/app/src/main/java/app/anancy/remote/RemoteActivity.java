@@ -917,6 +917,7 @@ public class RemoteActivity extends Activity {
         buildTargetRows(col, svc);
     }
     static final String[][] CONN_MODES = {
+            {"auto", "Automatic", "Bluetooth for the controls, Wi-Fi raised only for what needs it: live camera, file imports, the car dash. This phone hosts, so the TV joins silently with no prompts."},
             {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
             {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds live camera + fast library browsing."},
             {"remote_hotspot", "Remote hotspot", "This remote hosts the hotspot and the TV joins it. Adds live camera + fast library browsing."},
@@ -958,7 +959,10 @@ public class RemoteActivity extends Activity {
         else sb.append("Bluetooth:  ").append(svc != null && svc.bleConnected() ? "connected" : "not connected").append('\n');
         sb.append("TV over Wi-Fi:  ").append(local ? "yes (this is the TV)" : tvReach).append('\n');
         sb.append("TV hotspot:  ").append(hsSsid != null ? hsSsid : "off").append('\n');
-        if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off");
+        if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off").append('\n');
+        // Whether escalating costs you your current Wi-Fi is a property of the phone, not a setting,
+        // so say which one you have rather than letting the behaviour look arbitrary.
+        if (!local) sb.append("Wi-Fi radio:  ").append(app.anancy.net.WifiRadio.describe(this));
         connStatus.setText(sb.toString().trim());
     }
     /** Screen selection now lives in the header dropdown (checkbox multi-select), not here. */
@@ -1281,9 +1285,11 @@ public class RemoteActivity extends Activity {
     }
 
     // --- check-in: STILL IMAGE over BLE (<1fps, "not a feed") OR LIVE view over Wi-Fi (/live MJPEG) ---
+    private volatile boolean liveUp = false;   // the MJPEG loop has taken over from the Bluetooth stills
+
     private void openStill() {
         if (still != null) return;
-        boolean wifi = tabletIp != null && !tabletIp.isEmpty();   // TV's LAN IP known -> Wi-Fi live is possible
+        boolean wifi = local && tabletIp != null && !tabletIp.isEmpty();   // the TV's own remote: loopback, live at once
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setBackgroundColor(BG);
@@ -1291,6 +1297,7 @@ public class RemoteActivity extends Activity {
         col.setPadding(dp(16), dp(24), dp(16), dp(24));
 
         TextView h = new TextView(this);
+        final TextView head = h;
         h.setText(wifi ? "Live view" : "Check-in — still image, refreshes about once a second");
         h.setTextColor(SUB); h.setTextSize(13); h.setGravity(Gravity.CENTER);
         h.setPadding(0, 0, 0, dp(12));
@@ -1313,9 +1320,39 @@ public class RemoteActivity extends Activity {
         col.addView(close, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         still = col; frame.addView(still);
-        stillOn = true;
-        if (wifi) { send("snap:on"); startLive(tabletIp + ":8090", img, status); }
-        else { send("camble:on"); startBleStills(img, status); }
+        stillOn = true; liveUp = false;
+        if (wifi) { send("snap:on"); startLive(tabletIp + ":8090", img, status); return; }
+        // Live view is the whole reason the Wi-Fi tier exists, so ask for it -- but show a Bluetooth
+        // still IMMEDIATELY rather than staring at a black rectangle while the link comes up, and
+        // swap to live the moment the TV answers over Wi-Fi.
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.acquireWifi("live");
+        send("camble:on"); startBleStills(img, status);
+        startLiveWhenReady(img, status, head);
+    }
+
+    /** Wait for the Wi-Fi link to actually carry, then upgrade the stills to the MJPEG live view. */
+    private void startLiveWhenReady(final ImageView img, final TextView status, final TextView head) {
+        new Thread(() -> {
+            while (stillOn && !liveUp) {
+                String ip = tabletIp;
+                if (ip != null && !ip.isEmpty() && reachable(ip)) {
+                    liveUp = true;                       // ends the Bluetooth still loop
+                    send("camble:off"); send("snap:on");   // drop the BLE push, keep the camera running
+                    main.post(() -> { head.setText("Live view"); status.setText("going live…"); });
+                    startLive(ip + ":8090", img, status);
+                    return;
+                }
+                try { Thread.sleep(1200); } catch (InterruptedException e) { return; }
+            }
+        }).start();
+    }
+
+    private boolean reachable(String ip) {
+        java.net.HttpURLConnection c = null;
+        try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1200); c.setReadTimeout(1200); return c.getResponseCode() == 200; }
+        catch (Exception e) { return false; }
+        finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
     }
 
     // Wi-Fi: parse the TV's /live MJPEG (multipart/x-mixed-replace) and show frames as they arrive.
@@ -1348,7 +1385,7 @@ public class RemoteActivity extends Activity {
                 } catch (Exception e) {
                     if (++fails >= 3) {   // give up on live -> fall back to BLE stills
                         main.post(() -> status.setText("no live view — showing stills over Bluetooth"));
-                        send("camble:on"); startBleStills(img, status); return;
+                        liveUp = false; send("camble:on"); startBleStills(img, status); return;
                     }
                     main.post(() -> status.setText("connecting live…"));
                 } finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
@@ -1361,7 +1398,7 @@ public class RemoteActivity extends Activity {
     private void startBleStills(final ImageView img, final TextView status) {
         new Thread(() -> {
             byte[] lastShown = null;
-            while (stillOn) {
+            while (stillOn && !liveUp) {
                 byte[] jpg = RemoteService.latestStill();
                 if (jpg != null && jpg != lastShown) {
                     lastShown = jpg;
@@ -1441,8 +1478,10 @@ public class RemoteActivity extends Activity {
     }
 
     private void closeStill() {
-        stillOn = false;
+        stillOn = false; liveUp = false;
         send("camble:off"); send("snap:off");   // stop the BLE push + capture
+        RemoteService svc = RemoteService.get();
+        if (svc != null) svc.releaseWifi("live");   // the link drops unless it is free to keep
         if (still != null) { frame.removeView(still); still = null; }
         ptzBmp = null;   // release the frame ref; PTZ resets on next open
     }

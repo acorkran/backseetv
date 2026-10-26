@@ -43,7 +43,10 @@ public class HotspotService extends Service {
     }
 
     // --- connectivity level (Cfg anancy_conn): ble | tv_hotspot | remote_hotspot | shared ---------
-    static final String[] MODES = {"ble", "tv_hotspot", "remote_hotspot", "shared"};
+    // "auto" = the remote decides per feature (BLE for control, Wi-Fi only for live camera / imports
+    // / AA) and hosts the link from ITS side, because a non-owner phone cannot join us without a
+    // system dialog while we, as device owner, can join it silently. So the TV never hosts in auto.
+    static final String[] MODES = {"auto", "ble", "tv_hotspot", "remote_hotspot", "shared"};
     public static String mode(Context ctx) {
         String m = Cfg.getStr(ctx, "anancy_conn", "ble");
         for (String k : MODES) if (k.equals(m)) return m;
@@ -57,7 +60,7 @@ public class HotspotService extends Service {
         if (!known) return;
         Cfg.put(ctx, "anancy_conn", m);
         if ("tv_hotspot".equals(m)) { if (!running()) start(ctx, false); }
-        else if (running()) stop(ctx);
+        else if (running()) stop(ctx);   // every other level, "auto" included, means we do not host
     }
 
     private WifiManager.LocalOnlyHotspotReservation reservation;

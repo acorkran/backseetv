@@ -6,6 +6,7 @@ import app.anancy.net.HotspotService;
 import app.anancy.net.WearPusher;
 import app.anancy.net.WifiClient;
 import app.anancy.net.WifiJoiner;
+import app.anancy.net.WifiRadio;
 
 // ============================================================================
 //  Phone-side connection service (foreground). Owns BOTH transports and picks:
@@ -161,7 +162,7 @@ public class RemoteService extends Service {
     }
 
     // --- connection level -------------------------------------------------------------------------
-    private volatile String connMode = "ble";
+    private volatile String connMode = "auto";
     private volatile String hsSsid = null, hsPass = null;   // the TV's hotspot creds, while it runs
     private String joinedKey = null, pushedKey = null;
     public String connMode() { return connMode; }
@@ -182,13 +183,18 @@ public class RemoteService extends Service {
         // New creds (the TV rebooted and its hotspot picked a new random SSID) -> a fresh rejoin budget,
         // otherwise the tries spent on the stale pair leave nothing for the one that would work.
         if (hsSsid != null && (!hsSsid.equals(wasSsid) || !String.valueOf(hsPass).equals(String.valueOf(wasPass)))) rejoinTries = 0;
-        if (mode != null && !mode.isEmpty() && !mode.equals(connMode)) { connMode = mode; Cfg.put(this, "anancy_conn", mode); }
+        // "auto" is a decision about THIS phone's radio, not about the TV, so the TV's own level
+        // must not drag us off it -- otherwise a TV sitting on "ble" pins every remote to Bluetooth.
+        if (!"auto".equals(connMode) && mode != null && !mode.isEmpty() && !mode.equals(connMode)) {
+            connMode = mode; Cfg.put(this, "anancy_conn", mode);
+        }
         applyConnMode();
     }
     /** Phone-side coordination for the current level (never on the TV's own remote). */
     private void applyConnMode() {
         if (local) return;
         String mode = connMode;
+        if ("auto".equals(mode)) { autoEscalate(); return; }
         if ("ble".equals(mode)) {   // pure Bluetooth: no Wi-Fi client, no hotspot of ours
             if (wifi != null) { try { wifi.stop(); } catch (Exception ignored) {} wifi = null; }
             try { WifiJoiner.releaseDirect(this); } catch (Exception ignored) {}   // unbind: give the phone its normal network back
@@ -220,6 +226,93 @@ public class RemoteService extends Service {
             } else main.postDelayed(this::applyConnMode, 2000);   // creds arrive once the hotspot is up
         } else if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
     }
+    // --- "auto": Bluetooth for control, Wi-Fi only where it buys something -----------------------
+    //  Control always rides BLE. It needs no network, costs no radio, and ran a three-hour drive
+    //  without a hiccup. Wi-Fi exists for the things BLE physically cannot carry: the LIVE check-in
+    //  camera (MJPEG at ~8fps vs a still every 1.3s), importing files to the TV, and the AA dash.
+    //  So the link goes up when one of those asks for it -- and stays up afterwards only if this
+    //  phone has a radio to spare, because on a single-radio phone holding it means losing the
+    //  Wi-Fi you were using. Nothing in here ever moves control off BLE.
+    private final Set<String> wifiNeeds = java.util.Collections.synchronizedSet(new HashSet<>());
+    private volatile boolean escalated = false;
+    private boolean pokePending = false;
+    private long autoSince = 0;
+
+    /** A feature that cannot work over Bluetooth wants the Wi-Fi link ("live", "import", "aa"). */
+    public void acquireWifi(String tag) { wifiNeeds.add(tag); main.post(this::applyConnMode); }
+    /** ...and is done with it. The link drops only if it is not free to keep. */
+    public void releaseWifi(String tag) { wifiNeeds.remove(tag); main.post(this::applyConnMode); }
+    /** True once the Wi-Fi tier is actually carrying (or ready to carry) the heavy traffic. */
+    public boolean wifiEscalated() { return escalated; }
+
+    private void poke(long ms) {   // re-run ourselves once; applyConnMode fires on every state tick,
+        if (pokePending) return;   // so an unguarded postDelayed stacks dozens of copies in seconds
+        pokePending = true;
+        main.postDelayed(() -> { pokePending = false; applyConnMode(); }, ms);
+    }
+
+    private void autoEscalate() {
+        main.removeCallbacks(rejoin); rejoinArmed = false;   // auto owns its own joins
+        // mDNS is how we learn we're ALREADY reachable (home Wi-Fi: nothing to raise). Only worth
+        // running when there is a network for it to search, or a link of ours already up -- in the
+        // car with no Wi-Fi at all it would just be discovery burning power on an empty radio.
+        if (wifi == null && (WifiRadio.onWifi(this) || escalated || !wifiNeeds.isEmpty())) startWifi(null, 0);
+        // RAISE only on demand -- never spin up a hotspot nobody asked for. KEEP it afterwards when
+        // holding it is free (no Wi-Fi to lose, or a spare radio), so in the car the first check-in
+        // of the drive pays the few seconds and every one after that is instant.
+        // ...and keep it only while it is actually CARRYING. Holding on "escalated" alone would leave
+        // a hotspot up forever on any drive where the TV never managed to join it.
+        boolean want = !wifiNeeds.isEmpty()
+                || (escalated && WifiRadio.freeToHost(this) && wifi != null && wifi.isConnected());
+        if (!want) { autoSince = 0; dropEscalation(); return; }
+        if (autoSince == 0) autoSince = android.os.SystemClock.elapsedRealtime();
+
+        if (wifi != null && wifi.isConnected()) { escalated = true; return; }   // already reachable: home Wi-Fi, nothing to do
+        // Don't start raising radios until mDNS has had a fair go at finding the TV on this network.
+        if (android.os.SystemClock.elapsedRealtime() - autoSince < 5000) { poke(1500); return; }
+
+        // Prefer WE host. The TV is device owner, so it joins silently (addNetwork/enableNetwork) --
+        // zero taps, and the random local-only SSID stops mattering because the only joiner needs no
+        // approval. Joining the TV's hotspot the other way costs one system dialog per SSID, and it
+        // re-randomises on every tablet reboot, which is exactly what made it useless in the car.
+        if (bleUp() && WifiRadio.freeToHost(this)) {
+            if (!HotspotService.running()) {
+                try { HotspotService.start(this, false); } catch (Exception e) { Log.w(TAG, "auto host: " + e); }
+            }
+            String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
+            if (s != null && p != null) {
+                String key = s + "|" + p;
+                if (!key.equals(pushedKey)) {
+                    pushedKey = key; send("wifi:" + s + "\t" + p);
+                    Log.i(TAG, "auto: hosting for the TV, creds pushed over BLE (" + s + ")");
+                }
+                escalated = true;
+            } else poke(2000);   // the creds only exist once the hotspot is actually up
+            return;
+        }
+
+        // Fallback: the TV is already advertising a hotspot and we can afford to join it.
+        if (hsSsid != null && hsPass != null && WifiRadio.freeToJoin(this) && !WifiJoiner.directPending()) {
+            String key = hsSsid + "|" + hsPass;
+            if (!key.equals(joinedKey)) {
+                WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
+                boolean ok = false;
+                try { ok = WifiJoiner.joinDirect(this, c, null, null); } catch (Exception e) { Log.w(TAG, "auto join: " + e); }
+                joinedKey = ok ? key : null;
+                if (ok) { escalated = true; Log.i(TAG, "auto: joining the TV hotspot " + hsSsid); }
+            }
+        }
+    }
+
+    /** Nothing needs Wi-Fi any more and it is not free to hold -- give the phone its network back. */
+    private void dropEscalation() {
+        if (!escalated) return;
+        escalated = false; joinedKey = null;
+        if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
+        try { WifiJoiner.releaseDirect(this); } catch (Exception ignored) {}
+        Log.i(TAG, "auto: Wi-Fi released, Bluetooth only");
+    }
+
     // A TV hotspot restarts with the SAME creds but a NEW subnet whenever the tablet reboots, which
     // silently drops us back to Bluetooth until someone taps Join again - no good in a moving car. Once a
     // direct join has worked on an SSID we re-issue it ourselves, a few times, spaced out.
@@ -253,7 +346,15 @@ public class RemoteService extends Service {
         super.onCreate();
         INSTANCE = this;
         startForeground(72, note());
-        connMode = Cfg.getStr(this, "anancy_conn", "ble");
+        // One-time move to the "auto" default. The old default was a bare "ble" that never escalated,
+        // so every existing install would sit on Bluetooth forever and never see the Wi-Fi tier even
+        // when a feature needed it. A level picked explicitly AFTER this migration is left alone.
+        if (!"1".equals(Cfg.getStr(this, "anancy_conn_auto", null))) {
+            Cfg.put(this, "anancy_conn_auto", "1");
+            String was = Cfg.getStr(this, "anancy_conn", null);
+            if (was == null || "ble".equals(was) || "tv_hotspot".equals(was)) Cfg.put(this, "anancy_conn", "auto");
+        }
+        connMode = Cfg.getStr(this, "anancy_conn", "auto");
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
