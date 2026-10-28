@@ -23,10 +23,11 @@ import android.widget.TextView;
 
 public class RouterActivity extends Activity {
     static final String PREF = "anancy", KEY = "role";
+    private Class<?> pending;   // where to route once the permission dialog closes
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        requestBlePerms();
+        boolean asked = requestBlePerms();
 
         // Provisioning a kiosk already happens from a computer (dpm set-device-owner), so the role
         // must be settable the same way instead of forcing someone to walk over and tap a tablet:
@@ -38,8 +39,16 @@ public class RouterActivity extends Activity {
         } catch (Exception ignored) {}
 
         String role = getSharedPreferences(PREF, MODE_PRIVATE).getString(KEY, null);
-        if ("player".equals(role)) { route(PlayerActivity.class); return; }
-        if ("remote".equals(role)) { route(RemoteActivity.class); return; }
+        Class<?> dest = "player".equals(role) ? PlayerActivity.class
+                      : "remote".equals(role) ? RemoteActivity.class : null;
+        if (dest != null) {
+            // Routing out from under a LIVE permission dialog strands it: it keeps input focus,
+            // invisible, above whatever we routed to, and touches stop reaching the screen. Only
+            // reachable on a first run whose role was pre-set (adb --es role), where the role is
+            // known but nothing is granted yet -- so wait for the answer, then route.
+            if (asked) { pending = dest; setContentView(blank()); return; }
+            route(dest); return;
+        }
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -73,12 +82,30 @@ public class RouterActivity extends Activity {
 
     private void route(Class<?> c) { startActivity(new Intent(this, c)); finish(); }
 
+    @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        // Route regardless of the answer: every permission here is optional to STARTING, and a
+        // denial is reported properly by the set-up check rather than by refusing to open.
+        if (req == 1 && pending != null) { Class<?> c = pending; pending = null; route(c); }
+    }
+
+    /** Something plain and dark to sit under the permission dialog, so deferring the route doesn't
+        flash the default theme in the half-second before the answer comes back. */
+    private View blank() {
+        LinearLayout v = new LinearLayout(this);
+        v.setBackgroundColor(0xFF101418);
+        v.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return v;
+    }
+
     /** Only ask for what's missing. Asking for already-granted permissions still spawns a
         GrantPermissionsActivity, and because we route+finish immediately its result never lands —
         it lingers INVISIBLE with input focus above the kiosk, so touches stop reaching the show. */
-    private void requestBlePerms() {
+    /** @return true if a dialog was actually spawned, so the caller knows not to route out from
+        under it. */
+    private boolean requestBlePerms() {
         try {
-            if (android.os.Build.VERSION.SDK_INT < 31) return;
+            if (android.os.Build.VERSION.SDK_INT < 31) return false;
             java.util.List<String> want = new java.util.ArrayList<>(java.util.Arrays.asList(
                     "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_ADVERTISE"));
             // A13+ needs a runtime grant to SHOW the remote's foreground-service notification. On the
@@ -87,8 +114,11 @@ public class RouterActivity extends Activity {
             if (android.os.Build.VERSION.SDK_INT >= 33) want.add("android.permission.POST_NOTIFICATIONS");
             java.util.List<String> need = new java.util.ArrayList<>();
             for (String p : want) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) need.add(p);
-            if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), 1);
+            if (need.isEmpty()) return false;
+            requestPermissions(need.toArray(new String[0]), 1);
+            return true;
         } catch (Exception ignored) {}
+        return false;
     }
 
     private int pad(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }

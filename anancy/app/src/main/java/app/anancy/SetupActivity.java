@@ -67,7 +67,11 @@ public class SetupActivity extends Activity {
         ok &= checkRole();
         ok &= checkBluetooth();
         ok &= isPlayer ? checkAdvertising() : checkBlePerms();
-        ok &= isPlayer ? checkMedia() : checkScreensFound();
+        // TV only: a remote picks files through the system document picker, so it never needs
+        // storage access of its own. Checked BEFORE media, because it decides what "no videos" means.
+        boolean files = !isPlayer || checkAllFiles();
+        ok &= files;
+        ok &= isPlayer ? checkMedia(files) : checkScreensFound();
         pairingRow();                        // the fallback when Bluetooth can't do the job
         if (isPlayer) checkDeviceOwner();   // informational: the kiosk tier is optional, never a failure
 
@@ -146,7 +150,35 @@ public class SetupActivity extends Activity {
 
     /** TV only. Hardcoded folder names today, so saying WHICH ones is the difference between an
         empty library being a mystery and being a two-minute fix. */
-    private boolean checkMedia() {
+    /** TV only, and the one thing that silently empties the library on a fresh install: the shows
+        live on a portable SD card, which scoped storage puts out of reach of ordinary File access.
+        Being device owner does NOT cover this one -- all-files access is an appop, not a runtime
+        permission, so setPermissionGrantState cannot grant it and even the kiosk must be told once. */
+    private boolean checkAllFiles() {
+        if (Build.VERSION.SDK_INT < 30) {
+            boolean legacy = checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == PackageManager.PERMISSION_GRANTED;
+            row(legacy, "Storage access", legacy ? "Granted."
+                            : "Missing. The library cannot be read without it.",
+                    legacy ? null : "Open app permissions", this::openAppSettings);
+            return legacy;
+        }
+        boolean ok = false;
+        try { ok = android.os.Environment.isExternalStorageManager(); } catch (Exception ignored) {}
+        row(ok, "All files access", ok
+                        ? "Granted \u2014 Anancy can read the SD card."
+                        : "Not granted, so the SD card is invisible and the library looks empty however "
+                          + "many shows are on it. This is a manual grant even for the kiosk.",
+                ok ? null : "Grant all files access", () -> {
+                    try { startActivity(new Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:" + getPackageName()))); }
+                    catch (Exception e) { openAppSettings(); }
+                });
+        return ok;
+    }
+
+    private boolean checkMedia(boolean allFiles) {
         int shows = 0, files = 0;
         try {
             java.util.LinkedHashMap<String, java.util.List<java.io.File>> m = app.anancy.player.Library.scanShows(this);
@@ -156,6 +188,13 @@ public class SetupActivity extends Activity {
         boolean ok = files > 0;
         String chosen = Cfg.getStr(this, "anancy_media_dir", "");
         String where = chosen.isEmpty() ? "the default folders (Anancy, KidsTV, Kidodi)" : chosen;
+        // Never send them folder-hunting for a permission problem: the picker cannot read the card
+        // either, so "choose the media folder" would only show them an empty tree.
+        if (!ok && !allFiles) {
+            row(false, "Media", "Can't tell yet \u2014 with no all-files access nothing on the SD card "
+                    + "is readable. Grant that above, then come back.", null, null);
+            return false;
+        }
         row(ok, "Media", ok ? shows + " shows, " + files + " videos — from " + where + "."
                         : "No videos found in " + where + ". Point Anancy at the folder your shows are in "
                           + "— one sub-folder per show.",
