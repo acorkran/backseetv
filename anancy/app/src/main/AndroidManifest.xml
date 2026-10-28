@@ -86,9 +86,9 @@
             android:configChanges="orientation|screenSize|keyboardHidden"/>
 
         <!-- QR pairing: display creds/connection info as a QR, and scan one with the camera -->
-        <activity android:name=".net.QrShareActivity" android:exported="false"
+        <activity android:name=".net.QrShareActivity" android:exported="true"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
-        <activity android:name=".net.QrScanActivity" android:exported="false"
+        <activity android:name=".net.QrScanActivity" android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
 

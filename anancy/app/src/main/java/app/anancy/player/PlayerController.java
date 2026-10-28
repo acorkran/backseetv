@@ -866,7 +866,7 @@ public class PlayerController {
 
     /** This device's site-local IPv4 (e.g. 192.168.x) so a remote can reach the control server
         without relying on mDNS resolution (which proved flaky). "" if not on a LAN. */
-    static String wifiIp() {
+    public static String wifiIp() {
         try {
             java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
             while (ifs.hasMoreElements()) {

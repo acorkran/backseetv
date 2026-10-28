@@ -84,6 +84,15 @@ public class RemoteActivity extends Activity {
     private Bitmap ptzBmp;   // last frame shown, for the viewport math
     private ScaleGestureDetector ptzScale;
     private volatile String tabletIp;   // the TV's LAN IP, learned from state (BLE) — for /snapshot.jpg
+
+    /** The TV's address: from the live BLE state when we have it, else whatever a QR pairing left
+        behind. Without the fallback, scanning a pairing code achieved nothing the moment Bluetooth
+        wasn't also up — which is precisely the situation the QR exists for. */
+    private String tvIp() {
+        String ip = tabletIp;
+        if (ip != null && !ip.isEmpty()) return ip;
+        try { return app.anancy.Cfg.getStr(this, "anancy_paired_ip", ""); } catch (Exception e) { return ""; }
+    }
     private boolean local;              // running ON the TV as its admin remote (loopback, no BLE)
     // Last pushed clock values; the TV pushes on change + a 10s heartbeat (battery), so we tick locally.
     private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol;
@@ -964,8 +973,8 @@ public class RemoteActivity extends Activity {
     }
     private void probeTv() {   // is the TV actually reachable over Wi-Fi from here?
         new Thread(() -> {
-            String ip = tabletIp, r;
-            if (ip == null || ip.isEmpty()) r = "unknown (no IP from the TV yet)";
+            String ip = tvIp(), r;
+            if (ip.isEmpty()) r = "unknown (no IP from the TV yet)";
             else {
                 java.net.HttpURLConnection c = null;
                 try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1500); c.setReadTimeout(1500); r = c.getResponseCode() == 200 ? "reachable at " + ip : "not reachable (" + ip + ")"; }
@@ -1378,7 +1387,7 @@ public class RemoteActivity extends Activity {
 
     private void openStill() {
         if (still != null) return;
-        boolean wifi = local && tabletIp != null && !tabletIp.isEmpty();   // the TV's own remote: loopback, live at once
+        boolean wifi = local && !tvIp().isEmpty();   // the TV's own remote: loopback, live at once
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setBackgroundColor(BG);
@@ -1410,7 +1419,7 @@ public class RemoteActivity extends Activity {
 
         still = col; frame.addView(still);
         stillOn = true; liveUp = false;
-        if (wifi) { send("snap:on"); startLive(tabletIp + ":8090", img, status); return; }
+        if (wifi) { send("snap:on"); startLive(tvIp() + ":8090", img, status); return; }
         // Live view is the whole reason the Wi-Fi tier exists, so ask for it -- but show a Bluetooth
         // still IMMEDIATELY rather than staring at a black rectangle while the link comes up, and
         // swap to live the moment the TV answers over Wi-Fi.
@@ -1424,8 +1433,8 @@ public class RemoteActivity extends Activity {
     private void startLiveWhenReady(final ImageView img, final TextView status, final TextView head) {
         new Thread(() -> {
             while (stillOn && !liveUp) {
-                String ip = tabletIp;
-                if (ip != null && !ip.isEmpty() && reachable(ip)) {
+                String ip = tvIp();
+                if (!ip.isEmpty() && reachable(ip)) {
                     liveUp = true;                       // ends the Bluetooth still loop
                     send("camble:off"); send("snap:on");   // drop the BLE push, keep the camera running
                     main.post(() -> { head.setText("Live view"); status.setText("going live…"); });
@@ -1621,8 +1630,8 @@ public class RemoteActivity extends Activity {
                     String host = null;
                     long end = android.os.SystemClock.elapsedRealtime() + 25000;
                     while (host == null && android.os.SystemClock.elapsedRealtime() < end) {
-                        String ip = tabletIp;
-                        if (ip != null && !ip.isEmpty() && reachable(ip)) { host = ip + ":8090"; break; }
+                        String ip = tvIp();
+                        if (!ip.isEmpty() && reachable(ip)) { host = ip + ":8090"; break; }
                         try { Thread.sleep(800); } catch (InterruptedException e) { break; }
                     }
                     if (host == null && svc != null) host = svc.playerHttpHost();   // mDNS sweep as a fallback

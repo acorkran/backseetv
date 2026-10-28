@@ -68,6 +68,7 @@ public class SetupActivity extends Activity {
         ok &= checkBluetooth();
         ok &= isPlayer ? checkAdvertising() : checkBlePerms();
         ok &= isPlayer ? checkMedia() : checkScreensFound();
+        pairingRow();                        // the fallback when Bluetooth can't do the job
         if (isPlayer) checkDeviceOwner();   // informational: the kiosk tier is optional, never a failure
 
         if (ok) {
@@ -161,6 +162,42 @@ public class SetupActivity extends Activity {
                 ok ? null : "Choose the media folder",
                 () -> startActivity(new Intent(this, FolderPickerActivity.class)));
         return ok;
+    }
+
+    /** QR pairing. Bluetooth finds the TV on its own when it can, so this is the fallback for when
+        it can't: Bluetooth off or unavailable, a tablet that can't advertise, or a remote that
+        simply isn't being found. One scan carries BOTH the TV's network and its address, so it
+        works from a standing start with no prior link of any kind. */
+    private void pairingRow() {
+        if (isPlayer) {
+            info("Pair a remote by QR", "Puts a full-screen code on this TV carrying its Wi-Fi details "
+                    + "and address. Scan it from the remote's set-up check.",
+                    "Show pairing QR", () -> startActivity(new Intent(this, app.anancy.net.QrShareActivity.class)
+                            .putExtra(app.anancy.net.QrShareActivity.EXTRA_PAIR, true)));
+            return;
+        }
+        String ip = Cfg.getStr(this, "anancy_paired_ip", "");
+        String nm = Cfg.getStr(this, "anancy_paired_name", "");
+        info("Pair with a TV by QR", ip.isEmpty()
+                        ? "Optional. On the TV: Set-up check → Show pairing QR, then scan it here."
+                        : "Paired with " + (nm.isEmpty() ? "a TV" : nm) + " at " + ip + ".",
+                "Scan the TV's QR", () -> {
+                    try { startActivityForResult(new Intent(this, app.anancy.net.QrScanActivity.class), 9); }
+                    catch (Exception e) { toast("Couldn't open the scanner"); }
+                });
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != 9 || res != RESULT_OK || data == null) return;
+        String ip = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_ANANCY_IP);
+        String nm = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_TV_NAME);
+        String ssid = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_JOINED_SSID);
+        if (ip == null && ssid == null) { toast("That wasn't an Anancy pairing code"); return; }
+        if (ip != null) Cfg.put(this, "anancy_paired_ip", ip);
+        if (nm != null) Cfg.put(this, "anancy_paired_name", nm);
+        toast(ssid != null ? "Joining " + ssid + "…" : "Paired with " + (nm == null ? ip : nm));
+        render();
     }
 
     /** Informational only — the kiosk tier is optional, so a plain player must not be told it failed. */

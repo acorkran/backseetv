@@ -39,6 +39,35 @@ final class QrParse {
         return (w.ssid != null && !w.ssid.isEmpty()) ? w : null;
     }
 
+    /** Everything an ANANCY: pairing QR carries. Any field may be null. */
+    public static class Pair { public String ip, ssid, pass, name, id; }
+
+    /** ANANCY:ip=..;ssid=..;pass=..;name=..;id=.. -> all of it. The TV emits one QR holding both the
+        Wi-Fi credentials AND where to reach it, so a single scan is the whole pairing: join, then
+        talk. Values are percent-encoded by the emitter, since an SSID may contain ; or =. */
+    public static Pair anancyPair(String raw) {
+        if (raw == null || !raw.regionMatches(true, 0, "ANANCY:", 0, 7)) return null;
+        Pair p = new Pair();
+        for (String kv : raw.substring(7).split(";")) {
+            int e = kv.indexOf('=');
+            if (e <= 0) continue;
+            String k = kv.substring(0, e).trim().toLowerCase(), v = dec(kv.substring(e + 1).trim());
+            if ("ip".equals(k)) p.ip = v;
+            else if ("ssid".equals(k)) p.ssid = v;
+            else if ("pass".equals(k)) p.pass = v;
+            else if ("name".equals(k)) p.name = v;
+            else if ("id".equals(k)) p.id = v;
+        }
+        return p;
+    }
+    private static String dec(String v) {
+        try { return java.net.URLDecoder.decode(v, "UTF-8"); } catch (Exception e) { return v; }
+    }
+    /** Percent-encode a value so ; and = inside an SSID or passphrase can't break the payload. */
+    public static String enc(String v) {
+        try { return java.net.URLEncoder.encode(v == null ? "" : v, "UTF-8"); } catch (Exception e) { return ""; }
+    }
+
     /** ANANCY:ip=192.168.1.50[;k=v...] -> the ip value, or null if absent. Caller passes an ANANCY: payload. */
     static String anancyIp(String raw) {
         for (String kv : raw.substring(7).split(";")) {

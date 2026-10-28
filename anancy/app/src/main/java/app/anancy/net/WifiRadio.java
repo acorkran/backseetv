@@ -112,7 +112,12 @@ public final class WifiRadio {
         if (carProjecting(c))
             return (host || join) ? "Android Auto is projecting — spare radio, TV link can run alongside"
                                   : "Android Auto is projecting — one radio, so the TV link stays off";
-        if (host || join) return "two Wi-Fi links at once — the TV link is free to keep up";
+        // Be precise about WHICH way round is free. Saying "two links at once" while the phone is
+        // about to drop its Wi-Fi to JOIN the TV is worse than saying nothing: STA+AP and STA+STA
+        // are different capabilities, and this phone has only the first.
+        if (host && join) return "two Wi-Fi links at once — hosting or joining is free";
+        if (host) return "can host for the TV and keep your Wi-Fi; joining the TV's own hotspot would cost it";
+        if (join) return "can join the TV and keep your Wi-Fi; hosting would cost it";
         if (!onOtherWifi(c)) return "one Wi-Fi radio, nothing else using it";
         return "one Wi-Fi radio — the TV link costs you your current Wi-Fi, so it's raised only when needed";
     }

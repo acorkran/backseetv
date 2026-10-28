@@ -43,6 +43,8 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
     public static final String RESULT_PAYLOAD = "payload";     // raw QR text
     public static final String RESULT_ANANCY_IP = "ip";        // parsed from a ANANCY:ip= QR
     public static final String RESULT_JOINED_SSID = "ssid";    // the ssid we tried to join
+    public static final String RESULT_TV_NAME = "tvname";      // friendly name from an ANANCY: pairing QR
+    public static final String RESULT_TV_ID = "tvid";
 
     private final LifecycleRegistry lifecycle = new LifecycleRegistry(this);
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
@@ -101,8 +103,21 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
                 WifiJoiner.Creds c = WifiJoiner.parseWifiQr(raw);
                 if (c != null) { WifiJoiner.join(this, c); result.putExtra(RESULT_JOINED_SSID, c.ssid); }
             } else if (raw.regionMatches(true, 0, "ANANCY:", 0, 7)) {
-                String ip = QrParse.anancyIp(raw);   // pure parse extracted to QrParse (unit-tested)
-                if (ip != null) result.putExtra(RESULT_ANANCY_IP, ip);
+                QrParse.Pair p = QrParse.anancyPair(raw);
+                if (p != null) {
+                    if (p.ip != null && !p.ip.isEmpty()) result.putExtra(RESULT_ANANCY_IP, p.ip);
+                    if (p.name != null) result.putExtra(RESULT_TV_NAME, p.name);
+                    if (p.id != null) result.putExtra(RESULT_TV_ID, p.id);
+                    // One scan does the whole job: join the TV's network, then we know where it is.
+                    // joinDirect (not join) because the TV's hotspot has no internet, so a plain
+                    // suggestion is ignored by the system -- the same trap the car tier fell into.
+                    if (p.ssid != null && !p.ssid.isEmpty()) {
+                        WifiJoiner.Creds c = new WifiJoiner.Creds();
+                        c.ssid = p.ssid; c.type = "WPA"; c.pass = p.pass;
+                        try { WifiJoiner.joinDirect(this, c, null, null); } catch (Exception ignored) {}
+                        result.putExtra(RESULT_JOINED_SSID, p.ssid);
+                    }
+                }
             }
         } catch (Exception e) { Log.w(TAG, "qr dispatch: " + e); }
         setResult(RESULT_OK, result);
