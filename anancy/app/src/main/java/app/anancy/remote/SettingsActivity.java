@@ -191,6 +191,7 @@ public class SettingsActivity extends Activity {
             catch (Exception e) { toast("Couldn't copy"); }
         });
         if (owner) actionRow("Remove device owner", "remove…", this::confirmRemoveOwner);
+        actionRow("Set-up check", "run", () -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
         actionRow("About Anancy & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
 
         // --- Exit ------------------------------------------------------------------------------

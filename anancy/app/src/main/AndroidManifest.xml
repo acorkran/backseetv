@@ -141,6 +141,10 @@
 
         <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
              now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
+        <!-- Set-up check: role-aware "why aren't these two talking" screen with the fixes. -->
+        <activity android:name=".SetupActivity" android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar"/>
+
         <service android:name=".player.AnancyMediaService" android:exported="true">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService"/>

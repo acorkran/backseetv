@@ -293,7 +293,16 @@ public class RemoteActivity extends Activity {
         RemoteService svc = RemoteService.get();
         java.util.List<java.util.Map.Entry<String, String>> devs = svc != null ? new java.util.ArrayList<>(svc.tablets().entrySet()) : new java.util.ArrayList<>();
         renderedDevIds = svc != null ? new java.util.HashSet<>(svc.tablets().keySet()) : new java.util.HashSet<>();
-        if (devs.isEmpty()) { deviceCards.addView(ui.noteText("No screens connected yet — tap Anancy → Connection.")); return; }
+        if (devs.isEmpty()) {
+            // "Not connected" with nothing to act on is the single most useless state in the app:
+            // every real cause (Bluetooth off, a denied permission, the tablet not set as the TV)
+            // is invisible from here. Send them somewhere that names it and offers the fix.
+            deviceCards.addView(ui.noteText("No screens connected yet."));
+            Button chk = ui.rowBtn("Run the set-up check", ACCENT);
+            chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
+            deviceCards.addView(chk);
+            return;
+        }
         boolean all = allSelected(svc);
         LinearLayout rowL = null;
         for (int i = 0; i < devs.size(); i++) {
@@ -697,6 +706,17 @@ public class RemoteActivity extends Activity {
         sv.addView(col); frame.addView(sv);
         return sv;
     }
+    /** Make an overlay's title a dropdown, the same control as the main page's "Anancy ⌄". A title
+        plus an "applying to" line plus a row to get at your own settings is three things saying what
+        one dropdown says; this returns the title view so a popup can hang off it. */
+    private TextView overlayTitleMenu(View ov, String text, final Runnable onTap) {
+        LinearLayout hrow = (LinearLayout) colOf(ov).getChildAt(0);
+        TextView h = (TextView) hrow.getChildAt(1);
+        h.setText(text + "  ⌄");
+        h.setClickable(true);
+        h.setOnClickListener(v -> onTap.run());
+        return h;
+    }
     private static LinearLayout colOf(View overlay) { return (LinearLayout) ((ScrollView) overlay).getChildAt(0); }
     private static void clearRows(LinearLayout col, int keep) { while (col.getChildCount() > keep) col.removeViewAt(keep); }
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
@@ -867,7 +887,11 @@ public class RemoteActivity extends Activity {
         c.setPadding(dp(12), dp(13), dp(12), dp(13)); c.setClickable(true);
         TextView t = new TextView(this); t.setText(label); t.setTextColor(color); t.setTextSize(14);
         c.addView(t);
-        c.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); onTap.run(); });
+        c.setOnClickListener(v -> {
+            if (targetPopup != null) targetPopup.dismiss();
+            if (settingsPopup != null) { settingsPopup.dismiss(); settingsPopup = null; }
+            onTap.run();
+        });
         return c;
     }
     private void buildTargetRows(final LinearLayout col, final RemoteService svc) {
@@ -1076,6 +1100,11 @@ public class RemoteActivity extends Activity {
                 Button bt = ui.rowBtn(btOn ? "Open Bluetooth settings" : "Turn Bluetooth on (system settings)", btOn ? TXT : ACCENT);
                 bt.setOnClickListener(v -> { try { startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)); } catch (Exception e) { toast("Couldn't open Bluetooth settings"); } });
                 connActions.addView(bt);
+                if (!linked) {
+                    Button chk = ui.rowBtn("Run the set-up check", ACCENT);
+                    chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
+                    connActions.addView(chk);
+                }
                 connActions.addView(ui.noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera + fast library browsing need a Wi-Fi level."));
             }
         }
@@ -1110,7 +1139,7 @@ public class RemoteActivity extends Activity {
     private void openSettings() {
         if (settingsView != null) return;
         if (local) { startActivity(new Intent(this, SettingsActivity.class)); return; }   // on the TV: the real screen
-        settingsView = overlay("TV settings");
+        settingsView = overlay("Settings");
         cfgVals = null;
         RemoteService svc = RemoteService.get();
         if (svc != null) svc.requestConfig();
@@ -1142,6 +1171,44 @@ public class RemoteActivity extends Activity {
         RemoteService svc = RemoteService.get(); if (svc != null) svc.setConfig(k, val);
         try { if (cfgVals != null) cfgVals.put(k, val.matches("-?\\d+") ? (Object) Integer.valueOf(val) : val); } catch (Exception ignored) {}
     }
+    private TextView settingsTitle;
+
+    /** The settings-page half of the main page's dropdown: pick which screen you are configuring,
+        or step out to this remote's OWN settings — which are a different thing entirely, since a
+        non-owner phone can't hold the kiosk options at all. */
+    private void showSettingsTargetMenu() {
+        final RemoteService svc = RemoteService.get();
+        if (svc == null) return;
+        LinearLayout col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(0, dp(6), 0, dp(6));
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), 0x33FFFFFF);
+        MaxScroll sv = new MaxScroll(this, (int) (getResources().getDisplayMetrics().heightPixels * 0.6f));
+        sv.setBackground(bg); sv.setClipToOutline(true); sv.addView(col);
+        final android.widget.PopupWindow pop = new android.widget.PopupWindow(sv, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pop.setElevation(dp(12));
+
+        TextView hdr = new TextView(this); hdr.setText("Settings for"); hdr.setTextColor(SUB); hdr.setTextSize(11);
+        hdr.setPadding(dp(16), dp(8), dp(16), dp(8)); col.addView(hdr);
+        if (svc.tablets().isEmpty()) {
+            TextView none = new TextView(this); none.setText("No screens found.");
+            none.setTextColor(SUB); none.setTextSize(13); none.setPadding(dp(16), dp(2), dp(16), dp(10)); col.addView(none);
+        }
+        for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
+            final boolean on = svc.targets().isEmpty() || svc.targets().contains(e.getKey());
+            col.addView(menuCell((on ? "●  " : "○  ") + e.getValue(), on ? GOOD : TXT, () -> {
+                svc.setTargets(new java.util.LinkedHashSet<>(java.util.Collections.singletonList(e.getKey())));
+                cfgVals = null; svc.requestConfig(); loadConfig(0);
+            }));
+        }
+        ui.hSep(col);
+        col.addView(menuCell("This remote's own settings  ›", ACCENT,
+                () -> startActivity(new Intent(this, SettingsActivity.class))));
+        // menuCell dismisses the shared targetPopup; this one is its own window, so close it too.
+        pop.showAsDropDown(settingsTitle != null ? settingsTitle : titleDot, 0, dp(6), Gravity.START);
+        settingsPopup = pop;
+    }
+    private android.widget.PopupWindow settingsPopup;
+
     /** Which screens these settings get written to, named. "All screens" is resolved to the actual
         names: a list of one is still worth printing, because the whole confusion was not knowing. */
     private String settingsTargetNames() {
@@ -1158,16 +1225,11 @@ public class RemoteActivity extends Activity {
     private void renderSettings() {
         if (settingsView == null) return;
         LinearLayout col = colOf(settingsView); clearRows(col, 1);
-        // SAY WHOSE SETTINGS THESE ARE. The screen used to be titled "TV settings" with nothing else
-        // on it, so the moment a row looked locked it read as "this is the phone's own settings and
-        // the phone isn't device owner" -- which is also the wrong mental model to leave in place,
-        // because device-owner options belong to the SCREEN, never to the remote holding them.
-        col.addView(ui.noteText("Applying to:  " + settingsTargetNames()));
-        col.addView(ui.noteText(cfgOwner ? "Change any of them from here."
-                : "Locked rows need device-owner setup ON THAT SCREEN (tap a 🔒 notice to learn more)."));
-        { Button own = ui.rowBtn("This remote's own settings  ›", TXT);
-          own.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-          col.addView(own); }
+        // The title IS the device picker, so nothing here has to restate whose settings these are.
+        settingsTitle = overlayTitleMenu(settingsView, settingsTargetNames() + " settings", this::showSettingsTargetMenu);
+        // Only worth a line when it changes what you can DO: a padlock on a screen that isn't set up
+        // as a kiosk. Device-owner options belong to the SCREEN, never to the remote holding it.
+        if (!cfgOwner) col.addView(ui.noteText("Locked rows need device-owner setup ON THAT SCREEN (tap a 🔒 notice to learn more)."));
 
         sSec(col, "Library");
         // The only rescan in the app used to be the one after an upload, so media copied onto the
