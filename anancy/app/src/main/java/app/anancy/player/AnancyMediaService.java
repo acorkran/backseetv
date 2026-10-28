@@ -78,7 +78,11 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         session.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
         session.setCallback(callback);
         setSessionToken(session.getSessionToken());
-        session.setActive(true);
+        // NOT setActive(true) here. Android Auto binds EVERY installed media app's browser service
+        // just to enumerate them, so going active on bind made Anancy bid for the car's media focus
+        // without the user ever choosing it -- it would surface over Samsung Music mid-drive and,
+        // worse, FLAG_HANDLES_MEDIA_BUTTONS meant steering-wheel next/prev could skip the kid's show
+        // instead of the music. We go active only when the user actually touches an Anancy control.
         publish();
         main.post(ticker);
         started = true;
@@ -93,14 +97,19 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         if (cambleTries++ % 3 == 0) send("camble:on");   // retry ~every 3 ticks until they do
     }
 
+    /** The user touched an Anancy control in the car: NOW we are the session they mean. */
+    private void activate() {
+        if (session != null && !session.isActive()) { session.setActive(true); lastSt = -1; }
+    }
+
     private final MediaSessionCompat.Callback callback = new MediaSessionCompat.Callback() {
-        @Override public void onPlay()  { send("playpause"); }
-        @Override public void onPause() { send("playpause"); }
-        @Override public void onStop()  { send("pause"); }
-        @Override public void onSkipToNext()     { send("next"); }
-        @Override public void onSkipToPrevious() { send("prev"); }
-        @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { play(mediaId); }
-        @Override public void onCustomAction(String action, Bundle extras) { send(action); }   // action string == command
+        @Override public void onPlay()  { activate(); send("playpause"); }
+        @Override public void onPause() { activate(); send("playpause"); }
+        @Override public void onStop()  { activate(); send("pause"); }
+        @Override public void onSkipToNext()     { activate(); send("next"); }
+        @Override public void onSkipToPrevious() { activate(); send("prev"); }
+        @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { activate(); play(mediaId); }
+        @Override public void onCustomAction(String action, Bundle extras) { activate(); send(action); }   // action string == command
     };
 
     /** A browse item was tapped, or a custom "act:" fired. */
@@ -161,7 +170,21 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
             lastShow = show; lastEp = sub; lastDur = barDur;
         }
 
-        int st = (playing || sleeping) ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
+        // Never claim to be PLAYING unless the user actually chose us: an inactive session that keeps
+        // announcing playback is what let the kid's show shoulder its way onto the car's now-playing.
+        int st = (session.isActive() && (playing || sleeping))
+                ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
+        // Re-publishing an UNCHANGED state every second re-bumps this session up Android's
+        // most-recently-active ordering, which is the other half of the same bug. Publish on real
+        // change only; controllers extrapolate the progress bar from position + speed, so the bar
+        // still moves. A 10s keepalive covers controllers that expect to be fed.
+        long nowMs = android.os.SystemClock.elapsedRealtime();
+        long expect = lastPubPos + (lastSt == PlaybackStateCompat.STATE_PLAYING ? nowMs - lastPubWall : 0);
+        boolean changed = st != lastSt || sleeping != lastSleeping
+                || Math.abs(barPos - expect) > 2500        // a seek, or the episode rolled over
+                || nowMs - lastPubWall > 10000;
+        if (!changed) return;
+        lastSt = st; lastSleeping = sleeping; lastPubPos = barPos; lastPubWall = nowMs;
         PlaybackStateCompat.Builder b = new PlaybackStateCompat.Builder()
                 .setActions(PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE
                         | PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_STOP
@@ -179,6 +202,9 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         session.setPlaybackState(b.build());
     }
 
+    private int lastSt = -1;                 // last published playback state, -1 = never
+    private boolean lastSleeping = false;
+    private long lastPubPos = 0, lastPubWall = 0;
     private long sleepTotalMs = 0;
     private static String mmss(long ms) { long s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
 
@@ -221,6 +247,10 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
     }
 
     @Override public void onLoadChildren(@NonNull String parentId, @NonNull Result<List<MediaItem>> result) {
+        // Drilling INTO a tab means a human opened Anancy in the car, so the dash is theirs to have.
+        // The root itself is deliberately excluded: head units prefetch it during enumeration, which
+        // is the same "active without being chosen" trap that put us over the top of Samsung Music.
+        if (!ROOT.equals(parentId)) activate();
         if (ROOT.equals(parentId)) { result.sendResult(rootTabs()); return; }
         RemoteService svc = RemoteService.get();
         if (TAB_CTRL.equals(parentId)) { result.sendResult(controls()); return; }
