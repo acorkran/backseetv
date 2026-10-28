@@ -256,7 +256,15 @@ public class RemoteService extends Service {
         // mDNS is how we learn we're ALREADY reachable (home Wi-Fi: nothing to raise). Only worth
         // running when there is a network for it to search, or a link of ours already up -- in the
         // car with no Wi-Fi at all it would just be discovery burning power on an empty radio.
-        if (wifi == null && (WifiRadio.onWifi(this) || escalated || !wifiNeeds.isEmpty())) startWifi(null, 0);
+        if (wifi == null && (WifiRadio.onOtherWifi(this) || escalated || !wifiNeeds.isEmpty())) startWifi(null, 0);
+        // Android Auto wireless runs over THIS phone's Wi-Fi radio, and the dash outranks the camera:
+        // the check-in degrades to Bluetooth stills, AA has nothing to fall back to. So while a car
+        // is projecting and this phone can only hold one Wi-Fi link, rescind to Bluetooth outright --
+        // even with the live view open. This overrides the demand below on purpose.
+        if (WifiRadio.carVetoesWifi(this)) {
+            if (escalated) Log.i(TAG, "auto: Android Auto projecting on a single-radio phone - rescinding Wi-Fi, back to Bluetooth");
+            autoSince = 0; dropEscalation(); return;
+        }
         // RAISE only on demand -- never spin up a hotspot nobody asked for. KEEP it afterwards when
         // holding it is free (no Wi-Fi to lose, or a spare radio), so in the car the first check-in
         // of the drive pays the few seconds and every one after that is instant.

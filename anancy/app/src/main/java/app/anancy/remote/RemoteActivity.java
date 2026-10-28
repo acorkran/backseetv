@@ -1492,6 +1492,12 @@ public class RemoteActivity extends Activity {
         if (local) return (java.net.HttpURLConnection) url.openConnection();   // loopback: never bind to the Wi-Fi network
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            // When WE host the link the TV sits on our soft-AP interface (swlan0), which is NOT a
+            // Network we can bind to -- and binding to the Wi-Fi we are a CLIENT of (home Wi-Fi)
+            // sends the request out wlan0, where the TV's address simply does not exist. The plain
+            // socket gets it right off the route table. Same once joinDirect has bound the process.
+            if (HotspotService.running() || (cm != null && cm.getBoundNetworkForProcess() != null))
+                return (java.net.HttpURLConnection) url.openConnection();
             if (cm != null) for (android.net.Network n : cm.getAllNetworks()) {
                 android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
                 if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
