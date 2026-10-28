@@ -142,7 +142,7 @@ public class FolderPickerActivity extends Activity {
     }
 
     private void rescan() {
-        try { app.anancy.player.PlayerController.get().rescan(this); } catch (Exception ignored) {}
+        try { app.anancy.player.PlayerController.get().rescanAndRestart(this); } catch (Exception ignored) {}
     }
 
     // --- filesystem helpers --------------------------------------------------------------------

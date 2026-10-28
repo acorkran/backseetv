@@ -53,6 +53,17 @@ public final class Library {
                 List<File> cur = sorted.get(show.getName());
                 if (cur == null) sorted.put(show.getName(), files); else cur.addAll(files);
             }
+            // Videos sitting directly in the chosen folder are a show in their own right, named
+            // after the folder. Honouring only sub-folders made the folder picker's own advice a
+            // lie -- it says "No sub-folders ... if the videos are in here directly, this is a fine
+            // choice" and then handed back an empty library.
+            List<File> loose = new ArrayList<>();
+            for (File f : dirs) if (!f.isDirectory() && isVideo(f)) loose.add(f);
+            if (!loose.isEmpty()) {
+                Collections.sort(loose, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                List<File> cur = sorted.get(root.getName());
+                if (cur == null) sorted.put(root.getName(), loose); else cur.addAll(loose);
+            }
         }
         int n = 0; for (List<File> v : sorted.values()) n += v.size();
         Log.i(TAG, "library: " + sorted.size() + " shows, " + n + " files");

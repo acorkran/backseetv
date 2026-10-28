@@ -64,6 +64,7 @@ public class PlayerActivity extends Activity {
     private android.webkit.WebView playWeb;               // toddler play-mode overlay (transparent, over the show)
     private View flash;
     private View napOverlay;
+    private LinearLayout emptyState;                      // shown instead of pure black when there is nothing to play
     private boolean napped = false;
     private volatile boolean flashing = false;            // suppress screen-on -> wake during a Light flash
     private android.content.BroadcastReceiver screenRx;   // physical power button sync
@@ -98,6 +99,17 @@ public class PlayerActivity extends Activity {
         root.addView(gestureCatcher, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
+        // An empty library was indistinguishable from a broken app: both were pure black, forever.
+        // Added last so it sits ABOVE the gesture catcher and its button is actually tappable.
+        emptyState = new LinearLayout(this);
+        emptyState.setOrientation(LinearLayout.VERTICAL);
+        emptyState.setGravity(Gravity.CENTER);
+        emptyState.setBackgroundColor(0xFF101418);
+        emptyState.setPadding(dp(32), dp(32), dp(32), dp(32));
+        emptyState.setVisibility(View.GONE);
+        root.addView(emptyState, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
         setContentView(root);
 
         player = new ExoPlayer.Builder(this).build();
@@ -112,6 +124,7 @@ public class PlayerActivity extends Activity {
         // on every cold boot, since setAudio also floors the system stream at 50%.
         PlayerController.get().setAudio(this);   // system media volume + persisted mute; never boots stuck silent
         PlayerController.get().attach(player);
+        PlayerController.get().onLibraryLoaded = () -> showEmpty(PlayerController.get().libraryEmpty());
         PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
         if (server == null) {   // created once for the app, not per activity
             server = new ControlServer(this, PlayerController.get());
@@ -312,7 +325,43 @@ public class PlayerActivity extends Activity {
         }, dur);
     }
 
-    @Override protected void onResume() { super.onResume(); enterKiosk(); }
+    @Override protected void onResume() {
+        super.onResume();
+        enterKiosk();
+        // Coming back from granting the permission (or picking a folder) is exactly the moment the
+        // library can suddenly exist, and nothing else would notice until the next cold start.
+        if (PlayerController.get().libraryEmpty()) PlayerController.get().rescan(this);
+    }
+
+    /** Shown when a scan finds nothing. WHY it found nothing matters: a missing permission is a
+        different problem from an empty folder, and offering the folder picker for the first one
+        sends someone to a picker that cannot read the card either. */
+    private void showEmpty(boolean empty) {
+        if (emptyState == null) return;
+        if (!empty) { emptyState.setVisibility(View.GONE); return; }
+        boolean perm = true;
+        try { perm = android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager(); }
+        catch (Exception ignored) {}
+        emptyState.removeAllViews();
+        TextView h = new TextView(this);
+        h.setText(perm ? "Nothing to play yet" : "Anancy can't read your storage");
+        h.setTextColor(Color.WHITE); h.setTextSize(26); h.setGravity(Gravity.CENTER);
+        emptyState.addView(h);
+        TextView d = new TextView(this);
+        d.setText(perm
+                ? "No videos found. Point Anancy at the folder your shows are in \u2014 one sub-folder per show."
+                : "The shows are on the SD card, and Anancy needs \"All files access\" before it can see any "
+                  + "of it. Grant that and the library appears straight away.");
+        d.setTextColor(0xFF9AA4B2); d.setTextSize(15); d.setGravity(Gravity.CENTER);
+        d.setPadding(0, dp(12), 0, dp(24));
+        emptyState.addView(d);
+        Button b = new Button(this);
+        b.setText("Open set-up check"); b.setAllCaps(false);
+        b.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
+        emptyState.addView(b, new LinearLayout.LayoutParams(dp(260), dp(52)));
+        emptyState.setVisibility(View.VISIBLE);
+        emptyState.bringToFront();
+    }
 
     // --- kid-proof shell: device-owner lock-task + hidden-gesture admin unlock (PIN) ---
     private void enterKiosk() {

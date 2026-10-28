@@ -93,6 +93,13 @@ public class PlayerController {
     public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
     /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
     public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
+    /** Start at the retry cap: a deliberate reload is not the boot race, so it must report an empty
+        folder immediately instead of sitting on black for 90 seconds retrying a mounted card. */
+    private static final int NO_RETRY = 30;
+    /** The media folder CHANGED (picked, or reset to the defaults). The queue still points at files
+        that are no longer in the library at all, so rebuild it -- plain rescan() deliberately will
+        not, because it must not yank a show that is still perfectly valid. */
+    public void rescanAndRestart(Context ctx) { loadLibrary(ctx, true, NO_RETRY); }
     /** Re-read the library in CLIENT mode (anancy_host just set) so a follower can resolve the leader's ids.
         autoStart=false: don't blast playback — the sync loop drives what plays. */
     public void reloadForSync(Context ctx) { loadLibrary(ctx, false, 0); }
@@ -119,23 +126,58 @@ public class PlayerController {
             }
             // Boot race: the portable SD card can take tens of seconds to mount after boot, so a
             // scan on launch may find nothing. Retry until content appears (~90s) before giving up.
-            if (all.isEmpty() && autoStart && attempt < 30) {
+            // Only when waiting can actually help, though: with no all-files access the card stays
+            // unreadable no matter how long we sit here, and retrying a permission problem for 90
+            // seconds just buys a longer black screen that ends in exactly the same place.
+            if (all.isEmpty() && autoStart && attempt < 30 && canWaitForStorage()) {
                 android.util.Log.i("Anancy", "library empty (attempt " + attempt + "); SD may still be mounting, retry in 3s");
                 main.postDelayed(() -> loadLibrary(ctx, true, attempt + 1), 3000);
                 return;
             }
             final LinkedHashMap<String, List<MediaItem>> user = readUserPlaylists();
             on(() -> {
+                lastLoadEmpty = all.isEmpty();
                 libFiles = files; libShows = showIds; idOfPath = idOf; clientItems = null;
                 playlists.clear();
                 playlists.put("Shuffle All", all);
                 playlists.putAll(built);
                 userPlaylists.clear(); userPlaylists.putAll(user);
                 loop = Cfg.getInt(appCtx, "anancy_loop", 1) == 1;
-                if (autoStart) selectPlaylist("Shuffle All");
+                if (all.isEmpty()) {
+                    // A deliberate reload that found nothing must not leave the PREVIOUS folder's
+                    // show playing on behind the empty state -- that reads as "nothing happened".
+                    if (autoStart) {
+                        currentItems = new ArrayList<>();
+                        try { if (p != null) p.clearMediaItems(); } catch (Exception ignored) {}
+                    }
+                } else if (autoStart || currentItems == null || currentItems.isEmpty()) {
+                    // autoStart = cold start or a deliberate folder change, so (re)build the queue.
+                    // Otherwise only when nothing is queued: a routine rescan (files copied on)
+                    // must not yank a show that is still playing perfectly well. But leaving it
+                    // unselected when nothing is queued is the worst of both worlds -- the library
+                    // is no longer empty so the empty state stays hidden, and the TV sits on black
+                    // with a full library behind it.
+                    selectPlaylist("Shuffle All");
+                }
+                Runnable cb = onLibraryLoaded;
+                if (cb != null) cb.run();
             });
         }).start();
     }
+
+    /** False when the library is unreadable for a reason that no amount of waiting will fix, so the
+        caller reports it instead of retrying into a black screen. */
+    private static boolean canWaitForStorage() {
+        try {
+            return android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager();
+        } catch (Exception e) { return true; }
+    }
+
+    /** Set by the player UI so an empty library can be explained on screen rather than shown as
+        black. Runs on the main thread after every load, successful or not. */
+    public Runnable onLibraryLoaded;
+    private volatile boolean lastLoadEmpty = false;
+    public boolean libraryEmpty() { return lastLoadEmpty; }
 
     /** CLIENT: build the library from the HOST's manifest — same shows/ids, items are host /media URLs
         (so id X on the client == id X on the host). Retries until the host is reachable. */
