@@ -86,9 +86,29 @@ public final class Library {
     // re-provisioned install finds existing media WITHOUT the user moving it (all matches are merged).
     static final String[] MEDIA_DIRS = { "Anancy", "KidsTV", "Kidodi" };
     /** Candidate media roots across primary + removable volumes (portable, no hardcoded UUID). */
+    /** The same test the scanner uses, so a folder picker can show counts that match reality. */
+    public static boolean isVideo(File f) {
+        if (f == null || f.isDirectory()) return false;
+        String n = f.getName().toLowerCase();
+        return n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".m4v");
+    }
+
     private static List<File> roots(Context ctx) {
         grantStorage(ctx);
         LinkedHashSet<File> roots = new LinkedHashSet<>();
+        // A folder the user picked WINS outright. Falling back to the hardcoded names as well would
+        // silently merge some other folder's videos into their library, which is worse than useless.
+        try {
+            String chosen = app.anancy.Cfg.getStr(ctx, "anancy_media_dir", "");
+            if (chosen != null && !chosen.isEmpty()) {
+                File d = new File(chosen);
+                if (d.isDirectory() && d.canRead()) {
+                    Log.i(TAG, "roots: using chosen media folder " + d.getAbsolutePath());
+                    return new ArrayList<>(java.util.Collections.singletonList(d));
+                }
+                Log.w(TAG, "roots: chosen media folder unreadable, falling back to defaults: " + chosen);
+            }
+        } catch (Exception ignored) {}
         try {
             StorageManager sm = (StorageManager) ctx.getSystemService(Context.STORAGE_SERVICE);
             // StorageVolume.getDirectory() is API 30 (NoSuchMethodError on 29, which catch(Exception) misses);

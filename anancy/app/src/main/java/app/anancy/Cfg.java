@@ -25,6 +25,7 @@ public class Cfg {
 
     // {key, type("int"|"str"), default} — the full set a remote can read/write.
     static final String[][] KEYS = {
+            {"anancy_media_dir",     "str", ""},    // chosen media folder ("" = scan the default folder names)
             {"anancy_name",          "str", ""},     // this player's friendly name ("" = fall back to the model); see Identity
             {"anancy_flash_ms",      "int", "3000"},
             {"anancy_loop",          "int", "1"},

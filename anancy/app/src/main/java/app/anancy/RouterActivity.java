@@ -28,6 +28,15 @@ public class RouterActivity extends Activity {
         super.onCreate(b);
         requestBlePerms();
 
+        // Provisioning a kiosk already happens from a computer (dpm set-device-owner), so the role
+        // must be settable the same way instead of forcing someone to walk over and tap a tablet:
+        //   adb shell am start -n app.anancy/.RouterActivity --es role player
+        try {
+            String forced = getIntent() != null ? getIntent().getStringExtra("role") : null;
+            if ("player".equals(forced) || "remote".equals(forced))
+                getSharedPreferences(PREF, MODE_PRIVATE).edit().putString(KEY, forced).apply();
+        } catch (Exception ignored) {}
+
         String role = getSharedPreferences(PREF, MODE_PRIVATE).getString(KEY, null);
         if ("player".equals(role)) { route(PlayerActivity.class); return; }
         if ("remote".equals(role)) { route(RemoteActivity.class); return; }

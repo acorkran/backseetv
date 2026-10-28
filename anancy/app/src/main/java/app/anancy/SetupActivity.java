@@ -153,13 +153,13 @@ public class SetupActivity extends Activity {
             for (java.util.List<java.io.File> f : m.values()) files += f.size();
         } catch (Exception ignored) {}
         boolean ok = files > 0;
-        row(ok, "Media", ok ? shows + " shows, " + files + " videos."
-                        : "No videos found. Put them in a folder named Anancy, KidsTV or Kidodi on internal storage "
-                          + "or an SD card — one sub-folder per show — then tap Rescan.",
-                ok ? null : "Rescan", () -> {
-                    try { app.anancy.player.PlayerController.get().rescan(this); toast("Rescanning…"); }
-                    catch (Exception e) { toast("Couldn't rescan"); }
-                });
+        String chosen = Cfg.getStr(this, "anancy_media_dir", "");
+        String where = chosen.isEmpty() ? "the default folders (Anancy, KidsTV, Kidodi)" : chosen;
+        row(ok, "Media", ok ? shows + " shows, " + files + " videos — from " + where + "."
+                        : "No videos found in " + where + ". Point Anancy at the folder your shows are in "
+                          + "— one sub-folder per show.",
+                ok ? null : "Choose the media folder",
+                () -> startActivity(new Intent(this, FolderPickerActivity.class)));
         return ok;
     }
 

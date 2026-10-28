@@ -142,7 +142,14 @@
         <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
              now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
         <!-- Set-up check: role-aware "why aren't these two talking" screen with the fixes. -->
-        <activity android:name=".SetupActivity" android:exported="false"
+        <!-- EXPORTED on purpose: a device-owner install is driven from adb anyway (dpm
+             set-device-owner), so the set-up check has to be reachable the same way:
+             `adb shell am start -n app.anancy/.SetupActivity`. It is read-only diagnostics. -->
+        <!-- Exported for the same reason as SetupActivity: provisioning happens from adb. -->
+        <activity android:name=".FolderPickerActivity" android:exported="true"
+            android:theme="@android:style/Theme.Black.NoTitleBar"/>
+
+        <activity android:name=".SetupActivity" android:exported="true"
             android:theme="@android:style/Theme.Black.NoTitleBar"/>
 
         <service android:name=".player.AnancyMediaService" android:exported="true">

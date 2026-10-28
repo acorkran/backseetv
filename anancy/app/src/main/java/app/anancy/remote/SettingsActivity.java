@@ -191,6 +191,18 @@ public class SettingsActivity extends Activity {
             catch (Exception e) { toast("Couldn't copy"); }
         });
         if (owner) actionRow("Remove device owner", "remove…", this::confirmRemoveOwner);
+        section("Media");
+        { String md = Cfg.getStr(this, "anancy_media_dir", "");
+          TextView mv = new TextView(this);
+          mv.setText(md.isEmpty() ? "Scanning the default folders: Anancy, KidsTV, Kidodi (on internal storage and any card)."
+                                  : md);
+          mv.setTextColor(SUB); mv.setTextSize(13); mv.setPadding(dp(4), dp(2), dp(4), dp(6)); col.addView(mv);
+          actionRow("Media folder", "change", () -> startActivity(new Intent(this, app.anancy.FolderPickerActivity.class)));
+          actionRow("Rescan library", "rescan", () -> {
+              try { app.anancy.player.PlayerController.get().rescan(this); toast("Rescanning…"); }
+              catch (Exception e) { toast("Couldn't rescan"); }
+          }); }
+
         actionRow("Set-up check", "run", () -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
         actionRow("About Anancy & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
 
