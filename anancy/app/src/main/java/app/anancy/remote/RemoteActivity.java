@@ -1523,11 +1523,27 @@ public class RemoteActivity extends Activity {
             final Uri uri = data.getData();
             Toast.makeText(this, "Finding the TV…", Toast.LENGTH_SHORT).show();
             new Thread(() -> {
+                // A file import is bulk traffic: it cannot ride Bluetooth, so take the same Wi-Fi
+                // lease the live view uses and let "auto" raise the link, rather than telling the
+                // user to go and join a network by hand.
                 RemoteService svc = RemoteService.get();
-                final String host = svc != null ? svc.playerHttpHost() : null;   // blocks (off-main) for mDNS
-                if (host == null) { main.post(() -> Toast.makeText(this, "Join the same Wi-Fi as the TV to import", Toast.LENGTH_LONG).show()); return; }
-                main.post(() -> Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show());
-                uploadFile(uri, host);
+                if (svc != null) svc.acquireWifi("import");
+                try {
+                    String host = null;
+                    long end = android.os.SystemClock.elapsedRealtime() + 25000;
+                    while (host == null && android.os.SystemClock.elapsedRealtime() < end) {
+                        String ip = tabletIp;
+                        if (ip != null && !ip.isEmpty() && reachable(ip)) { host = ip + ":8090"; break; }
+                        try { Thread.sleep(800); } catch (InterruptedException e) { break; }
+                    }
+                    if (host == null && svc != null) host = svc.playerHttpHost();   // mDNS sweep as a fallback
+                    if (host == null) {
+                        main.post(() -> Toast.makeText(this, "Couldn't reach the TV to import — is it on and nearby?", Toast.LENGTH_LONG).show());
+                        return;
+                    }
+                    main.post(() -> Toast.makeText(this, "Uploading…", Toast.LENGTH_SHORT).show());
+                    uploadFile(uri, host);
+                } finally { if (svc != null) svc.releaseWifi("import"); }
             }).start();
         }
         if (req == 43 && res == RESULT_OK && data != null) {   // QR scan result
