@@ -53,3 +53,7 @@ jobs:
           name: anancy-debug-apk
           path: anancy/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          # Without this the default is 90 days, and a month of pushes to dev piled up
+          # 15 x 24MB APKs -- enough on its own to blow the whole account's Actions
+          # storage allowance and fail this step on every later run.
+          retention-days: 5
