@@ -198,6 +198,7 @@ public class WifiClient {
         if (cmd.startsWith("delpl:")) return "/delplaylist?name=" + enc(cmd.substring(6));
         // config sync
         if (cmd.equals("cfg")) return "/config";
+        if (cmd.startsWith("cfg@")) return "/config";   // HTTP has no notification budget: one page, no "more"
         if (cmd.startsWith("cfg:")) {   // cfg:KEY=VALUE
             String rest = cmd.substring(4); int e = rest.indexOf('=');
             String k = e > 0 ? rest.substring(0, e) : rest, v = e > 0 ? rest.substring(e + 1) : "";

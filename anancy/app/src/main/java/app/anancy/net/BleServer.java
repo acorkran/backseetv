@@ -203,7 +203,10 @@ public class BleServer {
             pushJson(ctrl.episodesJson(rest.trim(), from, 6, 60)); return;
         }
         // --- config sync (every tablet setting, from a remote) ---
-        if (cmd.equals("cfg")) { pushJson(Cfg.configJson(ctx, true)); return; }   // one-shot config payload
+        // Config is PAGED over BLE: the whole payload outgrew one notification (460-byte budget) and
+        // was being truncated into invalid JSON, which the remote silently read as "no settings".
+        if (cmd.equals("cfg")) { pushJson(Cfg.configJson(ctx, true, 0, BLE_JSON_MAX)); return; }
+        if (cmd.startsWith("cfg@")) { pushJson(Cfg.configJson(ctx, true, pi(cmd.substring(4)), BLE_JSON_MAX)); return; }
         if (cmd.startsWith("cfg:")) {   // cfg:KEY=VALUE
             String rest = cmd.substring(4); int e = rest.indexOf('=');
             if (e > 0) {

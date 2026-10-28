@@ -64,7 +64,14 @@ public class Cfg {
 
     // --- config sync -----------------------------------------------------------------------------
     /** {"type":"config","device_owner":bool,"pin_set":bool,"values":{key:val,...}} — PIN masked. */
-    public static String configJson(Context c, boolean incdo) {
+    public static String configJson(Context c, boolean incdo) { return configJson(c, incdo, 0, 0); }
+
+    /** Paged variant for BLE, where one notification is all we get (~MTU-3). The full payload passed
+        460 bytes once there were enough settings, so it was being TRUNCATED mid-JSON and the remote's
+        parse threw -- which it swallowed into "no values, not device owner", i.e. every row rendered
+        at its default behind a padlock. Emit keys from `from` while they fit, and set "more" to the
+        next index so the caller asks again. maxBytes <= 0 means no limit (Wi-Fi /config). */
+    public static String configJson(Context c, boolean incdo, int from, int maxBytes) {
         JSONObject o = new JSONObject();
         try {
             o.put("type", "config");
@@ -78,7 +85,9 @@ public class Cfg {
             o.put("device_owner", owner);
             JSONObject vals = new JSONObject();
             boolean pinSet = false;
-            for (String[] k : KEYS) {
+            int i = from < 0 ? 0 : from, more = 0;
+            for (; i < KEYS.length; i++) {
+                String[] k = KEYS[i];
                 String name = k[0], type = k[1], def = k[2];
                 if ("anancy_pin".equals(name)) {
                     String pin = getStr(c, name, def);
@@ -89,9 +98,17 @@ public class Cfg {
                 } else {
                     vals.put(name, getStr(c, name, def));
                 }
+                // Measure the real thing, not an estimate: anything else drifts as fields are added.
+                if (maxBytes > 0 && i + 1 < KEYS.length) {
+                    JSONObject probe = new JSONObject(o.toString());
+                    probe.put("pin_set", pinSet); probe.put("values", vals); probe.put("more", i + 1);
+                    if (probe.toString().length() > maxBytes) { more = i + 1; break; }
+                }
             }
             o.put("pin_set", pinSet);
             o.put("values", vals);
+            if (from > 0) o.put("from", from);
+            if (more > 0) o.put("more", more);
         } catch (Exception ignored) {}
         return o.toString();
     }
