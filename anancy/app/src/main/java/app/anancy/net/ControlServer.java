@@ -123,6 +123,10 @@ public class ControlServer {
                     if (now) PlayerActivity.wakeScreen();
                     body = okk ? ok() : "{\"ok\":false,\"error\":\"unknown item\"}"; break;
                 }
+                // Re-read the media folders. Without this the ONLY rescan in the whole app was the one
+                // after an upload, so media copied onto the tablet by hand (SD card, adb, USB) stayed
+                // invisible -- and on a LOCKED kiosk you cannot even force-stop the app to rebuild it.
+                case "/rescan": ctrl.rescan(ctx); body = ok(); break;
                 case "/clearqueue": ctrl.clearQueue(); body = ok(); break;
                 case "/dequeue": ctrl.dequeue((int) pf(param(q, "i"), -1)); body = ok(); break;
                 case "/shuffle": { String on = param(q, "on"); ctrl.setShuffle(on == null ? !ctrl.isShuffle() : ("1".equals(on) || "true".equals(on))); body = ok(); break; }

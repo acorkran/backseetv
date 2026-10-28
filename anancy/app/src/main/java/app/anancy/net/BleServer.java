@@ -217,6 +217,7 @@ public class BleServer {
             return;
         }
         // --- connectivity level ---
+        if (cmd.equals("rescan")) { ctrl.rescan(ctx); return; }   // re-read the media folders (hand-copied media)
         if (cmd.equals("conn")) { pushJson(ctrl.connJson()); return; }
         if (cmd.startsWith("conn:")) { HotspotService.applyMode(ctx, cmd.substring(5).trim()); pushJson(ctrl.connJson()); return; }
         if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS -> the TV joins (device owner = silent)

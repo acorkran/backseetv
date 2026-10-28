@@ -1142,11 +1142,38 @@ public class RemoteActivity extends Activity {
         RemoteService svc = RemoteService.get(); if (svc != null) svc.setConfig(k, val);
         try { if (cfgVals != null) cfgVals.put(k, val.matches("-?\\d+") ? (Object) Integer.valueOf(val) : val); } catch (Exception ignored) {}
     }
+    /** Which screens these settings get written to, named. "All screens" is resolved to the actual
+        names: a list of one is still worth printing, because the whole confusion was not knowing. */
+    private String settingsTargetNames() {
+        RemoteService svc = RemoteService.get();
+        if (svc == null) return "—";
+        java.util.Set<String> sel = svc.targets();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, String> e : svc.tablets().entrySet())
+            if (sel.isEmpty() || sel.contains(e.getKey())) names.add(e.getValue());
+        if (names.isEmpty()) return "no screen connected";
+        return android.text.TextUtils.join(", ", names);
+    }
+
     private void renderSettings() {
         if (settingsView == null) return;
         LinearLayout col = colOf(settingsView); clearRows(col, 1);
-        col.addView(ui.noteText(cfgOwner ? "The TV's settings — change any of them from here."
-                : "The TV's settings. Locked rows need device-owner setup (tap a 🔒 notice to learn more)."));
+        // SAY WHOSE SETTINGS THESE ARE. The screen used to be titled "TV settings" with nothing else
+        // on it, so the moment a row looked locked it read as "this is the phone's own settings and
+        // the phone isn't device owner" -- which is also the wrong mental model to leave in place,
+        // because device-owner options belong to the SCREEN, never to the remote holding them.
+        col.addView(ui.noteText("Applying to:  " + settingsTargetNames()));
+        col.addView(ui.noteText(cfgOwner ? "Change any of them from here."
+                : "Locked rows need device-owner setup ON THAT SCREEN (tap a 🔒 notice to learn more)."));
+        { Button own = ui.rowBtn("This remote's own settings  ›", TXT);
+          own.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+          col.addView(own); }
+
+        sSec(col, "Library");
+        // The only rescan in the app used to be the one after an upload, so media copied onto the
+        // tablet by hand never appeared -- and you cannot force-stop a LOCKED kiosk to rebuild it.
+        { Button b = setRow(col, "Media folders"); b.setText("rescan now");
+          b.setOnClickListener(v -> { send("rescan"); toast("Rescanning the library…"); }); }
 
         sSec(col, "Playback");
         cfgIntCycle(col, "Light duration (seconds)", "anancy_flash_ms", new int[]{1000, 2000, 3000, 5000, 10000}, 1000);
