@@ -92,6 +92,9 @@ public class ControlServer {
                 }
                 case "/queue": body = ctrl.queueJson((int) pf(param(q, "center"), -1), (int) pf(param(q, "n"), 0)); break;      // current play order (+index)
                 case "/jump":  ctrl.jumpTo((int) pf(param(q, "i"), -1)); PlayerActivity.wakeScreen(); body = ok(); break;
+                // Forget how far through each show she is, so Shuffle All starts every show from
+                // episode 1 again. Takes effect on the next playlist select, not mid-queue.
+                case "/resetprogress": ctrl.resetProgress(); body = ok(); break;
                 case "/sleep": {
                     int m = (int) pf(param(q, "min"), 0);
                     if (m > 0) ctrl.startSleep(m); else ctrl.cancelSleep();

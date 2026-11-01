@@ -255,17 +255,22 @@ public class PlayerController {
         return items != null ? items : userPlaylists.get(name);
     }
 
-    /** Switch to a playlist by name: Shuffle All -> shuffled; a show / user playlist -> in order. */
+    /** Switch to a playlist by name: Shuffle All -> shows interleaved; a show / user playlist -> in order. */
     public void selectPlaylist(final String name) {
         on(() -> {
             List<MediaItem> items = itemsFor(name);
             if (items == null || items.isEmpty() || p == null) return;
             currentPl = name;
-            // Shuffle All: pre-shuffle the LIST (not ExoPlayer's shuffle mode) so the visible queue order
-            // IS the play order — a remote can show "what's next" and jump to any item.
-            shuffle = "Shuffle All".equals(name);
-            naturalItems = new ArrayList<>(items);
-            List<MediaItem> order = shuffle ? shuffled(items) : new ArrayList<>(items);
+            // Shuffle All used to be Collections.shuffle over every episode, which put
+            // Numberblocks 47 after Numberblocks 3. Now the SHOWS are shuffled and their
+            // episodes are not: see ShuffleAll. Either way the LIST is the play order (not
+            // ExoPlayer's shuffle mode), so a remote can show "what's next" and jump to any item.
+            boolean all = "Shuffle All".equals(name);
+            List<MediaItem> order = all ? interleavedAll() : new ArrayList<>(items);
+            // Not "shuffled" any more in the sense the remote's toggle means — the queue has a
+            // deliberate order now. The toggle stays available as a way to scramble it on purpose.
+            shuffle = false;
+            naturalItems = new ArrayList<>(order);
             currentItems = order;
             p.setShuffleModeEnabled(false);
             p.setRepeatMode(loop ? Player.REPEAT_MODE_ALL : Player.REPEAT_MODE_OFF);
@@ -279,6 +284,72 @@ public class PlayerController {
         freshly-built queue can never boot to full volume while muted — the nap-safe invariant. */
     private void keepMute() { if (p != null && !sleeping) p.setVolume(effMult()); }
     private static List<MediaItem> shuffled(List<MediaItem> in) { List<MediaItem> out = new ArrayList<>(in); java.util.Collections.shuffle(out); return out; }
+
+    // --- "Shuffle All": shows shuffled, episodes in order, resumed where she got to -----------
+    //
+    //  The per-show watermarks are what make the chronology mean anything. There is no resume in
+    //  this player: every cold boot calls selectPlaylist("Shuffle All") and starts at index 0.
+    //  That was harmless while the order was random, but an ordered queue with no memory would
+    //  replay episode 1 of all 28 shows every single boot, so she'd never reach the later
+    //  Numberblocks — the exact thing the ordering is for.
+
+    private static final String PROGRESS_KEY = "anancy_progress";   // JSON: { "<show>": <episode index> }
+    private volatile int lastProgressId = -1;
+
+    /** The queue for "Shuffle All", built fresh on every select so the rotation varies between
+        sessions. Falls back to the flat list if the per-show breakdown is somehow missing — a
+        strange order beats a black screen. */
+    private List<MediaItem> interleavedAll() {
+        LinkedHashMap<String, List<MediaItem>> byShow = new LinkedHashMap<>();
+        for (Map.Entry<String, List<MediaItem>> e : playlists.entrySet())
+            if (!"Shuffle All".equals(e.getKey()) && e.getValue() != null && !e.getValue().isEmpty())
+                byShow.put(e.getKey(), e.getValue());
+        List<MediaItem> order = ShuffleAll.interleave(byShow, progress(), new java.util.Random());
+        if (!order.isEmpty()) return order;
+        List<MediaItem> flat = playlists.get("Shuffle All");
+        return flat == null ? new ArrayList<>() : new ArrayList<>(flat);
+    }
+
+    /** show -> index of the episode she is up to. Empty on a fresh install (everything starts at 1). */
+    private Map<String, Integer> progress() {
+        Map<String, Integer> out = new java.util.HashMap<>();
+        try {
+            if (appCtx == null) return out;
+            String s = Cfg.getStr(appCtx, PROGRESS_KEY, "");
+            if (s == null || s.isEmpty()) return out;
+            JSONObject o = new JSONObject(s);
+            for (java.util.Iterator<String> it = o.keys(); it.hasNext(); ) {
+                String k = it.next();
+                out.put(k, o.optInt(k, 0));
+            }
+        } catch (Exception e) { android.util.Log.w("Anancy", "progress read: " + e); }
+        return out;
+    }
+
+    /** Remember which episode of which show is on screen. Called from the ticker, but gated on the
+        id actually changing, so this writes once per episode and not twice a second. */
+    private void noteProgress(int id) {
+        if (id < 0 || id == lastProgressId) return;
+        lastProgressId = id;
+        try {
+            for (Map.Entry<String, List<Integer>> e : libShows.entrySet()) {
+                int i = e.getValue().indexOf(id);
+                if (i < 0) continue;
+                if (appCtx == null) return;
+                String s = Cfg.getStr(appCtx, PROGRESS_KEY, "");
+                JSONObject o = (s == null || s.isEmpty()) ? new JSONObject() : new JSONObject(s);
+                o.put(e.getKey(), i);
+                Cfg.put(appCtx, PROGRESS_KEY, o.toString());
+                return;
+            }
+        } catch (Exception e) { android.util.Log.w("Anancy", "progress write: " + e); }
+    }
+
+    /** Admin: forget where she is up to, so every show starts from episode 1 again. */
+    public void resetProgress() {
+        lastProgressId = -1;
+        try { if (appCtx != null) Cfg.put(appCtx, PROGRESS_KEY, ""); } catch (Exception ignored) {}
+    }
 
     /** Jump to item i of the current queue and play. */
     public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { p.seekToDefaultPosition(i); p.play(); } }); }
@@ -731,6 +802,7 @@ public class PlayerController {
                 durMs = d > 0 ? (int) d : 0;
                 title = titleOf(p.getCurrentMediaItem());
                 curId = currentLibId();   // cache on main thread; the control server never touches ExoPlayer
+                noteProgress(curId);      // remember her place in this show for the next boot
             } catch (Exception ignored) {}
             main.postDelayed(this, 500);
         }};
