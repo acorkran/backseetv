@@ -63,7 +63,11 @@ public class QrShareActivity extends Activity {
         // room, which is exactly where a TV is: the phone is metres away, not centimetres. Size it
         // to the short edge, leaving room for the caption and a white quiet zone.
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int side = Math.min(dm.widthPixels, dm.heightPixels) - dp(72);
+        // The caption sits BELOW the code, so only the height needs a caption's worth reserved; the
+        // width just loses the root padding. Reserving only 72dp off the short edge pushed the
+        // caption clean off the bottom in landscape, so a TV that could not start its hotspot
+        // showed a blank white square and not one word explaining why.
+        int side = Math.min(dm.widthPixels - dp(48), dm.heightPixels - dp(150));
         if (side < dp(200)) side = dp(200);
         ImageView iv = new ImageView(this);
         iv.setBackgroundColor(Color.WHITE);          // white quiet-zone frame so it scans reliably

@@ -105,13 +105,21 @@ public class RouterActivity extends Activity {
         under it. */
     private boolean requestBlePerms() {
         try {
-            if (android.os.Build.VERSION.SDK_INT < 31) return false;
-            java.util.List<String> want = new java.util.ArrayList<>(java.util.Arrays.asList(
+            java.util.List<String> want = new java.util.ArrayList<>();
+            if (android.os.Build.VERSION.SDK_INT >= 31) want.addAll(java.util.Arrays.asList(
                     "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_ADVERTISE"));
             // A13+ needs a runtime grant to SHOW the remote's foreground-service notification. On the
             // device-owner TV it's DPM-granted already (so it's filtered out below); this covers the
             // NON-owner remote / Play flavor, where nothing else requests it.
             if (android.os.Build.VERSION.SDK_INT >= 33) want.add("android.permission.POST_NOTIFICATIONS");
+            // QR pairing puts up a local-only hotspot, and startLocalOnlyHotspot throws
+            // SecurityException without this. The device-owner TV grants it to itself, so the gap
+            // only ever showed on a plain install -- where "Show pairing QR" sat on a blank white
+            // square until it gave up. Both roles need it: the remote is the one that HOSTS.
+            // Below 33 the same call is gated on fine location instead, so ask for whichever this
+            // SDK actually checks -- outside the BLE gate, since 26-30 hit it too.
+            want.add(android.os.Build.VERSION.SDK_INT >= 33
+                    ? "android.permission.NEARBY_WIFI_DEVICES" : "android.permission.ACCESS_FINE_LOCATION");
             java.util.List<String> need = new java.util.ArrayList<>();
             for (String p : want) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) need.add(p);
             if (need.isEmpty()) return false;
