@@ -56,7 +56,7 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final RemoteUi ui = new RemoteUi(this);   // stateless view builders (extracted; see RemoteUi)
-    private TextView titleDot;   // the "Anancy" wordmark (menu button + popup anchor)
+    private TextView titleDot;   // the "BackSeat TV" wordmark (menu button + popup anchor)
     private View dot;            // the connection light (top-right corner); tap = ephemeral status text
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
     private LinearLayout screenToggles; // All / Sync group / Leader-only audio chips at the top
@@ -122,7 +122,7 @@ public class RemoteActivity extends Activity {
         titleRow.setClickable(true); titleRow.setPadding(0, dp(2), dp(10), dp(2));
         titleRow.setOnClickListener(v -> showTargetMenu());
         titleDot = new TextView(this);
-        titleDot.setText("Anancy"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
+        titleDot.setText("BackSeat TV"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
         titleDot.setTypeface(titleDot.getTypeface(), android.graphics.Typeface.BOLD);
         titleRow.addView(titleDot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView chev = new TextView(this); chev.setText(" ⌄"); chev.setTextColor(TXT); chev.setTextSize(20);
@@ -715,7 +715,7 @@ public class RemoteActivity extends Activity {
         sv.addView(col); frame.addView(sv);
         return sv;
     }
-    /** Make an overlay's title a dropdown, the same control as the main page's "Anancy ⌄". A title
+    /** Make an overlay's title a dropdown, the same control as the main page's "BackSeat TV ⌄". A title
         plus an "applying to" line plus a row to get at your own settings is three things saying what
         one dropdown says; this returns the title view so a popup can hang off it. */
     private TextView overlayTitleMenu(View ov, String text, final Runnable onTap) {
@@ -880,7 +880,7 @@ public class RemoteActivity extends Activity {
         targetPopup = new android.widget.PopupWindow(sv, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true);
         targetPopup.setElevation(dp(12));
         buildTargetRows(col, svc);
-        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "Anancy" wordmark
+        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "BackSeat TV" wordmark
     }
     /** A ScrollView that never grows past maxH — the popup menu scrolls instead of running off-screen. */
     private static class MaxScroll extends android.widget.ScrollView {
@@ -1306,7 +1306,7 @@ public class RemoteActivity extends Activity {
             sGated(col);
         }
 
-        Button about = ui.rowBtn("About Anancy & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
+        Button about = ui.rowBtn("About BackSeat TV & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
         Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
     }
     private void closeSettings() { if (settingsView != null) { frame.removeView(settingsView); settingsView = null; } }

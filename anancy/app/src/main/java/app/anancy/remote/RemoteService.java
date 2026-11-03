@@ -667,9 +667,9 @@ public class RemoteService extends Service {
         String ch = "anancy_remote";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null && nm.getNotificationChannel(ch) == null)
-            nm.createNotificationChannel(new NotificationChannel(ch, "Anancy remote", NotificationManager.IMPORTANCE_MIN));
+            nm.createNotificationChannel(new NotificationChannel(ch, "BackSeat TV remote", NotificationManager.IMPORTANCE_MIN));
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ch) : new Notification.Builder(this);
-        return b.setContentTitle("Anancy remote").setContentText("linked to the TV")
+        return b.setContentTitle("BackSeat TV remote").setContentText("linked to the TV")
                 .setSmallIcon(android.R.drawable.ic_media_play).setOngoing(true).build();
     }
 }

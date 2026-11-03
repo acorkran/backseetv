@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon: the seat glyph alone on the logo's red. The full logo's "BACKSEAT TV"
+     lettering is unreadable at launcher size and a circular mask would clip it; the app
+     name sits under the icon anyway. The legacy PNGs keep the full logo for pre-26. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>

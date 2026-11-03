@@ -62,7 +62,7 @@ public class SettingsActivity extends Activity {
 
     private void build() {
         col.removeAllViews();
-        TextView h = new TextView(this); h.setText("Anancy settings"); h.setTextColor(TXT); h.setTextSize(24);
+        TextView h = new TextView(this); h.setText("BackSeat TV settings"); h.setTextColor(TXT); h.setTextSize(24);
         h.setPadding(0, 0, 0, dp(12)); col.addView(h);
         status = new TextView(this); status.setTextColor(SUB); status.setTextSize(13); status.setPadding(0, 0, 0, dp(16));
         col.addView(status);
@@ -110,7 +110,7 @@ public class SettingsActivity extends Activity {
             note("Unlock method: Randomized PIN = copy a random code shown on screen, within the time + attempts you set "
                     + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
                     + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
-                    + "set it below, falls back to the PIN pad until you do). Kiosk lock pins Anancy as home + blocks "
+                    + "set it below, falls back to the PIN pad until you do). Kiosk lock pins BackSeat TV as home + blocks "
                     + "Home/Back/Recents (next launch).");
         } else {
             dimRow("Admin PIN", "•••• ");
@@ -176,15 +176,15 @@ public class SettingsActivity extends Activity {
         // --- Device owner ----------------------------------------------------------------------
         section("Kiosk mode (device owner)");
         TextView os = new TextView(this);
-        os.setText(owner ? "✓  This tablet is set up as a Anancy kiosk (the app is the device owner)."
-                : "○  Not set up as a kiosk — Anancy runs as a normal player. The optional setup below gives the locked-down TV.");
+        os.setText(owner ? "✓  This tablet is set up as a BackSeat TV kiosk (the app is the device owner)."
+                : "○  Not set up as a kiosk — BackSeat TV runs as a normal player. The optional setup below gives the locked-down TV.");
         os.setTextColor(owner ? OK : TXT); os.setTextSize(14); os.setPadding(dp(4), dp(4), dp(4), dp(8)); col.addView(os);
         note("The optional full setup is one-time and needs a computer with adb:\n"
                 + "1.  Use a tablet with NO Google or Samsung account added (remove them, or set the tablet up fresh and skip sign-in).\n"
                 + "2.  Developer options → USB debugging on, plug it in.\n"
                 + "3.  Run:   " + DO_CMD + "\n"
-                + "4.  Open Anancy, choose \"This is the TV\", then turn on Kiosk lock above.\n"
-                + "What it enables: Anancy pinned as the home screen, an inescapable lock (Home / Back / Recents blocked), permissions granted silently, "
+                + "4.  Open BackSeat TV, choose \"This is the TV\", then turn on Kiosk lock above.\n"
+                + "What it enables: BackSeat TV pinned as the home screen, an inescapable lock (Home / Back / Recents blocked), permissions granted silently, "
                 + "screen on/off from the remotes, joining Wi-Fi without prompts. Undo it here any time.");
         actionRow("Setup command", "copy", () -> {
             try { ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("anancy", DO_CMD)); toast("Copied"); }
@@ -204,7 +204,7 @@ public class SettingsActivity extends Activity {
           }); }
 
         actionRow("Set-up check", "run", () -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
-        actionRow("About Anancy & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
+        actionRow("About BackSeat TV & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
 
         // --- Exit ------------------------------------------------------------------------------
         Button back = new Button(this); back.setText("Back to the show"); back.setAllCaps(false); back.setTextSize(18);
@@ -218,7 +218,7 @@ public class SettingsActivity extends Activity {
 
     private void confirmRemoveOwner() {
         new AlertDialog.Builder(this).setTitle("Remove device owner?")
-                .setMessage("Anancy stops being the kiosk on this tablet:\n\n• no home-screen pinning or lock (Home/Back/Recents work again)\n"
+                .setMessage("BackSeat TV stops being the kiosk on this tablet:\n\n• no home-screen pinning or lock (Home/Back/Recents work again)\n"
                         + "• permissions and Wi-Fi joins will prompt\n• remotes can't turn the screen off\n\n"
                         + "The app keeps working as a normal player. Setting it up again needs adb and a tablet with no accounts.")
                 .setPositiveButton("Remove", (d, w) -> {

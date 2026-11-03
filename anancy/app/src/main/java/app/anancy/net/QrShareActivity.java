@@ -99,7 +99,7 @@ public class QrShareActivity extends Activity {
         if (p != null) {
             Bitmap qr = QrCode.encode(p, side);
             if (qr != null) iv.setImageBitmap(qr);
-            cap.setText("Scan this with the Anancy remote:  Set-up check → Scan the TV's QR");
+            cap.setText("Scan this with the BackSeat TV remote:  Set-up check → Scan the TV's QR");
             return;
         }
         if (tries++ > 20) { cap.setText("Couldn't start the TV's hotspot. Use Bluetooth, or put both on the same Wi-Fi."); return; }

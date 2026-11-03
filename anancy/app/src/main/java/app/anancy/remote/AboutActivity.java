@@ -27,10 +27,10 @@ public class AboutActivity extends Activity {
         sv.addView(col); setContentView(sv);
         app.anancy.SysBars.pad(sv);   // keep the nav bar off the content (edge-to-edge)
 
-        head("Anancy — feature levels");
-        sub("Anancy works at three levels. Each one builds on the last. Here's what you get, and how to unlock it.");
+        head("BackSeat TV — feature levels");
+        sub("BackSeat TV works at three levels. Each one builds on the last. Here's what you get, and how to unlock it.");
 
-        tier("1 · Anancy Player", OK, "The base install. No special setup — just install and open, pick \"This is the TV\".", new String[]{
+        tier("1 · BackSeat TV Player", OK, "The base install. No special setup — just install and open, pick \"This is the TV\".", new String[]{
                 "Plays your local shows straight off the device (no internet, no server)",
                 "Shuffle & loop, save the queue as a playlist, load playlists, per-show playlists",
                 "Browse the whole library and add anything to the play queue",
@@ -40,7 +40,7 @@ public class AboutActivity extends Activity {
                 "Connection levels (Bluetooth / Wi-Fi) so phone & watch remotes and the car dash can control it",
         });
 
-        tier("2 · Anancy Kiosk   (requires: device owner)", ACCENT, "Everything in Player, PLUS the locked-down appliance. One-time setup with a computer:", new String[]{
+        tier("2 · BackSeat TV Kiosk   (requires: device owner)", ACCENT, "Everything in Player, PLUS the locked-down appliance. One-time setup with a computer:", new String[]{
                 "The show IS the home screen — boots straight into it",
                 "Inescapable lock: Home / Back / Recents are blocked, kids can't get out",
                 "A hidden admin gesture + PIN to get in for a grown-up",
@@ -49,13 +49,13 @@ public class AboutActivity extends Activity {
         });
         note("To unlock: use a tablet with NO Google or Samsung account added, turn on USB debugging, plug it into a computer, and run:");
         codeBlock("adb shell dpm set-device-owner app.anancy/.AdminReceiver");
-        note("Then open Anancy, choose \"This is the TV\", and turn on Kiosk lock in Settings. It's reversible any time.");
+        note("Then open BackSeat TV, choose \"This is the TV\", and turn on Kiosk lock in Settings. It's reversible any time.");
 
-        tier("3 · Remote & Android Auto", 0xFFD8A657, "Install Anancy on a phone or watch and pick \"Remote\".", new String[]{
+        tier("3 · Remote & Android Auto", 0xFFD8A657, "Install BackSeat TV on a phone or watch and pick \"Remote\".", new String[]{
                 "A full phone remote: now-playing, playlists, the play queue, library browsing, camera check-in, all the settings",
                 "A Galaxy Watch remote",
                 "The in-car Android Auto dash — camera on the album art, live progress, and the key controls",
-                "Controls any Anancy TV over Bluetooth (works anywhere) or Wi-Fi (adds live camera + fast browsing)",
+                "Controls any BackSeat TV TV over Bluetooth (works anywhere) or Wi-Fi (adds live camera + fast browsing)",
         });
 
         Button back = new Button(this); back.setAllCaps(false); back.setText("Back"); back.setTextSize(17);

@@ -40,6 +40,6 @@ public final class Identity {
 
     private static String defaultName() {
         String m = android.os.Build.MODEL;
-        return (m == null || m.trim().isEmpty()) ? "Anancy TV" : m.trim();
+        return (m == null || m.trim().isEmpty()) ? "BackSeat TV" : m.trim();
     }
 }
