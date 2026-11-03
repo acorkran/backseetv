@@ -11,13 +11,23 @@ import app.anancy.remote.RemoteService;
 //  RemoteService (BLE-primary / Wi-Fi fallback) — the same link the phone remote
 //  uses. Nap-safe by construction (no audio here; the tablet stays muted).
 //
-//  DASH: album art = the child-camera still (camble stream, refreshes ~2s even
-//  while driving on the Chery), title/subtitle = show/episode, a live progress
-//  bar (position+duration), prev/play-pause/next, and 5 custom actions
-//  (Light · Sleep · Shuffle · Mute · Power). BROWSE: 4 top tabs — Playlists,
-//  Shows, Up next, Controls — with Samsung-Music-style grid/list content hints.
+//  DASH: title/subtitle = show/episode, a live progress bar, prev/play-pause/
+//  next, 3 custom actions (Light · Vol − · Vol +) and the play queue behind the
+//  now-playing screen's own Queue button, where Samsung Music puts it. Album
+//  art is a show placeholder, or the child-camera still during a Check-in.
 //
-//  mediaId scheme:  pl:<name>  show:<name>  ep:<id>  jump:<absIndex>  act:<cmd>
+//  BROWSE (the ← from now-playing): 2 tabs.
+//    Options    Sleep timer >   Cancel, then 5..60 min in 5s
+//               Toddler mode >  Turn on / Turn off
+//               Check-in        (acts on tap, no chevron)
+//               Power off       (acts on tap, no chevron)
+//    Playlists  one row per playlist
+//  The queue deliberately has NO tab: the Queue button already shows it, and
+//  a tab of the same list was a duplicate. Android Auto draws the chevron from
+//  the flag alone -- BROWSABLE rows get one and open a sub-list, PLAYABLE rows
+//  don't and fire onPlayFromMediaId -- so a settings menu is just those two.
+//
+//  mediaId scheme:  pl:<name>  jump:<absIndex>  act:<cmd>
 // ============================================================================
 
 import android.graphics.Bitmap;
@@ -45,8 +55,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class AnancyMediaService extends MediaBrowserServiceCompat {
-    static final String ROOT = "root", TAB_PL = "tab_playlists", TAB_SHOWS = "tab_shows",
-            TAB_QUEUE = "tab_queue", TAB_CTRL = "tab_controls";
+    static final String ROOT = "root", ROOT_APP_OPTIONS = "tab_options", TAB_PL = "tab_playlists",
+            OPT_SLEEP = "opt_sleep", OPT_TODDLER = "opt_toddler";
+    static final long CHECKIN_MS = 60_000;     // a Check-in shows the camera for this long, then stops it
     static final long TICK_MS = 1000;
     // no named constant for the root flag in media:1.7.0 -> raw key
     static final String KEY_CONTENT_STYLE_SUPPORTED = "android.media.browse.CONTENT_STYLE_SUPPORTED";
@@ -88,13 +99,34 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         started = true;
     }
 
-    // camble:on must land AFTER the BLE link connects — sending it once in onCreate races the connect
-    // and gets dropped, so the camera never starts. Re-arm from the ticker until stills actually flow.
+    // The camera runs for one of two reasons: the always-on opt-in setting (off by default -- never
+    // turn the child camera on just because a car connected), or a Check-in, which shows it for a
+    // minute and then turns it back off. Before Check-in existed the opt-in was the ONLY way, so a
+    // default install showed album art forever and the camera looked broken.
+    //
+    // camble:on must land AFTER the BLE link connects -- sending it once races the connect and gets
+    // dropped -- so it is re-sent from the ticker until a still newer than the request turns up.
     private int cambleTries = 0;
+    private long checkInUntil = 0;              // elapsedRealtime; 0 = no check-in running
+    private byte[] stillAtCamOn;                // the still cached when the camera was asked for (stale)
+    private boolean camOn = false;
+    private boolean cameraWanted() {
+        return app.anancy.Cfg.getInt(this, "anancy_aa_camera", 0) == 1
+                || android.os.SystemClock.elapsedRealtime() < checkInUntil;
+    }
     private void ensureCamera() {
-        if (app.anancy.Cfg.getInt(this, "anancy_aa_camera", 0) != 1) return;   // opt-in: never turn the child camera on just because a car connected
-        if (RemoteService.latestStill() != null) { cambleTries = 0; return; }   // stills flowing -> done
+        if (!cameraWanted()) {
+            if (camOn) { camOn = false; checkInUntil = 0; send("camble:off"); art = null; lastShow = ""; }   // back to the placeholder
+            return;
+        }
+        if (!camOn) { camOn = true; cambleTries = 0; stillAtCamOn = RemoteService.latestStill(); }
+        byte[] st = RemoteService.latestStill();
+        if (st != null && st != stillAtCamOn) { cambleTries = 0; return; }   // fresh stills flowing -> done
         if (cambleTries++ % 3 == 0) send("camble:on");   // retry ~every 3 ticks until they do
+    }
+    private void checkIn() {
+        checkInUntil = android.os.SystemClock.elapsedRealtime() + CHECKIN_MS;
+        ensureCamera();
     }
 
     /** The user touched an Anancy control in the car: NOW we are the session they mean. */
@@ -109,16 +141,17 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         @Override public void onSkipToNext()     { activate(); send("next"); }
         @Override public void onSkipToPrevious() { activate(); send("prev"); }
         @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { activate(); play(mediaId); }
-        @Override public void onCustomAction(String action, Bundle extras) { activate(); send(action); }   // action string == command
+        @Override public void onCustomAction(String action, Bundle extras) { activate(); send(action); }   // action string == command (flash, volup, voldown)
+        @Override public void onSkipToQueueItem(long id) { activate(); send("jump:" + id); }   // queue item id == absolute index
     };
 
     /** A browse item was tapped, or a custom "act:" fired. */
     private void play(String mediaId) {
         if (mediaId == null) return;
         if (mediaId.startsWith("pl:"))        send("play:" + mediaId.substring(3));
-        else if (mediaId.startsWith("ep:"))   send("enqnow:" + mediaId.substring(3));   // play this episode next + jump
         else if (mediaId.startsWith("jump:")) send(mediaId);                             // jump:<absIndex>
-        else if (mediaId.startsWith("act:"))  send(mediaId.substring(4));               // a Controls-tab action
+        else if (mediaId.equals("act:checkin")) checkIn();                               // camera, for a minute
+        else if (mediaId.startsWith("act:"))  send(mediaId.substring(4));               // an Options action
         session.setActive(true);
         main.postDelayed(this::publish, 250);   // reflect the change on the now-playing screen
     }
@@ -127,6 +160,8 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
     private final Runnable ticker = new Runnable() { public void run() {
         ensureCamera();
         publish();
+        syncQueue();
+        syncPlaylists();
         main.postDelayed(this, TICK_MS);
     }};
 
@@ -136,7 +171,7 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         int i = t.indexOf(".S");
         String show = (i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim();
         String ep = (i > 0 ? t.substring(i + 1) : "").replace('.', ' ').replace('⧸', '/').trim();
-        if (show.isEmpty()) show = "Anancy";
+        if (show.isEmpty()) show = "BackSeat TV";
         long dur = o.optLong("duration_ms", 0), pos = o.optLong("position_ms", 0);
         boolean playing = o.optBoolean("playing", false) && !o.optBoolean("napped", false);
 
@@ -150,7 +185,8 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         long barPos = sleeping && sleepTotalMs > 0 ? (sleepTotalMs - sleepRem) : pos;
         // Static subtitle label (no per-second text -> no album-art re-push); the LIVE countdown is the
         // progress bar itself (barPos climbs toward barDur = the sleep total, with AA's time readout).
-        String sub = sleeping ? "😴 Sleep timer running — see bar" + (ep.isEmpty() ? "" : "  ·  " + ep) : ep;
+        String sub = sleeping ? "💤 Sleep timer running — see bar" + (ep.isEmpty() ? "" : "  ·  " + ep) : ep;
+        if (android.os.SystemClock.elapsedRealtime() < checkInUntil) sub = "📷 Check-in — camera on for a minute";
 
         boolean artChanged = refreshArt(show);
         if (!show.equals(lastShow) || !sub.equals(lastEp) || barDur != lastDur || artChanged) {
@@ -166,7 +202,9 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
                 md.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, art);
             }
             session.setMetadata(md.build());
-            if (!show.equals(lastShow)) notifyChildrenChanged(TAB_QUEUE);   // playlist/queue advanced
+            if (!show.equals(lastShow)) {                                   // playlist/queue advanced
+                RemoteService svc = RemoteService.get(); if (svc != null) svc.requestQueue();
+            }
             lastShow = show; lastEp = sub; lastDur = barDur;
         }
 
@@ -182,40 +220,86 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         long expect = lastPubPos + (lastSt == PlaybackStateCompat.STATE_PLAYING ? nowMs - lastPubWall : 0);
         boolean changed = st != lastSt || sleeping != lastSleeping
                 || Math.abs(barPos - expect) > 2500        // a seek, or the episode rolled over
+                || o.optInt("index", -1) != lastIndex
                 || nowMs - lastPubWall > 10000;
         if (!changed) return;
-        lastSt = st; lastSleeping = sleeping; lastPubPos = barPos; lastPubWall = nowMs;
+        lastSt = st; lastSleeping = sleeping; lastPubPos = barPos; lastPubWall = nowMs; lastIndex = o.optInt("index", -1);
         PlaybackStateCompat.Builder b = new PlaybackStateCompat.Builder()
                 .setActions(PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE
                         | PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_STOP
                         | PlaybackStateCompat.ACTION_SKIP_TO_NEXT | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-                        | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID)
-                .setState(st, barPos, (playing || sleeping) ? 1f : 0f);
-        // 3 quick actions only (per feedback: shuffle + mute were pointless here — they live in the
-        // Controls browse tab). Light · Sleep(toggles to Cancel when armed) · TV power.
+                        | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID | PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM)
+                .setState(st, barPos, (playing || sleeping) ? 1f : 0f)
+                .setActiveQueueItemId(o.optInt("index", -1));
+        // Three quick actions: Light · Vol − · Vol +. Volume earns the front because it is the one
+        // control you reach for mid-drive; sleep and power moved to Options, a tap further away.
+        // Volume is the TV's own player volume, same as the phone remote's Vol buttons.
         b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("flash", "Light", R.drawable.ic_aa_light).build());
-        if (sleeping)
-            b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("wake", "Cancel sleep", R.drawable.ic_aa_sleep).build());
-        else
-            b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("sleep:15", "Sleep 15m", R.drawable.ic_aa_sleep).build());
-        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("power", "TV power", R.drawable.ic_aa_power).build());
+        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("voldown", "Volume down", R.drawable.ic_aa_vol_down).build());
+        b.addCustomAction(new PlaybackStateCompat.CustomAction.Builder("volup", "Volume up", R.drawable.ic_aa_vol_up).build());
         session.setPlaybackState(b.build());
     }
 
+    // --- the now-playing screen's queue button ----------------------------------------------------
+    // Android Auto draws a queue button on the playback screen as soon as the session HAS a queue,
+    // which is where Samsung Music's lives. The item id is the absolute play-order index, so tapping
+    // one is a plain jump.
+    private String lastQueueJson = null;
+    private int queueTries = 0;
+    private void syncQueue() {
+        RemoteService svc = RemoteService.get(); if (svc == null) return;
+        String q = svc.queueJson();
+        if (q == null) { if (queueTries++ % 5 == 0) svc.requestQueue(); return; }   // link may not be up yet
+        if (q.equals(lastQueueJson)) return;
+        lastQueueJson = q;
+        List<MediaSessionCompat.QueueItem> items = new ArrayList<>();
+        try {
+            JSONObject o = new JSONObject(q);
+            int from = o.optInt("from", 0);
+            JSONArray a = o.optJSONArray("items");
+            if (a != null) for (int i = 0; i < a.length(); i++) {
+                MediaDescriptionCompat d = new MediaDescriptionCompat.Builder()
+                        .setMediaId("jump:" + (from + i)).setTitle(clean(a.optString(i))).build();
+                items.add(new MediaSessionCompat.QueueItem(d, from + i));
+            }
+        } catch (Exception ignored) {}
+        session.setQueue(items);
+        session.setQueueTitle("Up next");
+    }
+
+    // Opening Playlists before the link to the TV is up (Android Auto starts us on connect, so
+    // that is the first few seconds of every drive) gave up after ~5s with an EMPTY page, and the
+    // page stayed empty: nothing told the head unit to ask again. So keep asking, and when the
+    // names land, notifyChildrenChanged makes the head unit reload the page it is showing.
+    private boolean playlistsOwed = false;
+    private int playlistTries = 0;
+    private void syncPlaylists() {
+        if (!playlistsOwed) return;
+        RemoteService svc = RemoteService.get(); if (svc == null) return;
+        if (!svc.playlistNames().isEmpty()) { playlistsOwed = false; notifyChildrenChanged(TAB_PL); return; }
+        if (playlistTries++ % 3 == 0) svc.requestPlaylists();
+    }
+
     private int lastSt = -1;                 // last published playback state, -1 = never
+    private int lastIndex = -1;
     private boolean lastSleeping = false;
     private long lastPubPos = 0, lastPubWall = 0;
     private long sleepTotalMs = 0;
     private static String mmss(long ms) { long s = ms / 1000; return (s / 60) + ":" + String.format("%02d", s % 60); }
 
-    /** True if the art bitmap changed (new still arrived, or first placeholder for a new show). */
+    /** True if the art bitmap changed (new still arrived, or first placeholder for a new show).
+        Stills only count while the camera is wanted, and never the stale one cached from before it
+        was asked for -- otherwise a Check-in would open on a minutes-old picture. */
+    private boolean showingStill = false;
     private boolean refreshArt(String show) {
-        byte[] still = RemoteService.latestStill();
-        if (still != null && still != lastStillRef) {
+        byte[] still = cameraWanted() ? RemoteService.latestStill() : null;
+        if (still != null && still != lastStillRef && still != stillAtCamOn) {
             Bitmap bmp = BitmapFactory.decodeByteArray(still, 0, still.length);
-            if (bmp != null) { art = scale(bmp, 480); lastStillRef = still; return true; }
+            if (bmp != null) { art = scale(bmp, 480); lastStillRef = still; showingStill = true; return true; }
         }
-        if (art == null || (still == null && !show.equals(lastShow))) { art = placeholder(show); return true; }
+        if (art == null || (!showingStill && !show.equals(lastShow))) {
+            art = placeholder(show); showingStill = false; return true;
+        }
         return false;
     }
     private static Bitmap scale(Bitmap b, int max) {
@@ -232,7 +316,7 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         p.setColor(0xFF8FD694); p.setTextSize(52);
         c.drawText(ellipsize(show, 16), S / 2f, S / 2f + 18, p);
         p.setColor(0xFF6B7075); p.setTextSize(30);
-        c.drawText("Anancy", S / 2f, S - 44, p);
+        c.drawText("BackSeat TV", S / 2f, S - 44, p);
         return bmp;
     }
     private static String ellipsize(String s, int n) { return s.length() <= n ? s : s.substring(0, n - 1) + "…"; }
@@ -253,22 +337,18 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         if (!ROOT.equals(parentId)) activate();
         if (ROOT.equals(parentId)) { result.sendResult(rootTabs()); return; }
         RemoteService svc = RemoteService.get();
-        if (TAB_CTRL.equals(parentId)) { result.sendResult(controls()); return; }
+        if (ROOT_APP_OPTIONS.equals(parentId)) { result.sendResult(options()); return; }
+        if (OPT_SLEEP.equals(parentId))        { result.sendResult(sleepOptions()); return; }
+        if (OPT_TODDLER.equals(parentId))      { result.sendResult(toddlerOptions()); return; }
         if (svc == null) { result.sendResult(new ArrayList<>()); return; }
 
         if (TAB_PL.equals(parentId)) {
             svc.requestPlaylists();
-            loadAsync(result, () -> !svc.playlistNames().isEmpty(), this::playlists, 0);
-        } else if (TAB_SHOWS.equals(parentId)) {
-            svc.requestShows(0);
-            loadAsync(result, () -> svc.libraryJson() != null, this::shows, 0);
-        } else if (parentId.startsWith("show:")) {
-            final String name = parentId.substring(5);
-            svc.requestEpisodes(name, 0);
-            loadAsync(result, () -> episodesReady(name), () -> episodes(name), 0);
-        } else if (TAB_QUEUE.equals(parentId)) {
-            svc.requestQueue();
-            loadAsync(result, () -> svc.queueJson() != null, this::queue, 0);
+            loadAsync(result, () -> !svc.playlistNames().isEmpty(), () -> {
+                List<MediaItem> l = playlists();
+                if (l.isEmpty()) { playlistsOwed = true; playlistTries = 1; }   // the ticker fetches + refreshes
+                return l;
+            }, 0);
         } else {
             result.sendResult(new ArrayList<>());
         }
@@ -290,10 +370,25 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
 
     private List<MediaItem> rootTabs() {
         List<MediaItem> out = new ArrayList<>();
-        out.add(browsable(TAB_PL, "Playlists", null, style(0, GRID)));      // playlist tiles
-        out.add(browsable(TAB_SHOWS, "Shows", null, style(GRID, 0)));       // show tiles
-        out.add(browsable(TAB_QUEUE, "Up next", null, style(0, LIST)));     // queue rows
-        out.add(browsable(TAB_CTRL, "Controls", null, style(0, LIST)));     // control rows
+        // Rows, not tiles: a tile with no artwork renders as a broken-image warning triangle on the
+        // dash, and Samsung Music lists its playlists as rows anyway.
+        out.add(browsable(ROOT_APP_OPTIONS, "Options", null, style(LIST, LIST)));
+        out.add(browsable(TAB_PL, "Playlists", null, style(0, LIST)));
+        return out;
+    }
+    /** Two rows that open a sub-list (chevron) and two that act on tap (no chevron). The subtitles
+        are read when the page loads, so they say what the TV is doing right now. */
+    private List<MediaItem> options() {
+        JSONObject o = state();
+        List<MediaItem> out = new ArrayList<>();
+        boolean sleeping = o.optBoolean("sleeping", false);
+        long rem = Math.max(0, o.optLong("sleep_remaining_ms", 0));
+        out.add(browsable(OPT_SLEEP, "Sleep timer",
+                sleeping ? "Running · " + mmss(rem) + " left" : "Off", style(0, LIST)));
+        out.add(browsable(OPT_TODDLER, "Toddler mode",
+                o.optBoolean("playmode", false) ? "On" : "Off", style(0, LIST)));
+        out.add(playable("act:checkin", "Check-in", "Show the camera for a minute", null));
+        out.add(playable("act:power", "Power off", "Turns the TV screen off or back on", null));
         return out;
     }
     private List<MediaItem> playlists() {
@@ -302,61 +397,16 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         for (String n : svc.playlistNames()) out.add(playable("pl:" + n, n, null, null));
         return out;
     }
-    private List<MediaItem> shows() {
+    private List<MediaItem> sleepOptions() {
         List<MediaItem> out = new ArrayList<>();
-        RemoteService svc = RemoteService.get(); if (svc == null) return out;
-        try {
-            JSONArray a = new JSONObject(svc.libraryJson()).optJSONArray("shows");
-            if (a != null) for (int i = 0; i < a.length(); i++) {
-                JSONObject s = a.getJSONObject(i);
-                out.add(browsable("show:" + s.optString("name"), s.optString("name"), s.optInt("count") + " eps", style(0, LIST)));
-            }
-        } catch (Exception ignored) {}
+        out.add(playable("act:wake", "Cancel sleep timer", null, null));
+        for (int m = 5; m <= 60; m += 5) out.add(playable("act:sleep:" + m, m + " minutes", null, null));
         return out;
     }
-    private boolean episodesReady(String name) {
-        RemoteService svc = RemoteService.get(); if (svc == null) return false;
-        try { return name.equals(new JSONObject(svc.episodesJson()).optString("show")); } catch (Exception e) { return false; }
-    }
-    private List<MediaItem> episodes(String name) {
+    private List<MediaItem> toddlerOptions() {
         List<MediaItem> out = new ArrayList<>();
-        RemoteService svc = RemoteService.get(); if (svc == null) return out;
-        try {
-            JSONObject o = new JSONObject(svc.episodesJson());
-            if (!name.equals(o.optString("show"))) return out;
-            JSONArray items = o.optJSONArray("items");
-            if (items != null) for (int i = 0; i < items.length(); i++) {
-                JSONObject e = items.getJSONObject(i);
-                out.add(playable("ep:" + e.optInt("id"), clean(e.optString("title")), null, null));
-            }
-        } catch (Exception ignored) {}
-        return out;
-    }
-    private List<MediaItem> queue() {
-        List<MediaItem> out = new ArrayList<>();
-        RemoteService svc = RemoteService.get(); if (svc == null) return out;
-        try {
-            JSONObject o = new JSONObject(svc.queueJson());
-            int from = o.optInt("from", 0), index = o.optInt("index", -1);
-            JSONArray items = o.optJSONArray("items");
-            if (items != null) for (int i = 0; i < items.length(); i++) {
-                int abs = from + i;
-                String title = (abs == index ? "▶ " : "") + clean(items.optString(i));
-                out.add(playable("jump:" + abs, title, null, null));
-            }
-        } catch (Exception ignored) {}
-        return out;
-    }
-    private List<MediaItem> controls() {
-        List<MediaItem> out = new ArrayList<>();
-        out.add(playable("act:sleep:15", "Sleep in 15 min", null, null));
-        out.add(playable("act:sleep:30", "Sleep in 30 min", null, null));
-        out.add(playable("act:wake", "Wake / cancel sleep", null, null));
-        out.add(playable("act:flash", "Light", null, null));
-        out.add(playable("act:power", "TV off / on", null, null));
-        out.add(playable("act:shuffle:toggle", "Shuffle on / off", null, null));
-        out.add(playable("act:loop:toggle", "Loop: forever / stop", null, null));
-        out.add(playable("act:mute", "Mute / unmute", null, null));
+        out.add(playable("act:playmode:on", "Turn on", null, null));
+        out.add(playable("act:playmode:off", "Turn off", null, null));
         return out;
     }
 

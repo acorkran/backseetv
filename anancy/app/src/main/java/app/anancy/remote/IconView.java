@@ -63,11 +63,16 @@ class IconView extends View {
                 cv.drawLine(bl, bt, br, bt, p); cv.drawLine(br, bt, bl, bb, p); cv.drawLine(bl, bb, br, bb, p);
                 float sl = cx + s * 0.22f, st = cy - s * 0.98f, sr = cx + s, sb = cy - s * 0.25f;
                 cv.drawLine(sl, st, sr, st, p); cv.drawLine(sr, st, sl, sb, p); cv.drawLine(sl, sb, sr, sb, p); break; }
-            case SUN: {
-                p.setStyle(Paint.Style.FILL); cv.drawCircle(cx, cy, s * 0.55f, p);
-                p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.16f));
-                for (int k = 0; k < 8; k++) { double a = Math.PI * k / 4; float r0 = s * 0.85f, r1 = s * 1.15f;
-                    cv.drawLine(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, p); }
+            case SUN: {   // a light bulb: "Light" lights the TV up; the sun it replaced read as "brightness"
+                p.setStyle(Paint.Style.FILL);
+                cv.drawCircle(cx, cy - s * 0.30f, s * 0.68f, p);                                            // glass
+                Path neck = new Path();
+                neck.moveTo(cx - s * 0.52f, cy + s * 0.05f); neck.lineTo(cx + s * 0.52f, cy + s * 0.05f);
+                neck.lineTo(cx + s * 0.32f, cy + s * 0.55f); neck.lineTo(cx - s * 0.32f, cy + s * 0.55f); neck.close();
+                cv.drawPath(neck, p);
+                float bh = s * 0.16f;                                                                       // screw base
+                cv.drawRoundRect(new RectF(cx - s * 0.34f, cy + s * 0.64f, cx + s * 0.34f, cy + s * 0.64f + bh), bh / 2, bh / 2, p);
+                cv.drawRoundRect(new RectF(cx - s * 0.26f, cy + s * 0.88f, cx + s * 0.26f, cy + s * 0.88f + bh), bh / 2, bh / 2, p);
                 break; }
             case SHUFFLE:
                 p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(Math.max(2f, s * 0.16f)); float t = s;

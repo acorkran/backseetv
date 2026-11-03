@@ -12,6 +12,9 @@ android {
         targetSdk 35
         versionCode 1
         versionName '0.1'
+        // A plain Instrumentation, no androidx.test: it only drives the Android Auto media service
+        // (src/androidTest/.../AaProbe.java), so it needs nothing beyond the framework.
+        testInstrumentationRunner 'app.anancy.AaProbe'
     }
 
     compileOptions {
