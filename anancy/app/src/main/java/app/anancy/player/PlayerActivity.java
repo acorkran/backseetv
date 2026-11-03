@@ -66,6 +66,7 @@ public class PlayerActivity extends Activity {
     private View napOverlay;
     private LinearLayout emptyState;                      // shown instead of pure black when there is nothing to play
     private boolean napped = false;
+    private boolean turnOnArmed = false;                  // setTurnScreenOn is on only while a wake is in flight
     private volatile boolean flashing = false;            // suppress screen-on -> wake during a Light flash
     private android.content.BroadcastReceiver screenRx;   // physical power button sync
     private float preNapBrightness = -1f;
@@ -142,7 +143,7 @@ public class PlayerActivity extends Activity {
             @Override public void onReceive(android.content.Context c, Intent i) {
                 String a = i.getAction();
                 if (Intent.ACTION_SCREEN_OFF.equals(a)) { if (!napped) { setNapScreen(true); PlayerController.get().pause(); } }
-                else if (Intent.ACTION_SCREEN_ON.equals(a)) { if (napped && !flashing) { setNapScreen(false); PlayerController.get().play(); } }
+                else if (Intent.ACTION_SCREEN_ON.equals(a)) { disarmTurnOn(); if (napped && !flashing) { setNapScreen(false); PlayerController.get().play(); } }
             }
         };
         android.content.IntentFilter sf = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
@@ -251,12 +252,38 @@ public class PlayerActivity extends Activity {
     /** Light a physically-off display (physical power button / doze). FLAG_KEEP_SCREEN_ON keeps it on
         afterwards. Samsung cancels this unless the app may post notifications (self-granted in enterKiosk);
         on battery it also needs the doze whitelist (`dumpsys deviceidle whitelist +app.anancy`). */
-    private void wakeDisplay() {
+    private void wakeDisplay() { forceScreenOn("anancy:wake", 3000); }
+
+    /** Turn a physically-off display on, by two routes.
+
+        1. A wake lock with ACQUIRE_CAUSES_WAKEUP. Samsung's PowerManager cancels it whenever the app's
+           notifications are being silenced -- and Do Not Disturb counts. With DND on (one tap in the quick
+           settings) every remote Play and Light logged "Screen__On : Cancel (notifications are disabled)"
+           and the show played to a dark screen. The lock is still taken: it holds the screen bright for
+           `holdMs` when it does work.
+        2. turnScreenOn on this activity, then re-launch it. The window manager does that wake as the system,
+           and DND does not gate it. The flag is dropped again as soon as the screen is on, or a later
+           lockNow() (nap, end of a Light flash) could be undone by the next relayout. */
+    private void forceScreenOn(String tag, long holdMs) {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm == null) return;
         try {
-            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-            if (pm != null && !pm.isInteractive())
-                pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "anancy:wake").acquire(3000);
+            pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, tag).acquire(holdMs);
         } catch (Exception ignored) {}
+        if (pm.isInteractive()) return;
+        try {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+            turnOnArmed = true;
+            startActivity(new Intent(this, PlayerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            main.postDelayed(this::disarmTurnOn, 3000);   // backstop if SCREEN_ON never arrives
+        } catch (Exception e) { Log.w(TAG, "turnScreenOn route failed", e); }
+    }
+    private void disarmTurnOn() {
+        if (!turnOnArmed) return;
+        turnOnArmed = false;
+        try { setTurnScreenOn(false); } catch (Exception ignored) {}
     }
     private void doPower() {
         if (!napped) { setNapScreen(true); PlayerController.get().pause(); sleepDisplay(); }
@@ -303,12 +330,7 @@ public class PlayerActivity extends Activity {
         flashing = true;   // the wake lock fires SCREEN_ON — don't let that count as a "wake" (un-nap)
         // If napped, the display has actually gone to sleep — a brightness change alone shows nothing.
         // Force the screen ON (brief wake lock, auto-released) so the white flash is visible.
-        try {
-            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-            if (pm != null)
-                pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "anancy:flash")
-                  .acquire(ms + 400L);
-        } catch (Exception e) {}
+        forceScreenOn("anancy:flash", ms + 400L);
         final WindowManager.LayoutParams lp = getWindow().getAttributes();
         lp.screenBrightness = 1.0f; getWindow().setAttributes(lp);
         flash.setVisibility(View.VISIBLE);
@@ -344,13 +366,13 @@ public class PlayerActivity extends Activity {
         catch (Exception ignored) {}
         emptyState.removeAllViews();
         TextView h = new TextView(this);
-        h.setText(perm ? "Nothing to play yet" : "Anancy can't read your storage");
+        h.setText(perm ? "Nothing to play yet" : "BackSeat TV can't read your storage");
         h.setTextColor(Color.WHITE); h.setTextSize(26); h.setGravity(Gravity.CENTER);
         emptyState.addView(h);
         TextView d = new TextView(this);
         d.setText(perm
-                ? "No videos found. Point Anancy at the folder your shows are in \u2014 one sub-folder per show."
-                : "The shows are on the SD card, and Anancy needs \"All files access\" before it can see any "
+                ? "No videos found. Point BackSeat TV at the folder your shows are in \u2014 one sub-folder per show."
+                : "The shows are on the SD card, and BackSeat TV needs \"All files access\" before it can see any "
                   + "of it. Grant that and the library appears straight away.");
         d.setTextColor(0xFF9AA4B2); d.setTextSize(15); d.setGravity(Gravity.CENTER);
         d.setPadding(0, dp(12), 0, dp(24));
@@ -565,7 +587,7 @@ public class PlayerActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
         col.setPadding(dp(24), dp(16), dp(24), dp(16));
         TextView h = new TextView(this);
-        h.setText("Anancy admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
+        h.setText("BackSeat TV admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
         h.setGravity(Gravity.CENTER); h.setPadding(0, dp(8), 0, dp(16));
         col.addView(h);
         final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
