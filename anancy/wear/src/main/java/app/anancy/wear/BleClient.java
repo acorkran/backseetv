@@ -64,6 +64,8 @@ public class BleClient {
         scanner = ad.getBluetoothLeScanner();
         if (scanner == null) { status("no BLE scanner"); return; }
         try { if (scanCb != null) scanner.stopScan(scanCb); } catch (Exception ignored) {}
+        long wait = scanBudgetWaitMs();
+        if (wait > 0) { status("reconnecting…"); retryLater(wait); return; }
         List<ScanFilter> filters = Collections.singletonList(
                 new ScanFilter.Builder().setServiceUuid(new ParcelUuid(Ble.SERVICE)).build());
         // LOW_LATENCY (radio ~100% duty) only for the first seconds — that's what makes opening the
@@ -74,31 +76,56 @@ public class BleClient {
         final List<ScanFilter> f = filters;
         scanCb = new ScanCallback() {
             @Override public void onScanResult(int t, ScanResult r) {
-                if (connected) return;
+                if (connected || gatt != null) return;   // already connecting (e.g. a direct 133 retry)
                 scanning = false;
                 status("connecting...");
                 try { scanner.stopScan(this); } catch (Exception ignored) {}
-                gatt = r.getDevice().connectGatt(ctx, false, gattCb, android.bluetooth.BluetoothDevice.TRANSPORT_LE);
+                lastDevice = r.getDevice(); quickRetries = 0;
+                gatt = lastDevice.connectGatt(ctx, false, gattCb, android.bluetooth.BluetoothDevice.TRANSPORT_LE);
             }
-            @Override public void onScanFailed(int e) { scanning = false; status("scan failed " + e); }
+            @Override public void onScanFailed(int e) {
+                scanning = false; status("reconnecting…");
+                Log.w(TAG, "scan failed " + e);
+                retryLater(SCAN_WINDOW_MS);   // usually Android's "scanning too frequently": wait the window out
+            }
         };
         final ScanCallback cb = scanCb;
         status("scanning...");
         scanning = true;
+        noteScanStart();
         scanner.startScan(filters, fast, scanCb);
         main.postDelayed(() -> {
-            if (!stopped && scanning && !connected && scanCb == cb) {
-                try { scanner.stopScan(cb); scanner.startScan(f, slow, cb); } catch (Exception ignored) {}
+            // Dropping to the low-power mode costs another scan registration; skip it rather than
+            // spend the budget a reconnect will need (the fast scan just keeps running instead).
+            if (!stopped && scanning && !connected && scanCb == cb && scanBudgetWaitMs() == 0) {
+                try { scanner.stopScan(cb); noteScanStart(); scanner.startScan(f, slow, cb); } catch (Exception ignored) {}
             }
         }, FAST_SCAN_MS);
     }
+
+    // Android allows an app 5 scan starts per 30s. A 6th is refused ("app is scanning too frequently")
+    // and the refusal keeps the window full, so when the TV app restarted, every disconnect + rescan
+    // ran into it and the watch took ~110s to find a TV that was advertising the whole time. Spend at
+    // most 4 starts per window and wait for the oldest to age out.
+    static final long SCAN_WINDOW_MS = 30_000;
+    private final java.util.ArrayDeque<Long> scanStarts = new java.util.ArrayDeque<>();
+    private void noteScanStart() { scanStarts.addLast(android.os.SystemClock.elapsedRealtime()); }
+    private long scanBudgetWaitMs() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        while (!scanStarts.isEmpty() && now - scanStarts.peekFirst() > SCAN_WINDOW_MS) scanStarts.removeFirst();
+        return scanStarts.size() < 4 ? 0 : SCAN_WINDOW_MS - (now - scanStarts.peekFirst()) + 500;
+    }
+    private final Runnable retry = () -> { if (!stopped && !connected) start(); };
+    private void retryLater(long ms) { main.removeCallbacks(retry); main.postDelayed(retry, ms); }
     static final long FAST_SCAN_MS = 8000;
-    private long reconnectDelay = 2500;   // backs off to 30s while the TV stays unreachable; resets on connect
+    private long reconnectDelay = 2500;
+    private android.bluetooth.BluetoothDevice lastDevice;
+    private int quickRetries = 0;   // backs off to 30s while the TV stays unreachable; resets on connect
 
     private final BluetoothGattCallback gattCb = new BluetoothGattCallback() {
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connected = true; discovered = false; reconnectDelay = 2500; status("negotiating...");
+                connected = true; discovered = false; reconnectDelay = 2500; quickRetries = 0; status("negotiating...");
                 g.requestMtu(512);
                 // fallback: discover even if onMtuChanged doesn't re-fire on a reconnect
                 main.postDelayed(() -> { if (gatt != null && !discovered) gatt.discoverServices(); }, 900);
@@ -107,8 +134,21 @@ public class BleClient {
                 connected = false; cmdCh = null; stateCh = null;
                 try { g.close(); } catch (Exception ignored) {}
                 gatt = null;
+                // A phone that is also this watch's companion often answers the first LE connects with
+                // GATT_ERROR (133) while it's still advertising fine. Going back through scan + backoff
+                // for each one turned that into a 1-2 minute wait, so retry the same device directly.
+                if (!stopped && status == 133 && lastDevice != null && quickRetries < 4) {
+                    quickRetries++;
+                    status("connecting…");
+                    final android.bluetooth.BluetoothDevice d = lastDevice;
+                    main.postDelayed(() -> {
+                        if (stopped || connected || gatt != null) return;
+                        gatt = d.connectGatt(ctx, false, gattCb, android.bluetooth.BluetoothDevice.TRANSPORT_LE);
+                    }, 800);
+                    return;
+                }
                 if (!stopped) {   // auto-reconnect with backoff (only while something is using the link)
-                    status("reconnecting…"); main.postDelayed(() -> start(), reconnectDelay);
+                    status("reconnecting…"); retryLater(reconnectDelay);
                     reconnectDelay = Math.min(30_000, reconnectDelay * 2);
                 }
             }

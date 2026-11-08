@@ -37,7 +37,7 @@ public class AnancyTileService extends TileService {
     @Override protected void onTileLeaveEvent(androidx.wear.tiles.EventBuilders.TileLeaveEvent e) { BleService.release(this, "tile"); }
 
     @Override protected ListenableFuture<TileBuilders.Tile> onTileRequest(RequestBuilders.TileRequest req) {
-        String title = "Open Anancy";
+        String title = "Open BackSeat TV";
         String status = "Tap to open the remote";
         int statusColor = 0xFF9AA0A6;
 
@@ -48,7 +48,7 @@ public class AnancyTileService extends TileService {
                 String t = o.optString("title", "").replaceAll("\\.(mp4|mkv|m4v)$", "");
                 int i = t.indexOf(".S");
                 title = (i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim();
-                if (title.isEmpty()) title = "Anancy";
+                if (title.isEmpty()) title = "BackSeat TV";
 
                 if (o.optBoolean("sleeping", false)) {
                     long s = Math.max(0, o.optLong("sleep_remaining_ms", 0)) / 1000;
@@ -61,7 +61,7 @@ public class AnancyTileService extends TileService {
                 } else {
                     status = "Paused"; statusColor = 0xFFFFC107;
                 }
-            } catch (Exception ignored) { title = "Anancy"; status = "connecting…"; }
+            } catch (Exception ignored) { title = "BackSeat TV"; status = "connecting…"; }
         }
 
         TileBuilders.Tile tile = new TileBuilders.Tile.Builder()

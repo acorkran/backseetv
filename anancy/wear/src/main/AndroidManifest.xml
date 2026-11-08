@@ -24,7 +24,7 @@
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
 
     <application
-        android:label="Anancy Remote"
+        android:label="BackSeat TV Remote"
         android:icon="@android:drawable/ic_media_play"
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
@@ -44,7 +44,7 @@
 
         <!-- glanceable Tile -->
         <service android:name=".AnancyTileService"
-            android:label="Anancy"
+            android:label="BackSeat TV"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
