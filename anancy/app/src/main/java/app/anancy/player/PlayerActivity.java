@@ -70,13 +70,17 @@ public class PlayerActivity extends Activity {
     private volatile boolean flashing = false;            // suppress screen-on -> wake during a Light flash
     private android.content.BroadcastReceiver screenRx;   // physical power button sync
     private float preNapBrightness = -1f;
+    private boolean adopted = false;                      // running SelfPlayer's engine: never release it here
+    private SurfaceView adoptedSurface;
+    private SurfaceView videoSurface;
+    private Player.Listener sizeListener;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         PlayerActivity prior = sRef.get();   // a HOME launch can start a SECOND player in its own task
         if (prior != null && prior != this) try { prior.finish(); } catch (Exception ignored) {}
         sRef = new WeakReference<>(this);
-        app.anancy.net.WatchLink.publishPlayer(this);   // a watch paired to this phone drives this phone only
+        if (!remoteRole()) app.anancy.net.WatchLink.publishPlayer(this);   // a watch paired to this phone drives this phone only
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
 
@@ -114,29 +118,38 @@ public class PlayerActivity extends Activity {
 
         setContentView(root);
 
-        player = new ExoPlayer.Builder(this).build();
+        boolean shared = remoteRole();   // "this phone as playback": the running engine is handed over (SelfPlayer)
+        if (shared) SelfPlayer.start(this);
+        adopted = shared;
+        player = shared ? SelfPlayer.player() : new ExoPlayer.Builder(this).build();
         player.setVideoSurfaceView(surface);
+        adoptedSurface = shared ? surface : null;
+        videoSurface = surface;
+        sizeListener = new Player.Listener() {
+            @Override public void onVideoSizeChanged(androidx.media3.common.VideoSize v) { fitVideo(); }
+        };
+        player.addListener(sizeListener);
+        root.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, orr, ob) -> root.post(this::fitVideo));
+        if (shared) {
+            if (getIntent().getBooleanExtra("wake", false)) { setShowWhenLocked(true); setTurnScreenOn(true); }
+            if (getIntent().getBooleanExtra("playmode", false)) main.post(this::doStartPlayMode);
+        }
         // volume + mute are managed by PlayerController.setAudio(): system media volume + a persisted mute
-        player.addListener(new Player.Listener() {
+        if (!shared) player.addListener(new Player.Listener() {
             @Override public void onPlaybackStateChanged(int s) { if (s == Player.STATE_READY) Log.i(TAG, "STATE_READY (playing muted)"); }
         });
 
         // setAudio FIRST: it loads the persisted mute. Attaching before it meant the engine was built
         // with the default muted=false and sat at volume 1.0 until the next apply - an audible window
         // on every cold boot, since setAudio also floors the system stream at 50%.
-        PlayerController.get().setAudio(this);   // system media volume + persisted mute; never boots stuck silent
-        PlayerController.get().attach(player);
-        PlayerController.get().onLibraryLoaded = () -> showEmpty(PlayerController.get().libraryEmpty());
-        PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
-        if (server == null) {   // created once for the app, not per activity
-            server = new ControlServer(this, PlayerController.get());
-            server.start();
+        if (!shared) {
+            PlayerController.get().setAudio(this);   // system media volume + persisted mute; never boots stuck silent
+            PlayerController.get().attach(player);
+            PlayerController.get().onLibraryLoaded = () -> showEmpty(PlayerController.get().libraryEmpty());
+            PlayerController.get().loadLibrary(this);   // scans, builds playlists (Shuffle All + per-show), starts
+            startServers(this);
         }
-        if (ble == null) {
-            ble = new BleServer(this, PlayerController.get());   // BLE control tier (offline/car/AA)
-            ble.start();
-        }
-        HotspotService.applyMode(this, HotspotService.mode(this));   // connectivity level: keeps the TV hotspot up when chosen
+        if (!remoteRole()) HotspotService.applyMode(this, HotspotService.mode(this));   // connectivity level: keeps the TV hotspot up when chosen
 
         // Physical POWER button = same as the remote's Power: screen off -> nap (pause), screen on -> wake (play).
         // Apps can't intercept the power key itself, but the screen-state broadcasts give the same effect.
@@ -152,6 +165,22 @@ public class PlayerActivity extends Activity {
         try { registerReceiver(screenRx, sf); } catch (Exception ignored) {}
     }
 
+    /** Draw the video at its real shape. Screens that aren't 16:9 get black bars instead of a stretched
+        picture, and on a phone the bars also cover the camera hole so it doesn't look like part of the show. */
+    private void fitVideo() {
+        if (player == null || videoSurface == null) return;
+        androidx.media3.common.VideoSize v = player.getVideoSize();
+        int W = root.getWidth(), H = root.getHeight();
+        if (v.width <= 0 || v.height <= 0 || W <= 0 || H <= 0) return;
+        float r = v.width * v.pixelWidthHeightRatio / v.height;
+        int w = W, h = Math.round(W / r);
+        if (h > H) { h = H; w = Math.round(H * r); }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) videoSurface.getLayoutParams();
+        if (lp.width == w && lp.height == h && lp.gravity == Gravity.CENTER) return;
+        lp.width = w; lp.height = h; lp.gravity = Gravity.CENTER;
+        videoSurface.setLayoutParams(lp);
+    }
+
     private void immersive() {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
@@ -163,6 +192,7 @@ public class PlayerActivity extends Activity {
     public static void power() {
         final PlayerActivity a = sRef.get();
         if (a != null) a.main.post(a::doPower);
+        else if (SelfPlayer.running()) PlayerController.get().toggle();   // showing small in the remote: nothing to black out
     }
 
     // --- toddler PLAY MODE: a transparent WebView overlay ON TOP of the running show (the video is the
@@ -173,6 +203,7 @@ public class PlayerActivity extends Activity {
     public static void startPlayMode() {
         final PlayerActivity a = sRef.get();
         if (a != null) a.main.post(a::doStartPlayMode);
+        else SelfPlayer.openForPlayMode();   // the overlay needs the fullscreen player
     }
     public static void stopPlayMode() {
         final PlayerActivity a = sRef.get();
@@ -251,7 +282,8 @@ public class PlayerActivity extends Activity {
     /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
     public static void wakeScreen() {
         final PlayerActivity a = sRef.get();
-        if (a != null) a.main.post(() -> {
+        if (a == null) { new Handler(Looper.getMainLooper()).post(SelfPlayer::needScreen); return; }
+        a.main.post(() -> {
             if (a.napped) a.setNapScreen(false); else a.wakeDisplay();
             if (a.pausedByLeaving || !a.visible) a.bringToFront();
         });
@@ -372,7 +404,7 @@ public class PlayerActivity extends Activity {
     @Override protected void onStop() {
         super.onStop();
         visible = false;
-        if (isChangingConfigurations() || napped || player == null || !player.getPlayWhenReady()) return;
+        if (isFinishing() || isChangingConfigurations() || napped || player == null || !player.getPlayWhenReady()) return;
         if (lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_LOCKED) return;
         pausedByLeaving = true;
         Log.i(TAG, "left the player unlocked -> pause");
@@ -682,7 +714,10 @@ public class PlayerActivity extends Activity {
             b.setOnClickListener(v -> {
                 dlg.dismiss();
                 switch (it[1]) {
-                    case "remote":   startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true)); break;
+                    case "remote":
+                        if (remoteRole()) { backToRemote(); return; }
+                        else startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true));
+                        break;
                     case "settings": startActivity(new Intent(this, SettingsActivity.class)); break;
                     case "playmode": startPlayMode(); return;
                     case "exit":     unlock(); return;
@@ -735,7 +770,31 @@ public class PlayerActivity extends Activity {
 
     /** Kiosk: Back never leaves the show. (Lock-task blocks Home/Recents but delivers Back; finishing
         here would bounce through the launcher-router and leave a focus-stealing permission activity.) */
-    @Override public void onBackPressed() { }
+    @Override public void onBackPressed() {
+        if (remoteRole() && lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_NONE) backToRemote();
+    }
+    /** "This phone as playback": a device whose role is remote, with this player running as well. */
+    private boolean remoteRole() { return "remote".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", "")); }
+    /** Leave fullscreen for the remote; the show carries on in this device's card. */
+    private void backToRemote() {
+        try { stopLockTask(); } catch (Exception ignored) {}
+        startActivity(new Intent(this, RemoteActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        finish();
+    }
+    public static boolean isRunning() { PlayerActivity a = sRef.get(); return a != null && !a.isFinishing(); }
+    static void finishLarge() { PlayerActivity a = sRef.get(); if (a != null) a.finish(); }
+    /** The control servers are app-scoped: created once, whatever is hosting the engine. */
+    static void startServers(android.content.Context c) {
+        if (server == null) { server = new ControlServer(c.getApplicationContext(), PlayerController.get()); server.start(); }
+        if (ble == null) { ble = new BleServer(c.getApplicationContext(), PlayerController.get()); ble.start(); }   // BLE control tier (offline/car/AA)
+    }
+    static void stopServers() {
+        try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
+        ble = null;
+        try { if (server != null) server.stop(); } catch (Exception ignored) {}
+        server = null;
+    }
 
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
         int k = e.getKeyCode();
@@ -754,6 +813,13 @@ public class PlayerActivity extends Activity {
     @Override protected void onDestroy() {
         try { if (screenRx != null) unregisterReceiver(screenRx); } catch (Exception ignored) {}
         // servers are app-scoped and deliberately NOT stopped here (see the field comment)
+        if (adopted) {   // the engine lives on in SelfPlayer; it only stops drawing here
+            if (sRef.get() == this) sRef = new WeakReference<>(null);
+            if (player != null) { player.removeListener(sizeListener); player.clearVideoSurfaceView(adoptedSurface); }
+            player = null;
+            super.onDestroy();
+            return;
+        }
         if (sRef.get() == this) {   // only the CURRENT instance owns the shared engine
             PlayerController.get().detach();
             sRef = new WeakReference<>(null);

@@ -55,15 +55,6 @@ final class RemoteUi {
         return c;
     }
 
-    View toggleChip(String label, boolean on, final Runnable onTap) {
-        TextView t = new TextView(ctx); t.setText(label); t.setTextSize(12); t.setGravity(Gravity.CENTER);
-        t.setTextColor(on ? 0xFFFFFFFF : RemoteActivity.TXT); t.setPadding(dp(6), dp(9), dp(6), dp(9)); t.setMaxLines(1);
-        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        GradientDrawable g = new GradientDrawable(); g.setCornerRadius(dp(18)); g.setColor(on ? RemoteActivity.ACCENT : RemoteActivity.BTN);
-        t.setBackground(g); t.setClickable(true); t.setOnClickListener(v -> onTap.run()); pressFx(t);
-        return t;
-    }
-
     /** A clearly-tappable pill button for the playlist / library / queue chips. */
     TextView pillChip(String label, View.OnClickListener onClick) {
         TextView t = new TextView(ctx);

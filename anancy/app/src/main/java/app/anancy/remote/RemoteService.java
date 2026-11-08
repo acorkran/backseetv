@@ -426,6 +426,7 @@ public class RemoteService extends Service {
     /** A device's LAN ip so we can HTTP its ControlServer directly (arm/disarm a sync group). */
     public String deviceIp(String id) {
         if (id == null) return null;
+        if (selfPlay() && id.equals(selfId())) return selfIp();
         String ip = deviceIps.get(id);
         if (ip != null && !ip.isEmpty()) return ip;
         if (wifi != null) { String hp = wifi.hosts().get(id); if (hp != null) { int c = hp.indexOf(':'); return c > 0 ? hp.substring(0, c) : hp; } }
@@ -437,7 +438,11 @@ public class RemoteService extends Service {
     // of the group — the selection is the single source of truth.
     public boolean isSyncGroup() { return "1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, "")) && groupOrder().size() >= 2; }
     /** The screens in the group, in order: the current selection, or all seen when "All". */
-    private java.util.List<String> groupOrder() { return new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets()); }
+    private java.util.List<String> groupOrder() {
+        java.util.List<String> order = new java.util.ArrayList<>(isAll() ? seenTablets.keySet() : targets());
+        if (!local && order.remove(selfId())) order.add(selfId());   // last, so another screen's library leads when there is one
+        return order;
+    }
     public String syncLeaderId() {
         if (!isSyncGroup()) return null;
         java.util.List<String> order = groupOrder();
@@ -501,7 +506,12 @@ public class RemoteService extends Service {
         return targets();
     }
     /** id -> friendly name for every player heard on BLE or mDNS this session. */
-    public java.util.Map<String, String> tablets() { return new java.util.LinkedHashMap<>(seenTablets); }
+    public java.util.Map<String, String> tablets() {
+        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+        if (!local && seenTablets.containsKey(selfId())) m.put(selfId(), seenTablets.get(selfId()));   // this device is always first
+        m.putAll(seenTablets);
+        return m;
+    }
     /** The SELECTED players to control (checkbox multi-select). Empty = ALL heard. */
     public java.util.Set<String> targets() {
         String t = Cfg.p(this).getString(PREF_TARGET, "");
@@ -527,6 +537,7 @@ public class RemoteService extends Service {
     private void aimLinks() {
         java.util.Set<String> sel = effectiveTargets();   // a synced group aims everything at the leader
         String rep = sel.isEmpty() ? null : sel.iterator().next();   // whose state the UI shows
+        if (sel.size() > 1 && selfPlay()) for (String id : sel) if (!id.equals(selfId())) { rep = id; break; }   // prefer a real link
         if (ble != null) { ble.setDrive(sel); ble.setStateId(rep); ble.start(); }
         if (wifi != null) wifi.setTarget(rep);
         if (wifi == null) startWifi(null, 0);   // Wi-Fi is needed for Wi-Fi-only screens (a TV) + representative state
@@ -535,6 +546,7 @@ public class RemoteService extends Service {
     /** Friendly name of the representative player, or a count when several are selected. */
     public String connectedTablet() {
         if (isSyncGroup()) { String n = syncLeaderName(); return n != null ? "Synced · " + n : "Synced"; }
+        if (showingSelf()) return app.anancy.Identity.name(this);
         java.util.Set<String> sel = targets();
         if (!sel.isEmpty() && sel.size() > 1) return sel.size() + " screens";
         String id = bleUp() ? ble.connectedId() : (wifi != null && wifi.isConnected() ? wifi.connectedId() : null);
@@ -544,6 +556,7 @@ public class RemoteService extends Service {
     }
     private void noteSeen(String id, String name) {
         if (id == null || id.isEmpty()) return;
+        if (!local && id.equals(selfId()) && !selfPlay()) return;   // our own player only counts when the box is ticked
         boolean isNew = seenTablets.put(id, name == null || name.isEmpty() ? id : name) == null;
         if (isNew) publishWatchTarget();   // "all screens" just grew: the watch may now need the relay
     }
@@ -552,7 +565,69 @@ public class RemoteService extends Service {
         if (local) return;
         java.util.Set<String> sel = targets();
         int screens = sel.isEmpty() ? seenTablets.size() : sel.size();
+        if (showingSelf()) sel = java.util.Collections.singleton(selfId());   // only screen there is: the watch drives this device
         app.anancy.net.WatchLink.publishRemote(this, sel, isSyncGroup() || screens > 1);
+    }
+
+    // --- "This phone as playback": this remote is also one of the screens --------------------------------
+    // The player here is reached over loopback, the same way the TV's own admin Remote does it. It draws
+    // in this device's card (SelfPlayer); "make large" takes it fullscreen, and the watch is what lets
+    // you drive it from there.
+    private static final String PREF_SELF_PLAY = "anancy_self_play";
+    private WifiClient selfLink;
+    public String selfId() { return app.anancy.Identity.id(this); }
+    public boolean selfPlay() { return !local && Cfg.p(this).getBoolean(PREF_SELF_PLAY, false); }
+    /** True when this device is the only screen selected, so the UI should show its state. */
+    public boolean showingSelf() {
+        if (!selfPlay()) return false;
+        java.util.Set<String> sel = targets();
+        if (!sel.isEmpty()) return sel.size() == 1 && sel.contains(selfId());
+        return seenTablets.size() == 1 && seenTablets.containsKey(selfId());
+    }
+    public void setSelfPlay(boolean on) {
+        Cfg.p(this).edit().putBoolean(PREF_SELF_PLAY, on).apply();
+        applySelfPlay();
+        if (on) {
+            app.anancy.player.SelfPlayer.start(this);
+            if (isSyncGroup()) main.postDelayed(this::armGroup, 1500);   // once its control server is listening
+        } else {
+            java.util.Set<String> left = new java.util.LinkedHashSet<>(targets());
+            left.remove(selfId());
+            app.anancy.player.SelfPlayer.stop();
+            setTargets(left);
+            if (!"".equals(Cfg.p(this).getString(PREF_SYNCGROUP, "")) && groupOrder().size() < 2) setSyncGroup(false);
+            return;
+        }
+        aimLinks();
+    }
+    private void applySelfPlay() {
+        if (selfPlay()) {
+            noteSeen(selfId(), app.anancy.Identity.name(this));
+            if (selfLink != null) return;
+            selfLink = new WifiClient(this, new WifiClient.Listener() {
+                public void onStatus(String s) { if (showingSelf()) { lastStatus = s; if (ui != null) ui.onStatus(s); } }
+                public void onState(String json) { if (showingSelf()) onIncoming(json, "local"); }
+                public void onSeen(String id, String name) {}
+            });
+            selfLink.setFixedHost("127.0.0.1", 8090);
+            selfLink.start();
+        } else {
+            if (selfLink != null) { selfLink.stop(); selfLink = null; }
+            seenTablets.remove(selfId());
+        }
+    }
+    /** This device's address on the network, which the other screens in a synced group use to reach it. */
+    private String selfIp() {
+        try {
+            String ip = new JSONObject(app.anancy.player.PlayerController.get().stateJson()).optString("ip", "");
+            return ip.isEmpty() ? null : ip;
+        } catch (Exception e) { return null; }
+    }
+    private void sendToSelf(final String cmd) {
+        main.post(() -> {
+            if (!app.anancy.player.SelfPlayer.running()) app.anancy.player.SelfPlayer.start(this);
+            if (selfLink != null) selfLink.send(cmd);
+        });
     }
 
     private void startLinks() {
@@ -574,6 +649,7 @@ public class RemoteService extends Service {
         if (!"ble".equals(connMode)) applyConnMode();   // hotspot coordination for the chosen tier
         if (wifi == null) startWifi(null, 0);            // Wi-Fi always up: Wi-Fi-only screens (a TV) + representative state
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
+        applySelfPlay();
         publishWatchTarget();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
         main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
@@ -599,7 +675,8 @@ public class RemoteService extends Service {
     private final Map<String, Long> lastToggle = new ConcurrentHashMap<>();
     public void send(String cmd) {
         if (CommandRouter.isQueryCmd(cmd)) {   // a query has ONE answer — ask the representative only
-            if (bleUp()) ble.sendState(cmd);
+            if (showingSelf() && selfLink != null) selfLink.send(cmd);
+            else if (bleUp()) ble.sendState(cmd);
             else if (wifi != null) wifi.send(cmd);
             return;
         }
@@ -619,8 +696,9 @@ public class RemoteService extends Service {
             java.util.Set<String> tgt = new java.util.HashSet<>();
             if (leaderOnly) { if (leader != null) tgt.add(leader); } else tgt.addAll(groupOrder());
             java.util.Set<String> ble2 = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
+            if (selfPlay() && tgt.contains(selfId())) sendToSelf(cmd);
             if (ble != null) ble.sendToIds(tgt, cmd);
-            if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(tgt); w.removeAll(ble2); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
+            if (wifi != null) { java.util.Set<String> w = new java.util.HashSet<>(tgt); w.removeAll(ble2); if (!local) w.remove(selfId()); if (!w.isEmpty()) wifi.sendTo(w, cmd); }
             return;
         }
         // A control command goes to EVERY selected screen: BLE to the tablets it holds links to, Wi-Fi to
@@ -628,10 +706,12 @@ public class RemoteService extends Service {
         // group collapses this to the leader alone (the followers mirror it themselves).
         java.util.Set<String> sel = effectiveTargets();
         java.util.Set<String> bleIds = ble != null ? ble.connectedIds() : new java.util.HashSet<String>();
+        if (selfPlay() && (sel.isEmpty() || sel.contains(selfId()))) sendToSelf(cmd);
         if (ble != null) ble.send(cmd);
         if (wifi != null) {
             java.util.Set<String> w = sel.isEmpty() ? new java.util.HashSet<>(wifi.hostIds()) : new java.util.HashSet<>(sel);
             w.removeAll(bleIds);
+            if (!local) w.remove(selfId());   // already delivered over loopback
             if (!w.isEmpty()) wifi.sendTo(w, cmd);
         }
     }
@@ -661,7 +741,7 @@ public class RemoteService extends Service {
             return tmp.hostPort();
         } finally { tmp.stop(); }   // don't leave it polling
     }
-    public String transport() { return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? (local ? "local" : "Wi-Fi") : transport); }
+    public String transport() { if (showingSelf()) return "local"; return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? (local ? "local" : "Wi-Fi") : transport); }
     public boolean bleConnected() { return bleUp(); }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
@@ -669,6 +749,7 @@ public class RemoteService extends Service {
         main.removeCallbacks(idle);
         try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
         try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {}
+        try { if (selfLink != null) selfLink.stop(); } catch (Exception ignored) {}
         if (INSTANCE == this) INSTANCE = null;
         super.onDestroy();
     }
