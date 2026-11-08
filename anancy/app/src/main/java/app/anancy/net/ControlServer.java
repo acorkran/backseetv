@@ -111,8 +111,10 @@ public class ControlServer {
                     }
                     String mute = param(q, "mute");   // leader-only audio (1) vs each screen its own sound (0)
                     if (mute != null) { boolean m = "1".equals(mute) || "true".equals(mute); ctrl.setSyncMuteFollower(m); Cfg.applyConfig(ctx, "anancy_sync_mute", m ? "1" : "0"); }
+                    boolean left = !want && ctrl.isSync();
                     ctrl.setSync(want);
                     Cfg.applyConfig(ctx, "anancy_sync", ctrl.isSync() ? "1" : "0");
+                    if (left) ctrl.loadLibrary(ctx);   // a follower only holds the leader's current item: get a whole queue back
                     PlayerActivity.wakeScreen(); body = ok(); break;
                 }
                 case "/flash": PlayerActivity.flash((int) pf(param(q, "ms"), Cfg.getInt(ctx, "anancy_flash_ms", 3000))); body = ok(); break;

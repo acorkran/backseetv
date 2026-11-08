@@ -460,6 +460,7 @@ public class RemoteService extends Service {
     /** Arm/disarm a synced group over the CURRENT selection. */
     public boolean setSyncGroup(boolean on) {
         if (!on) {
+            if (selfPlay()) Cfg.put(this, "anancy_host", "");   // leaving the group: this device goes back to its own library
             java.util.HashSet<String> known = new java.util.HashSet<>(seenTablets.keySet()); known.addAll(deviceIps.keySet());
             for (String id : known) httpArm(deviceIp(id), "/sync?on=0");   // everyone stops following
             Cfg.p(this).edit().putString(PREF_SYNCGROUP, "").apply();
