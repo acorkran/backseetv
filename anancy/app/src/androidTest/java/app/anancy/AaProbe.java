@@ -59,7 +59,7 @@ public class AaProbe extends Instrumentation {
         });
         if (!connected.await(15, TimeUnit.SECONDS)) { say("could not connect to the media service"); return; }
         say("connected, root=" + browser.getRoot());
-        walk(browser.getRoot(), 0);
+        if (!"1".equals(args.getString("quick"))) walk(browser.getRoot(), 0);
 
         // A page that came back empty must fill itself in once the TV answers, the way the head
         // unit sees it: stay subscribed and count reloads.
@@ -71,7 +71,7 @@ public class AaProbe extends Instrumentation {
                 if (!ch.isEmpty()) filled.countDown();
             }
         }));
-        boolean ok = filled.await(25, TimeUnit.SECONDS);
+        boolean ok = "1".equals(args.getString("quick")) ? filled.await(8, TimeUnit.SECONDS) : filled.await(25, TimeUnit.SECONDS);
         say("Playlists page: " + (ok ? size[0] + " rows" : "STILL EMPTY") + " after " + loads[0] + " load(s)");
         h.post(() -> browser.unsubscribe("tab_playlists"));
 
@@ -87,6 +87,28 @@ public class AaProbe extends Instrumentation {
         List<MediaSessionCompat.QueueItem> q = c.getQueue();
         say("queue (drives the Queue button): " + (q == null ? "none" : q.size() + " items, title=" + c.getQueueTitle()));
         if (q != null && !q.isEmpty()) say("  first: " + q.get(0).getDescription().getTitle());
+
+        // -e do "custom:flash,id:act:power,play,wait:5" fires each step the way a dash tap would:
+        //   custom:<action>  a now-playing button      id:<mediaId>  a browse row (sleep, toddler, power...)
+        //   play|pause|next|prev|queue:<id>  transport   wait:<s>      pause between steps (default 4s)
+        String steps = args.getString("do");
+        if (steps != null) for (String st : steps.split(",")) {
+            st = st.trim(); int wait = 4;
+            MediaControllerCompat.TransportControls t = c.getTransportControls();
+            if (st.startsWith("custom:")) t.sendCustomAction(st.substring(7), null);
+            else if (st.startsWith("id:")) t.playFromMediaId(st.substring(3), null);
+            else if (st.startsWith("queue:")) t.skipToQueueItem(Long.parseLong(st.substring(6)));
+            else if (st.startsWith("wait:")) { wait = Integer.parseInt(st.substring(5)); }
+            else if (st.equals("play")) t.play();
+            else if (st.equals("pause")) t.pause();
+            else if (st.equals("next")) t.skipToNext();
+            else if (st.equals("prev")) t.skipToPrevious();
+            say("step " + st);
+            Thread.sleep(wait * 1000L);
+            PlaybackStateCompat now = c.getPlaybackState();
+            say("  -> state=" + (now == null ? "-" : now.getState()) + " subtitle="
+                    + (c.getMetadata() == null ? "-" : c.getMetadata().getDescription().getSubtitle()));
+        }
 
         if ("1".equals(args.getString("checkin"))) {
             byte[] before = app.anancy.remote.RemoteService.latestStill();
