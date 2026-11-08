@@ -78,14 +78,20 @@ public class BleService extends Service {
             ble = new BleClient(this, new BleClient.Listener() {
                 public void onStatus(String s) { lastStatus = s; if (ui != null) ui.onStatus(s); }
                 public void onState(String json) {
-                    if (isPlaylists(json)) lastPlaylists = json; else lastState = json;
+                    if (isPlaylists(json)) lastPlaylists = json;
+                    else if (!json.contains("\"type\":\"queue\"")) lastState = json;   // queue pages aren't now-playing state
                     if (ui != null) ui.onState(json);
                 }
                 public void onStill(byte[] jpeg) { lastStill = jpeg; if (ui != null) ui.onStill(jpeg); }
             });
         }
+        ble.setAllowed(WatchTarget.allowed(this));
         ble.start();   // idempotent while scanning/connected
+        WatchTarget.refresh(this);   // the phone may have re-aimed us while we weren't running
     }
+
+    /** The phone changed what this watch should drive (WatchTarget). */
+    void onTargetChanged() { main.post(() -> { if (ble != null) ble.setAllowed(WatchTarget.allowed(this)); }); }
     private void doRelease(String tag) {
         uses.remove(tag);
         if (uses.isEmpty()) scheduleIdle();
@@ -109,7 +115,32 @@ public class BleService extends Service {
             if (lastStill != null) l.onStill(lastStill);
         }
     }
-    public void send(String cmd) { if (ble != null) ble.send(cmd); }
+    public void send(final String cmd) {
+        // When the phone remote drives several screens, a watch tap goes through the phone so it reaches
+        // all of them, like a tap on the phone. Queries for this watch's own view stay on our own link,
+        // and if the phone can't take it the command goes out over Bluetooth as before.
+        if (!WatchTarget.relay(this) || isQuery(cmd)) { direct(cmd); return; }
+        final android.content.Context c = getApplicationContext();
+        relayPool.execute(() -> {
+            boolean ok = false;
+            try {
+                java.util.List<com.google.android.gms.wearable.Node> nodes = com.google.android.gms.tasks.Tasks.await(
+                        com.google.android.gms.wearable.Wearable.getNodeClient(c).getConnectedNodes(), 2, java.util.concurrent.TimeUnit.SECONDS);
+                for (com.google.android.gms.wearable.Node n : nodes) {
+                    byte[] r = com.google.android.gms.tasks.Tasks.await(com.google.android.gms.wearable.Wearable.getMessageClient(c)
+                            .sendRequest(n.getId(), WatchTarget.PATH_CMD, cmd.getBytes()), 3, java.util.concurrent.TimeUnit.SECONDS);
+                    if (r != null && "ok".equals(new String(r))) { ok = true; break; }
+                }
+            } catch (Exception e) { Log.w(TAG, "relay failed (" + cmd + "): " + e); }
+            if (!ok) main.post(() -> direct(cmd));
+        });
+    }
+    /** Asks for this watch's own screens (playlists, queue pages, camera stills): answered on our own link. */
+    private static boolean isQuery(String c) {
+        return c.equals("list") || c.startsWith("list:") || c.equals("queue") || c.startsWith("queue:") || c.startsWith("camble:");
+    }
+    private final java.util.concurrent.ExecutorService relayPool = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private void direct(String cmd) { if (ble != null) ble.send(cmd); }
     public String state() { return lastState; }
     public String playlists() { return lastPlaylists; }
     public byte[] latestStill() { return lastStill; }

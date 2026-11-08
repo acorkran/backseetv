@@ -54,6 +54,35 @@ public class BleClient {
 
     public boolean isConnected() { return connected; }
 
+    // Which TVs we may connect to (null = any): set from what the phone says (WatchTarget). Every player
+    // puts "<id>:<name>" in its scan response under manufacturer id 0xFFFF (the phone's BleServer.MFG_ID).
+    private volatile java.util.Set<String> allowed;
+    private volatile String connectedId;
+    static final int MFG_ID = 0xFFFF;
+    public void setAllowed(java.util.Set<String> ids) {
+        allowed = ids;
+        String cur = connectedId;
+        if (ids != null && gatt != null && (cur == null || !ids.contains(cur))) {   // linked to the wrong TV now
+            Log.i(TAG, "dropping " + cur + ": the phone points at " + ids);
+            BluetoothGatt g = gatt;
+            gatt = null; connected = false; discovered = false; cmdCh = null; stateCh = null;
+            try { g.disconnect(); g.close(); } catch (Exception ignored) {}
+            status("switching TV…");
+            if (!stopped) retryLater(500);
+        }
+    }
+    private static String tvId(ScanResult r) {
+        try {
+            android.bluetooth.le.ScanRecord rec = r.getScanRecord();
+            byte[] d = rec != null ? rec.getManufacturerSpecificData(MFG_ID) : null;
+            if (d == null || d.length == 0) return null;
+            String s = new String(d, "UTF-8");
+            int c = s.indexOf(':');
+            String id = c > 0 ? s.substring(0, c) : s;
+            return id.isEmpty() ? null : id;
+        } catch (Exception e) { return null; }
+    }
+
     public void start() {
         stopped = false;
         startHealth();
@@ -77,6 +106,10 @@ public class BleClient {
         scanCb = new ScanCallback() {
             @Override public void onScanResult(int t, ScanResult r) {
                 if (connected || gatt != null) return;   // already connecting (e.g. a direct 133 retry)
+                String id = tvId(r);
+                java.util.Set<String> ok = allowed;
+                if (ok != null && (id == null || !ok.contains(id))) return;   // not a TV the phone pointed us at
+                connectedId = id;
                 scanning = false;
                 status("connecting...");
                 try { scanner.stopScan(this); } catch (Exception ignored) {}

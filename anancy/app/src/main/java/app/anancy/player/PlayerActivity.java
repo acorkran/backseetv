@@ -76,6 +76,7 @@ public class PlayerActivity extends Activity {
         PlayerActivity prior = sRef.get();   // a HOME launch can start a SECOND player in its own task
         if (prior != null && prior != this) try { prior.finish(); } catch (Exception ignored) {}
         sRef = new WeakReference<>(this);
+        app.anancy.net.WatchLink.publishPlayer(this);   // a watch paired to this phone drives this phone only
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
 

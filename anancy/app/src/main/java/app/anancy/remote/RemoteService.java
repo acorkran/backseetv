@@ -530,6 +530,7 @@ public class RemoteService extends Service {
         if (ble != null) { ble.setDrive(sel); ble.setStateId(rep); ble.start(); }
         if (wifi != null) wifi.setTarget(rep);
         if (wifi == null) startWifi(null, 0);   // Wi-Fi is needed for Wi-Fi-only screens (a TV) + representative state
+        publishWatchTarget();
     }
     /** Friendly name of the representative player, or a count when several are selected. */
     public String connectedTablet() {
@@ -543,7 +544,15 @@ public class RemoteService extends Service {
     }
     private void noteSeen(String id, String name) {
         if (id == null || id.isEmpty()) return;
-        seenTablets.put(id, name == null || name.isEmpty() ? id : name);
+        boolean isNew = seenTablets.put(id, name == null || name.isEmpty() ? id : name) == null;
+        if (isNew) publishWatchTarget();   // "all screens" just grew: the watch may now need the relay
+    }
+    /** Aim the paired watch at whatever this remote drives (see WatchLink). */
+    private void publishWatchTarget() {
+        if (local) return;
+        java.util.Set<String> sel = targets();
+        int screens = sel.isEmpty() ? seenTablets.size() : sel.size();
+        app.anancy.net.WatchLink.publishRemote(this, sel, isSyncGroup() || screens > 1);
     }
 
     private void startLinks() {
@@ -565,6 +574,7 @@ public class RemoteService extends Service {
         if (!"ble".equals(connMode)) applyConnMode();   // hotspot coordination for the chosen tier
         if (wifi == null) startWifi(null, 0);            // Wi-Fi always up: Wi-Fi-only screens (a TV) + representative state
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
+        publishWatchTarget();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
         main.postDelayed(() -> { if (ble != null && !ble.isConnected() && !"ble".equals(connMode)) startWifi(null, 0); }, 7000);
     }

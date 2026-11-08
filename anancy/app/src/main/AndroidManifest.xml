@@ -128,6 +128,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- watch commands relayed through the phone remote (net/WatchLink) -->
+        <service android:name=".net.WatchCmdService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED"/>
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/anancy/cmd"/>
+            </intent-filter>
+        </service>
         <!-- phone connection service: BLE primary + wifi fallback -->
         <service android:name=".remote.RemoteService"
             android:exported="false"
