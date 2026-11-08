@@ -54,8 +54,8 @@ public class AboutActivity extends Activity {
         tier("3 · Remote & Android Auto", 0xFFD8A657, "Install BackSeat TV on a phone or watch and pick \"Remote\".", new String[]{
                 "A full phone remote: now-playing, playlists, the play queue, library browsing, camera check-in, all the settings",
                 "A Galaxy Watch remote",
-                "The in-car Android Auto dash — camera on the album art, live progress, and the key controls",
-                "Controls any BackSeat TV TV over Bluetooth (works anywhere) or Wi-Fi (adds live camera + fast browsing)",
+                "The in-car Android Auto dash — BackSeat Glance on the album art, live progress, and the key controls",
+                "Controls any BackSeat TV TV over Bluetooth (works anywhere) or Wi-Fi (adds a faster BackSeat Glance + fast browsing)",
         });
 
         Button back = new Button(this); back.setAllCaps(false); back.setText("Back"); back.setTextSize(17);

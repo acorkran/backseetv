@@ -43,8 +43,8 @@ public class SettingsActivity extends Activity {
     static final String DO_CMD = "adb shell dpm set-device-owner app.anancy/.AdminReceiver";
     static final String[][] CONN_MODES = {
             {"ble", "Bluetooth only", "Remotes control the TV over Bluetooth: play, playlists, queue, volume, light, sleep, power, and a still image every second or so."},
-            {"tv_hotspot", "TV hotspot", "The TV hosts its own Wi-Fi hotspot (on automatically at this level) and remotes join it. Adds live camera + fast library browsing. Works in the car."},
-            {"remote_hotspot", "Remote hotspot", "A phone hosts the hotspot and hands the details to the TV over Bluetooth (or you scan its QR here). Adds live camera + fast library browsing."},
+            {"tv_hotspot", "TV hotspot", "The TV hosts its own Wi-Fi hotspot (on automatically at this level) and remotes join it. Adds a faster BackSeat Glance + fast library browsing. Works in the car."},
+            {"remote_hotspot", "Remote hotspot", "A phone hosts the hotspot and hands the details to the TV over Bluetooth (or you scan its QR here). Adds a faster BackSeat Glance + fast library browsing."},
             {"shared", "Shared Wi-Fi", "TV and remotes on the same network, e.g. home Wi-Fi. Join the TV by scanning a Wi-Fi QR, or a remote sends the details."}};
     private LinearLayout col;
     private TextView status;
@@ -70,53 +70,44 @@ public class SettingsActivity extends Activity {
         DevicePolicyManager dpmTop = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
         final boolean owner = dpmTop != null && dpmTop.isDeviceOwnerApp(getPackageName());
 
-        // --- Unlock gesture (DEVICE-OWNER gated) -----------------------------------------------
+        // --- Unlock gesture ------------------------------------------------------------------------
+        // Not device-owner gated any more: a normal install can pin the screen (below), and then the
+        // gesture + PIN are how an adult gets back out, exactly as on the kiosk.
         section("Unlock gesture");
-        if (owner) {
-            intDropdown("Finger contact points", "anancy_esc_fingers", 4, new int[]{2, 3, 4, 5}, 1);
-            strDropdown("Type", "anancy_esc_mode", "taps", new String[]{"taps", "swipe"}, new String[]{"Taps", "Swipe"}, null);
-            intDropdown("Taps needed", "anancy_esc_taps", 4, new int[]{2, 3, 4, 5, 6}, 1);
-            intDropdown("Within (seconds)", "anancy_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
-            strDropdown("Swipe direction", "anancy_esc_dir", "none",
-                    new String[]{"none", "up", "down", "left", "right"},
-                    new String[]{"Any direction", "Up", "Down", "Left", "Right"}, null);
-            note("Default: 4 four-finger taps within 3 seconds, anywhere on screen. Taps/within/points apply "
-                    + "to both modes; swipe direction only applies in Swipe mode (Any direction = any way you drag).");
-        } else {
-            dimRow("Fingers", String.valueOf(Cfg.getInt(this, "anancy_esc_fingers", 4)));
-            dimRow("Type", Cfg.getStr(this, "anancy_esc_mode", "taps"));
-            dimRow("Taps needed", String.valueOf(Cfg.getInt(this, "anancy_esc_taps", 4)));
-            dimRow("Within (seconds)", String.valueOf(Cfg.getInt(this, "anancy_esc_window_ms", 3000) / 1000));
-            dimRow("Swipe direction", Cfg.getStr(this, "anancy_esc_dir", "up"));
-            gatedNotice();
-        }
+        intDropdown("Finger contact points", "anancy_esc_fingers", 4, new int[]{2, 3, 4, 5}, 1);
+        strDropdown("Type", "anancy_esc_mode", "taps", new String[]{"taps", "swipe"}, new String[]{"Taps", "Swipe"}, null);
+        intDropdown("Taps needed", "anancy_esc_taps", 4, new int[]{2, 3, 4, 5, 6}, 1);
+        intDropdown("Within (seconds)", "anancy_esc_window_ms", 3000, new int[]{2000, 3000, 5000, 8000}, 1000);
+        strDropdown("Swipe direction", "anancy_esc_dir", "none",
+                new String[]{"none", "up", "down", "left", "right"},
+                new String[]{"Any direction", "Up", "Down", "Left", "Right"}, null);
+        note("Default: 4 four-finger taps within 3 seconds, anywhere on screen. Taps/within/points apply "
+                + "to both modes; swipe direction only applies in Swipe mode (Any direction = any way you drag).");
 
-        // --- PIN + kiosk (DEVICE-OWNER gated) --------------------------------------------------
+        // --- PIN + kiosk / screen pinning ------------------------------------------------------------
         section("Lock");
-        if (owner) {
-            final String style = Cfg.getStr(this, "anancy_unlock_style", "challenge");
-            strDropdown("Unlock method", "anancy_unlock_style", "challenge",
-                    new String[]{"challenge", "pin", "pattern"}, new String[]{"Randomized PIN", "Preset PIN", "Pattern (experimental)"},
-                    this::postRebuild);
-            if ("challenge".equals(style)) {   // sub-settings only when the shown-on-screen random code is used
-                intDropdown("PIN length", "anancy_chal_len", 6, new int[]{4, 5, 6, 7, 8}, 1);
-                intDropdown("Time to enter (seconds)", "anancy_chal_secs", 30, new int[]{15, 30, 45, 60}, 1);
-                intDropdown("Attempts allowed", "anancy_chal_tries", 3, new int[]{1, 2, 3, 5}, 1);
-            }
-            actionRow("Admin PIN", "change", this::changePin);
-            if ("pattern".equals(style))
-                actionRow("Unlock pattern", Cfg.getStr(this, "anancy_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
-            boolRow("Kiosk lock (device owner)", "anancy_kiosk", 0);
-            note("Unlock method: Randomized PIN = copy a random code shown on screen, within the time + attempts you set "
-                    + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
-                    + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
-                    + "set it below, falls back to the PIN pad until you do). Kiosk lock pins BackSeat TV as home + blocks "
-                    + "Home/Back/Recents (next launch).");
-        } else {
-            dimRow("Admin PIN", "•••• ");
-            dimRow("Kiosk lock (device owner)", Cfg.getInt(this, "anancy_kiosk", 0) == 1 ? "on" : "off");
-            gatedNotice();
+        final String style = Cfg.getStr(this, "anancy_unlock_style", "challenge");
+        strDropdown("Unlock method", "anancy_unlock_style", "challenge",
+                new String[]{"challenge", "pin", "pattern"}, new String[]{"Randomized PIN", "Preset PIN", "Pattern (experimental)"},
+                this::postRebuild);
+        if ("challenge".equals(style)) {   // sub-settings only when the shown-on-screen random code is used
+            intDropdown("PIN length", "anancy_chal_len", 6, new int[]{4, 5, 6, 7, 8}, 1);
+            intDropdown("Time to enter (seconds)", "anancy_chal_secs", 30, new int[]{15, 30, 45, 60}, 1);
+            intDropdown("Attempts allowed", "anancy_chal_tries", 3, new int[]{1, 2, 3, 5}, 1);
         }
+        actionRow("Admin PIN", "change", this::changePin);
+        if ("pattern".equals(style))
+            actionRow("Unlock pattern", Cfg.getStr(this, "anancy_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
+        boolRow(owner ? "Kiosk lock (device owner)" : "Pin the screen", "anancy_kiosk", 0);
+        note("Unlock method: Randomized PIN = copy a random code shown on screen, within the time + attempts you set "
+                + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
+                + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
+                + "set it below, falls back to the PIN pad until you do)."
+                + (owner ? " Kiosk lock pins BackSeat TV as home + blocks Home/Back/Recents (next launch)." : "")
+                + (owner ? "" : "\n\nPin the screen (no device owner needed): Android's own app pinning. Home, Recents and "
+                + "the notification shade stop working while the show is on; the unlock gesture above gets you out. Android "
+                + "shows an \"App is pinned\" note the first time. Holding Back + Recents also unpins, so give the phone "
+                + "a screen lock: Android then asks for the phone's PIN after any unpin, including Exit from the admin menu."));
 
         // --- Playback --------------------------------------------------------------------------
         section("Playback");
@@ -126,6 +117,12 @@ public class SettingsActivity extends Activity {
             int n = loop ? 0 : 1;
             Cfg.put(this, "anancy_loop", n); loopback("/loop?on=" + n); postRebuild();
         });
+        final boolean lk = Cfg.getInt(this, "anancy_lock_volkeys", 0) == 1;
+        actionRow("Lock the volume buttons", lk ? "☑ locked" : "☐ off", () -> {
+            Cfg.put(this, "anancy_lock_volkeys", lk ? 0 : 1); postRebuild();
+        });
+        note("Locked: the volume buttons on this screen do nothing, so a child holding it can't turn it up to full "
+                + "or off. Remotes still change the volume.");
         note("Loop forever keeps the queue going round; stop turns the TV off after the last item, like the sleep timer. Shuffle is per queue — toggle it from a remote's Up next screen.");
 
         // --- Connection ------------------------------------------------------------------------
@@ -303,25 +300,6 @@ public class SettingsActivity extends Activity {
         v.setText(labelFor(Cfg.getStr(this, key, def), vals, labels));
         v.setOnClickListener(x -> new AlertDialog.Builder(this).setTitle(label)
                 .setItems(labels, (d, w) -> { Cfg.put(this, key, vals[w]); v.setText(labels[w]); if (onChange != null) onChange.run(); }).show());
-    }
-    /** A greyed, non-interactive row (a device-owner feature at base level): shows the value, no click. */
-    private void dimRow(String label, String value) {
-        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL); row.setBackgroundColor(0xFF15181C); row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
-        TextView l = new TextView(this); l.setText("🔒  " + label); l.setTextColor(0xFF5A6470); l.setTextSize(16);
-        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView vv = new TextView(this); vv.setText(value); vv.setTextColor(0xFF4A525C); vv.setTextSize(15); row.addView(vv);
-        col.addView(row);
-    }
-    /** Inline notice under a gated section: tapping opens the About / feature-levels page. */
-    private void gatedNotice() {
-        TextView t = new TextView(this);
-        t.setText("🔒  That feature requires device-owner setup.  Tap here to find out more.");
-        t.setTextColor(0xFFE0A63D); t.setTextSize(13); t.setPadding(dp(6), dp(6), dp(6), dp(10)); t.setClickable(true);
-        t.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
-        col.addView(t);
     }
     private void boolRow(final String label, final String key, final int def) {
         final Button v = rowShell(label);

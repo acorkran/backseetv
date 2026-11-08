@@ -77,8 +77,8 @@ public class ControlServer {
                 case "/play":      PlayerActivity.wakeScreen(); ctrl.play();  body = ok(); break;
                 case "/pause":     ctrl.pause(); body = ok(); break;
                 case "/playpause": PlayerActivity.wakeScreen(); ctrl.toggle(); body = ok(); break;
-                case "/next":      PlayerActivity.wakeScreen(); ctrl.next();  body = ok(); break;
-                case "/prev":      PlayerActivity.wakeScreen(); ctrl.prev();  body = ok(); break;
+                case "/next": { boolean off = PlayerActivity.isOff(); PlayerActivity.wakeScreen(); ctrl.next(); if (off) ctrl.play(); body = ok(); break; }
+                case "/prev": { boolean off = PlayerActivity.isOff(); PlayerActivity.wakeScreen(); ctrl.prev(); if (off) ctrl.play(); body = ok(); break; }
                 case "/seeknear":  ctrl.seekNearEnd(); body = ok(); break;
                 case "/vol": {
                     String v = param(q, "v"), d = param(q, "d");

@@ -950,11 +950,11 @@ public class RemoteActivity extends Activity {
         buildTargetRows(col, svc);
     }
     static final String[][] CONN_MODES = {
-            {"auto", "Automatic", "Bluetooth for the controls, Wi-Fi raised only for what needs it: live camera, file imports, the car dash. This phone hosts, so the TV joins silently with no prompts."},
+            {"auto", "Automatic", "Bluetooth for the controls, Wi-Fi raised only for what needs it: a faster BackSeat Glance, file imports, the car dash. This phone hosts, so the TV joins silently with no prompts."},
             {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
-            {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds live camera + fast library browsing."},
-            {"remote_hotspot", "Remote hotspot", "This remote hosts the hotspot and the TV joins it. Adds live camera + fast library browsing."},
-            {"shared", "Shared Wi-Fi", "TV and remotes on the same network (home Wi-Fi). Adds live camera + fast library browsing."}};
+            {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds a faster BackSeat Glance + fast library browsing."},
+            {"remote_hotspot", "Remote hotspot", "This remote hosts the hotspot and the TV joins it. Adds a faster BackSeat Glance + fast library browsing."},
+            {"shared", "Shared Wi-Fi", "TV and remotes on the same network (home Wi-Fi). Adds a faster BackSeat Glance + fast library browsing."}};
     private volatile String tvReach = "checking…";
     private void openConnection() {
         if (connView != null) return;
@@ -1114,7 +1114,7 @@ public class RemoteActivity extends Activity {
                     chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
                     connActions.addView(chk);
                 }
-                connActions.addView(ui.noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. Live camera + fast library browsing need a Wi-Fi level."));
+                connActions.addView(ui.noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. A faster BackSeat Glance + fast library browsing need a Wi-Fi level."));
             }
         }
     }
@@ -1238,7 +1238,6 @@ public class RemoteActivity extends Activity {
         settingsTitle = overlayTitleMenu(settingsView, settingsTargetNames() + " settings", this::showSettingsTargetMenu);
         // Only worth a line when it changes what you can DO: a padlock on a screen that isn't set up
         // as a kiosk. Device-owner options belong to the SCREEN, never to the remote holding it.
-        if (!cfgOwner) col.addView(ui.noteText("Locked rows need device-owner setup ON THAT SCREEN (tap a 🔒 notice to learn more)."));
 
         sSec(col, "Library");
         // The only rescan in the app used to be the one after an upload, so media copied onto the
@@ -1251,6 +1250,9 @@ public class RemoteActivity extends Activity {
         { final boolean loop = cfgI("anancy_loop", 1) == 1;
           Button b = setRow(col, "When the queue ends"); b.setText(loop ? "loop forever" : "stop (TV off)");
           b.setOnClickListener(v -> { setCfg("anancy_loop", cfgI("anancy_loop", 1) == 1 ? "0" : "1"); renderSettings(); }); }
+        { final boolean lk = cfgI("anancy_lock_volkeys", 0) == 1;
+          Button b = setRow(col, "Lock the TV's volume buttons"); b.setText(lk ? "☑ locked" : "☐ off");
+          b.setOnClickListener(v -> { setCfg("anancy_lock_volkeys", lk ? "0" : "1"); renderSettings(); }); }
 
         sSec(col, "Connection");
         { String cur = cfgS("anancy_conn", "ble"); String label = cur;
@@ -1262,49 +1264,34 @@ public class RemoteActivity extends Activity {
         cfgStrCycle(col, "Sound", "anancy_playmode_sound", new String[]{"muted", "wav", "video"}, new String[]{"Muted", "Letter sounds", "Video sound"});
 
         sSec(col, "Unlock gesture");
-        if (cfgOwner) {
-            cfgIntCycle(col, "Fingers", "anancy_esc_fingers", new int[]{2, 3, 4, 5}, 1);
-            cfgStrCycle(col, "Type", "anancy_esc_mode", new String[]{"taps", "swipe"}, new String[]{"taps", "swipe"});
-            cfgIntCycle(col, "Taps needed", "anancy_esc_taps", new int[]{2, 3, 4, 5, 6}, 1);
-            cfgIntCycle(col, "Within (seconds)", "anancy_esc_window_ms", new int[]{2000, 3000, 5000, 8000}, 1000);
-            cfgStrCycle(col, "Swipe direction", "anancy_esc_dir", new String[]{"up", "down", "left", "right"}, new String[]{"up", "down", "left", "right"});
-        } else {
-            sDim(col, "Fingers", String.valueOf(cfgI("anancy_esc_fingers", 4)));
-            sDim(col, "Type", cfgS("anancy_esc_mode", "taps"));
-            sDim(col, "Taps needed", String.valueOf(cfgI("anancy_esc_taps", 4)));
-            sDim(col, "Within (seconds)", String.valueOf(cfgI("anancy_esc_window_ms", 3000) / 1000));
-            sDim(col, "Swipe direction", cfgS("anancy_esc_dir", "up"));
-            sGated(col);
-        }
+        // a non-owner screen can pin itself (Lock below), so its way out matters as much
+        cfgIntCycle(col, "Fingers", "anancy_esc_fingers", new int[]{2, 3, 4, 5}, 1);
+        cfgStrCycle(col, "Type", "anancy_esc_mode", new String[]{"taps", "swipe"}, new String[]{"taps", "swipe"});
+        cfgIntCycle(col, "Taps needed", "anancy_esc_taps", new int[]{2, 3, 4, 5, 6}, 1);
+        cfgIntCycle(col, "Within (seconds)", "anancy_esc_window_ms", new int[]{2000, 3000, 5000, 8000}, 1000);
+        cfgStrCycle(col, "Swipe direction", "anancy_esc_dir", new String[]{"up", "down", "left", "right"}, new String[]{"up", "down", "left", "right"});
 
         sSec(col, "Lock");
         // How the adult unlocks (to the menu / settings / exit). Randomized PIN = a timed code shown on
         // screen you copy (nothing to remember); Preset PIN = your own Admin PIN (not shown); Pattern =
         // a set pattern (drawn on the TV). Vary it to keep a clever toddler guessing.
         final String[] uv = {"challenge", "pin", "pattern"}, ul = {"Randomized PIN", "Preset PIN", "Pattern"};
-        if (cfgOwner) {
-            final String style = cfgS("anancy_unlock_style", "challenge");
-            Button mrow = setRow(col, "Method"); mrow.setText(sLabel(style, uv, ul));
-            mrow.setOnClickListener(v -> {
-                String cur = cfgS("anancy_unlock_style", "challenge"), nx = uv[0];
-                for (int i = 0; i < uv.length; i++) if (uv[i].equals(cur)) { nx = uv[(i + 1) % uv.length]; break; }
-                setCfg("anancy_unlock_style", nx); renderSettings();   // re-render so the sub-settings show/hide
-            });
-            if ("challenge".equals(style)) {   // shown-on-screen random code -> expose its parameters
-                cfgIntCycle(col, "PIN length", "anancy_chal_len", new int[]{4, 5, 6, 7, 8}, 1);
-                cfgIntCycle(col, "Time to enter (s)", "anancy_chal_secs", new int[]{15, 30, 45, 60}, 1);
-                cfgIntCycle(col, "Attempts", "anancy_chal_tries", new int[]{1, 2, 3, 5}, 1);
-            }
-            Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
-            final boolean k = cfgI("anancy_kiosk", 0) == 1;
-            Button kb = setRow(col, "Kiosk lock"); kb.setText(k ? "on" : "off");
-            kb.setOnClickListener(v -> { setCfg("anancy_kiosk", cfgI("anancy_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
-        } else {
-            sDim(col, "Method", sLabel(cfgS("anancy_unlock_style", "challenge"), uv, ul));
-            sDim(col, "Admin PIN", "••••");
-            sDim(col, "Kiosk lock", cfgI("anancy_kiosk", 0) == 1 ? "on" : "off");
-            sGated(col);
+        final String style = cfgS("anancy_unlock_style", "challenge");
+        Button mrow = setRow(col, "Method"); mrow.setText(sLabel(style, uv, ul));
+        mrow.setOnClickListener(v -> {
+            String cur = cfgS("anancy_unlock_style", "challenge"), nx = uv[0];
+            for (int i = 0; i < uv.length; i++) if (uv[i].equals(cur)) { nx = uv[(i + 1) % uv.length]; break; }
+            setCfg("anancy_unlock_style", nx); renderSettings();   // re-render so the sub-settings show/hide
+        });
+        if ("challenge".equals(style)) {   // shown-on-screen random code -> expose its parameters
+            cfgIntCycle(col, "PIN length", "anancy_chal_len", new int[]{4, 5, 6, 7, 8}, 1);
+            cfgIntCycle(col, "Time to enter (s)", "anancy_chal_secs", new int[]{15, 30, 45, 60}, 1);
+            cfgIntCycle(col, "Attempts", "anancy_chal_tries", new int[]{1, 2, 3, 5}, 1);
         }
+        Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
+        final boolean k = cfgI("anancy_kiosk", 0) == 1;
+        Button kb = setRow(col, cfgOwner ? "Kiosk lock" : "Pin the screen"); kb.setText(k ? "on" : "off");
+        kb.setOnClickListener(v -> { setCfg("anancy_kiosk", cfgI("anancy_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
 
         Button about = ui.rowBtn("About BackSeat TV & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
         Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
@@ -1363,24 +1350,6 @@ public class RemoteActivity extends Activity {
         });
     }
     private static String sLabel(String v, String[] vals, String[] labels) { for (int i = 0; i < vals.length; i++) if (vals[i].equals(v)) return labels[i]; return v; }
-    private void sDim(LinearLayout col, String label, String value) {
-        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable g = new GradientDrawable(); g.setColor(0xFF151A20); g.setCornerRadius(dp(12)); row.setBackground(g);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(0, dp(3), 0, dp(3)); row.setLayoutParams(lp);
-        TextView l = new TextView(this); l.setText("🔒  " + label); l.setTextColor(0xFF5A6470); l.setTextSize(15);
-        row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView vv = new TextView(this); vv.setText(value); vv.setTextColor(0xFF4A525C); vv.setTextSize(14); row.addView(vv);
-        col.addView(row);
-    }
-    private void sGated(LinearLayout col) {
-        TextView t = new TextView(this);
-        t.setText("🔒  That feature requires device-owner setup.  Tap here to find out more.");
-        t.setTextColor(WARN); t.setTextSize(13); t.setPadding(dp(6), dp(6), dp(6), dp(8)); t.setClickable(true);
-        t.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
-        col.addView(t);
-    }
 
     // --- check-in: STILL IMAGE over BLE (<1fps, "not a feed") OR LIVE view over Wi-Fi (/live MJPEG) ---
     private volatile boolean liveUp = false;   // the MJPEG loop has taken over from the Bluetooth stills
@@ -1396,7 +1365,7 @@ public class RemoteActivity extends Activity {
 
         TextView h = new TextView(this);
         final TextView head = h;
-        h.setText(wifi ? "Live view" : "Check-in — still image, refreshes about once a second");
+        h.setText(wifi ? "BackSeat Glance" : "BackSeat Glance — still image, refreshes about once a second");
         h.setTextColor(SUB); h.setTextSize(13); h.setGravity(Gravity.CENTER);
         h.setPadding(0, 0, 0, dp(12));
         col.addView(h);
@@ -1437,7 +1406,7 @@ public class RemoteActivity extends Activity {
                 if (!ip.isEmpty() && reachable(ip)) {
                     liveUp = true;                       // ends the Bluetooth still loop
                     send("camble:off"); send("snap:on");   // drop the BLE push, keep the camera running
-                    main.post(() -> { head.setText("Live view"); status.setText("going live…"); });
+                    main.post(() -> { head.setText("BackSeat Glance"); status.setText("switching to Wi-Fi…"); });
                     startLive(ip + ":8090", img, status);
                     return;
                 }
@@ -1482,7 +1451,7 @@ public class RemoteActivity extends Activity {
                     }
                 } catch (Exception e) {
                     if (++fails >= 3) {   // give up on live -> fall back to BLE stills
-                        main.post(() -> status.setText("no live view — showing stills over Bluetooth"));
+                        main.post(() -> status.setText("no Wi-Fi — showing stills over Bluetooth"));
                         liveUp = false; send("camble:on"); startBleStills(img, status); return;
                     }
                     main.post(() -> status.setText("connecting live…"));

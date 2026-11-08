@@ -231,8 +231,8 @@ public class BleServer {
             case "play": PlayerActivity.wakeScreen(); ctrl.play(); break;
             case "pause": ctrl.pause(); break;
             case "playpause": PlayerActivity.wakeScreen(); ctrl.toggle(); break;
-            case "next": PlayerActivity.wakeScreen(); ctrl.next(); break;
-            case "prev": PlayerActivity.wakeScreen(); ctrl.prev(); break;
+            case "next": { boolean off = PlayerActivity.isOff(); PlayerActivity.wakeScreen(); ctrl.next(); if (off) ctrl.play(); break; }
+            case "prev": { boolean off = PlayerActivity.isOff(); PlayerActivity.wakeScreen(); ctrl.prev(); if (off) ctrl.play(); break; }
             case "volup": ctrl.nudge(0.1f); break;
             case "voldown": ctrl.nudge(-0.1f); break;
             case "mute": ctrl.setMuted(!ctrl.isMuted()); break;   // toggle the persisted player mute (never zeroes system volume)

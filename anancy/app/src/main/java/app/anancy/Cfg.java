@@ -29,6 +29,7 @@ public class Cfg {
             {"anancy_name",          "str", ""},     // this player's friendly name ("" = fall back to the model); see Identity
             {"anancy_flash_ms",      "int", "3000"},
             {"anancy_loop",          "int", "1"},
+            {"anancy_lock_volkeys",  "int", "0"},   // 1 = the TV's own volume buttons do nothing (remotes still can)
             {"anancy_conn",          "str", "ble"},
             {"anancy_playmode_sound","str", "muted"},
             {"anancy_esc_fingers",   "int", "4"},

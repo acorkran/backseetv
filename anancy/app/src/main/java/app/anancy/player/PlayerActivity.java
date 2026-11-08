@@ -244,10 +244,25 @@ public class PlayerActivity extends Activity {
         WebAudioBridge.setGain(0f);                       // silence the playground clips
         PlayerController.get().overrideShowAudio(null);   // restore the persisted mute
     }
+    /** True while the TV is "off" (napped). Next/Prev from off should land on a PLAYING episode, not a
+        paused frame, because napping paused the player. */
+    public static boolean isOff() { PlayerActivity a = sRef.get(); return a != null && a.napped; }
     /** Any transport command un-blacks the screen so you never get audio-with-black-screen. */
     public static void wakeScreen() {
         final PlayerActivity a = sRef.get();
-        if (a != null) a.main.post(() -> { if (a.napped) a.setNapScreen(false); else a.wakeDisplay(); });
+        if (a != null) a.main.post(() -> {
+            if (a.napped) a.setNapScreen(false); else a.wakeDisplay();
+            if (a.pausedByLeaving || !a.visible) a.bringToFront();
+        });
+    }
+    /** On a normal install someone can leave the player (Home). A remote Play after that must bring the
+        show back, not start it playing unseen behind the launcher or the lock screen. */
+    private void bringToFront() {
+        try {
+            setShowWhenLocked(true);
+            startActivity(new Intent(this, PlayerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        } catch (Exception e) { Log.w(TAG, "could not bring the player back", e); }
     }
     /** Light a physically-off display (physical power button / doze). FLAG_KEEP_SCREEN_ON keeps it on
         afterwards. Samsung cancels this unless the app may post notifications (self-granted in enterKiosk);
@@ -347,6 +362,36 @@ public class PlayerActivity extends Activity {
         }, dur);
     }
 
+    /** Leaving the player on a normal (unlocked) install -- Home, Recents, a notification -- pauses the
+        show, the way any video app does, instead of carrying on unseen in the background. It picks up
+        again on return. The LOCKED kiosk is left alone: nothing there can leave, and its screen-off
+        path (nap) already pauses on its own. */
+    private boolean pausedByLeaving = false;
+    private boolean visible = false;
+    @Override protected void onStop() {
+        super.onStop();
+        visible = false;
+        if (isChangingConfigurations() || napped || player == null || !player.getPlayWhenReady()) return;
+        if (lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_LOCKED) return;
+        pausedByLeaving = true;
+        Log.i(TAG, "left the player unlocked -> pause");
+        PlayerController.get().pause();
+    }
+    @Override protected void onStart() {
+        super.onStart();
+        visible = true;
+        if (!pausedByLeaving) return;
+        pausedByLeaving = false;
+        Log.i(TAG, "back in the player -> resume" + (napped ? " (no: napped)" : ""));
+        if (!napped) PlayerController.get().play();
+    }
+    private int lockTaskState() {
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            return am.getLockTaskModeState();
+        } catch (Exception e) { return android.app.ActivityManager.LOCK_TASK_MODE_NONE; }
+    }
+
     @Override protected void onResume() {
         super.onResume();
         enterKiosk();
@@ -372,8 +417,8 @@ public class PlayerActivity extends Activity {
         TextView d = new TextView(this);
         d.setText(perm
                 ? "No videos found. Point BackSeat TV at the folder your shows are in \u2014 one sub-folder per show."
-                : "The shows are on the SD card, and BackSeat TV needs \"All files access\" before it can see any "
-                  + "of it. Grant that and the library appears straight away.");
+                : "BackSeat TV needs \"All files access\" before it can see your shows, wherever they are "
+                  + "(SD card or this device's own storage). Grant that and the library appears straight away.");
         d.setTextColor(0xFF9AA4B2); d.setTextSize(15); d.setGravity(Gravity.CENTER);
         d.setPadding(0, dp(12), 0, dp(24));
         emptyState.addView(d);
@@ -483,8 +528,9 @@ public class PlayerActivity extends Activity {
         final TextView disp = new TextView(this);
         disp.setTextColor(Color.WHITE); disp.setTextSize(22); disp.setGravity(Gravity.CENTER);
         disp.setPadding(0, dp(6), 0, dp(14)); col.addView(disp);
+        final LinearLayout keys = new LinearLayout(this); keys.setOrientation(LinearLayout.VERTICAL);
 
-        final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
+        final AlertDialog dlg = new AlertDialog.Builder(this).setView(padLayout(col, keys)).setCancelable(true)
                 .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); })
                 .create();
 
@@ -521,10 +567,31 @@ public class PlayerActivity extends Activity {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
                 lp.setMargins(dp(4), dp(4), dp(4), dp(4)); rowv.addView(b, lp);
             }
-            col.addView(rowv);
+            keys.addView(rowv);
         }
         dlg.setOnDismissListener(d -> main.removeCallbacks(tick[0]));
-        status.run(); main.postDelayed(tick[0], 1000); dlg.show();
+        status.run(); main.postDelayed(tick[0], 1000); dlg.show(); widenIfShort(dlg);
+    }
+    /** A phone on its side is only ~360dp tall: stacked under the code, the keypad's bottom rows
+        (7 8 9 / Clear 0 ⌫) fell off the dialog, so a code with a 0 could never be typed. On a short
+        screen the keypad sits beside the code instead; on a tablet it stays underneath. */
+    private View padLayout(LinearLayout header, LinearLayout keys) {
+        boolean shortScreen = getResources().getConfiguration().screenHeightDp < 560;
+        if (!shortScreen) { header.addView(keys); return header; }
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackgroundColor(0xFF101418);
+        row.setPadding(dp(8), dp(8), dp(8), dp(8));
+        header.setGravity(Gravity.CENTER);
+        row.addView(header, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(keys, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return row;
+    }
+    /** The side-by-side pad needs more than the default dialog width. */
+    private void widenIfShort(AlertDialog dlg) {
+        if (getResources().getConfiguration().screenHeightDp >= 560 || dlg.getWindow() == null) return;
+        int w = Math.min(getResources().getDisplayMetrics().widthPixels * 9 / 10, dp(760));
+        dlg.getWindow().setLayout(w, ViewGroup.LayoutParams.WRAP_CONTENT);
     }
     private static int clampInt(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -546,9 +613,10 @@ public class PlayerActivity extends Activity {
         disp.setTextColor(Color.WHITE); disp.setTextSize(24); disp.setGravity(Gravity.CENTER);
         disp.setPadding(0, dp(12), 0, dp(24));
         col.addView(disp);
+        final LinearLayout keys = new LinearLayout(this); keys.setOrientation(LinearLayout.VERTICAL);
 
         final AlertDialog dlg = new AlertDialog.Builder(this)
-                .setView(col).setCancelable(true)
+                .setView(padLayout(col, keys)).setCancelable(true)
                 .setOnCancelListener(d -> { pinShowing = false; setBrightness(napped ? 0.02f : restore); })
                 .create();
 
@@ -575,9 +643,9 @@ public class PlayerActivity extends Activity {
                 lp.setMargins(dp(4), dp(4), dp(4), dp(4));
                 rowv.addView(b, lp);
             }
-            col.addView(rowv);
+            keys.addView(rowv);
         }
-        dlg.show();
+        dlg.show(); widenIfShort(dlg);
     }
 
     /** After the PIN: the TV's own admin menu. The kiosk has to be fully usable with no phone or
@@ -598,11 +666,17 @@ public class PlayerActivity extends Activity {
                 {"Toddler play mode", "playmode"},
                 {"Exit to launcher", "exit"},
                 {"Back to the show", "back"}};
+        // On a phone on its side the five stacked buttons ran off the bottom ("Exit to launcher"
+        // was unreachable), so a short screen gets them two to a row.
+        final boolean shortScreen = getResources().getConfiguration().screenHeightDp < 560;
+        LinearLayout pair = null;
         for (final String[] it : items) {
             Button b = new Button(this);
-            b.setText(it[0]); b.setTextSize(18); b.setAllCaps(false);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
-            lp.setMargins(0, dp(4), 0, dp(4));
+            b.setText(it[0]); b.setTextSize(shortScreen ? 16 : 18); b.setAllCaps(false);
+            LinearLayout.LayoutParams lp = shortScreen
+                    ? new LinearLayout.LayoutParams(0, dp(60), 1f)
+                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
+            lp.setMargins(shortScreen ? dp(4) : 0, dp(4), shortScreen ? dp(4) : 0, dp(4));
             b.setLayoutParams(lp);
             b.setOnClickListener(v -> {
                 dlg.dismiss();
@@ -615,9 +689,13 @@ public class PlayerActivity extends Activity {
                 }
                 setBrightness(napped ? 0.02f : restoreBrightness);
             });
-            col.addView(b);
+            if (!shortScreen) { col.addView(b); continue; }
+            if (pair == null) { pair = new LinearLayout(this); pair.setOrientation(LinearLayout.HORIZONTAL); pair.setBaselineAligned(false); col.addView(pair); }
+            pair.addView(b);
+            if (pair.getChildCount() == 2) pair = null;
         }
-        dlg.show();
+        if (shortScreen) h.setPadding(0, 0, 0, dp(8));
+        dlg.show(); widenIfShort(dlg);
     }
 
     private String currentPin() { return Cfg.getStr(this, "anancy_pin", "1234"); }
@@ -661,7 +739,9 @@ public class PlayerActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
         int k = e.getKeyCode();
         if (k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            if (e.getAction() == KeyEvent.ACTION_DOWN)
+            // "Lock volume buttons": a child holding the tablet can't blast it or silence it by
+            // accident. Consumed either way, so the system slider never shows; remotes still work.
+            if (e.getAction() == KeyEvent.ACTION_DOWN && Cfg.getInt(this, "anancy_lock_volkeys", 0) != 1)
                 PlayerController.get().nudge(k == KeyEvent.KEYCODE_VOLUME_UP ? 0.1f : -0.1f);
             return true;   // consume -> no system volume slider (kid-proof)
         }
