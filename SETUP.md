@@ -102,6 +102,21 @@ The dash shows what's playing on the TV and controls it. It plays no sound of it
 You need a computer with **adb** (Android platform-tools) and **USB debugging** on each device
 (Settings → About → tap **Build number** 7 times → Developer options → USB debugging).
 
+### Windows: one-step tablet setup
+
+On Windows 10 or 11, `install/BackSeatTV-Tablet-Setup.bat` does B1 and B2 for you. It downloads
+Google's adb tools, finds the tablet, checks it has no accounts, installs the app, makes it the
+device owner, and starts the locked show.
+
+1. Put `BackSeatTV-<version>.apk` in the same folder as the `.bat`. Optional: add an `Anancy` folder
+   with your shows, and it copies them across too.
+2. On the tablet: factory reset (skip every sign-in), then turn on **USB debugging**. Android doesn't
+   let any script do this part.
+3. Plug it in, double-click the `.bat`, tap **Allow** on the tablet when asked, and type `Y` to confirm.
+
+Samsung tablets may also need the [Samsung USB driver](https://developer.samsung.com/android-usb-driver)
+if Windows can't see them. Running the script again on a finished tablet just updates the app.
+
 ### B1. Install
 
 ```bash
@@ -205,8 +220,18 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
   it itself).
 - **Toddler play mode:** grown-up menu → Toddler play mode. A tap-the-letters screen over the show.
 - **Switching a device's role:** open the **set-up check** and tap **Change role** on the Role line.
-  On a phone remote it's in the **BackSeat TV ⌄** menu at the top ("This phone: set-up check · use as
-  the TV"). On a TV it's in the grown-up menu → Settings → Set-up check.
+  On a phone remote it's at the bottom of **Settings** ("This phone: set-up check"). On a TV it's in
+  the grown-up menu → Settings → Set-up check.
+- **Use the remote as a screen too.** On the phone remote, tap **BackSeat TV ⌄** at the top and tick
+  **This phone as playback**. The show plays in a small card at the top of the screens list, marked
+  **"<name> (this device)"**, and you keep the whole remote. Tap the card to include or leave out that
+  screen. The corners button on the card makes it **large**: full-screen, with the same unlock gesture,
+  Pin the screen and volume-button lock as a TV. Back (or the grown-up menu → Remote) returns it to
+  the card. Tick **Sync Playback** in the same menu to keep the selected screens in step.
+
+  **The watch is the best way to use a large show.** Once it's full-screen the phone's remote is
+  hidden, but the watch (B4) keeps driving it. Select only "(this device)" to control just the phone,
+  or several screens and the watch's buttons reach all of them.
 - **Any device can be the remote, including a tablet.** Two tablets can work as a pair: one set as
   the TV, the other as its remote. The watch talks to TVs over its own Bluetooth, so it works
   alongside either one. Following the remote's choice of screens needs the device the watch is

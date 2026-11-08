@@ -4,8 +4,7 @@ package app.anancy.wear;
 //  Anancy watch remote, fitted to the ROUND face: content is centered and compact
 //  so nothing clips on the curved edges. HOME is glanceable — TV-battery chip +
 //  show/episode up top, Prev · big Play/Pause · Next, then a 2×3 action grid where
-//  EVERY function has a visible button: 💡 Light · ⏻ Power · 📷 Camera ·
-//  ⏱ Sleep · 🧸 Toddler. Swipe UP = the play queue (Up next), whose top button
+//  EVERY function has a visible button: Light · Power · Camera · Sleep · Toddler. Swipe UP = the play queue (Up next), whose top button
 //  "Choose new playlist" opens the playlists; picking one replaces the queue.
 //  Swipe LEFT = camera. The rotating bezel is context-aware: volume on
 //  the player, zoom on the camera, and the sleep-timer value on the Sleep page — a
@@ -497,9 +496,9 @@ public class WearRemoteActivity extends Activity {
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         alp.topMargin = pad(5); actions.setLayoutParams(alp);
         actions.addView(iconBtn("💡", 0xFF3A3220, new Runnable() { public void run() { send("flash"); } }));
-        actions.addView(iconBtn("⏻", 0xFF3A2020, new Runnable() { public void run() { send("power"); } }));
+        actions.addView(powerBtn(0xFF3A2020, new Runnable() { public void run() { send("power"); } }));
         actions.addView(iconBtn("📷", 0xFF203A2C, new Runnable() { public void run() { openCamera(); } }));
-        actions.addView(iconBtn("⏱", 0xFF2A2A38, new Runnable() { public void run() { openSleep(); } }));
+        actions.addView(iconBtn("💤", 0xFF2A2A38, new Runnable() { public void run() { openSleep(); } }));
         toddlerCell = iconBtn("🧸", 0xFF2A2233, new Runnable() { public void run() { send(playModeOn ? "playmode:off" : "playmode:on"); } });
         actions.addView(toddlerCell);
         col.addView(actions);
@@ -536,6 +535,28 @@ public class WearRemoteActivity extends Activity {
         lp.setMargins(pad(2), 0, pad(2), 0); t.setLayoutParams(lp);
         t.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { onTap.run(); } });
         return t;
+    }
+
+    // The power symbol is drawn, not typed: the watch's fonts have no glyph for it and showed a crossed box.
+    private TextView powerBtn(int bg, Runnable onTap) {
+        TextView t = iconBtn("", bg, onTap);
+        GradientDrawable circle = new GradientDrawable(); circle.setShape(GradientDrawable.OVAL); circle.setColor(bg);
+        t.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{circle, new PowerGlyph()}));
+        return t;
+    }
+    private static final class PowerGlyph extends android.graphics.drawable.Drawable {
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        PowerGlyph() { p.setColor(0xFFFF8A80); p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeCap(android.graphics.Paint.Cap.ROUND); }
+        @Override public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            float size = Math.min(b.width(), b.height()), r = size * 0.25f, cx = b.exactCenterX(), cy = b.exactCenterY() + size * 0.03f;
+            p.setStrokeWidth(size * 0.08f);
+            c.drawArc(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), -55, 290, false, p);   // ring, open at the top
+            c.drawLine(cx, cy - r * 1.3f, cx, cy - r * 0.2f, p);                                        // the stem through the gap
+        }
+        @Override public void setAlpha(int a) { p.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { p.setColorFilter(f); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     // Toddler button reflects the tablet's playmode: filled purple when active, dim when off.
@@ -602,7 +623,7 @@ public class WearRemoteActivity extends Activity {
         col.setPadding(pad(16), pad(16), pad(16), pad(16));
 
         TextView h = new TextView(this);
-        h.setText("⏱  Sleep timer"); h.setTextColor(Color.WHITE); h.setTextSize(14);
+        h.setText("💤  Sleep timer"); h.setTextColor(Color.WHITE); h.setTextSize(14);
         h.setTypeface(Typeface.DEFAULT_BOLD); h.setGravity(Gravity.CENTER); h.setPadding(0, 0, 0, pad(2));
         col.addView(h);
 
