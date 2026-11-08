@@ -87,6 +87,11 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 | [`server/`](server/) | Home-server helper scripts (media sync over adb). | Utility |
 | [`legacy/`](legacy/) | v1 (Kodi-bridge) apps + v2 prototypes, superseded. Not built. | Archived |
 
+## Install & setup
+
+See **[SETUP.md](SETUP.md)**: a no-computer route (download the APK, screen pinning) and an adb route
+(device-owner kiosk, watch remote, Android Auto without the developer toggle).
+
 ## Build & test
 
 The app is a standard Gradle project (Java 17, Android SDK build-tools 34 / platform 34).

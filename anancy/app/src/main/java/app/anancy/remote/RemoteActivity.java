@@ -912,6 +912,13 @@ public class RemoteActivity extends Activity {
         row1.addView(menuCell("Connection…", ACCENT, this::openConnection), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         col.addView(row1);
         ui.hSep(col);
+        // This phone's own set-up: the check, and the way to make the phone the TV (Change role). It used
+        // to be reachable only while no screen was connected, so with a TV around there was no way in.
+        if (!local) {
+            col.addView(menuCell("This phone: set-up check · use as the TV", TXT,
+                    () -> startActivity(new Intent(this, app.anancy.SetupActivity.class))));
+            ui.hSep(col);
+        }
 
         // Which screens.
         TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
@@ -1151,6 +1158,11 @@ public class RemoteActivity extends Activity {
         settingsView = overlay("Settings");
         cfgVals = null;
         RemoteService svc = RemoteService.get();
+        if (svc == null || svc.tablets().isEmpty()) {   // nothing to read from: say so now, not after 6s of "loading"
+            LinearLayout col = colOf(settingsView); clearRows(col, 1);
+            noTvSettings(col, "No TV connected, so there are no TV settings to show yet.");
+            return;
+        }
         if (svc != null) svc.requestConfig();
         loadConfig(0);
     }
@@ -1162,9 +1174,20 @@ public class RemoteActivity extends Activity {
         if (attempt < 15) main.postDelayed(() -> loadConfig(attempt + 1), 400);
         else {
             LinearLayout col = colOf(settingsView); clearRows(col, 1);
-            col.addView(ui.noteText("Couldn't read the TV's settings — is it connected?"));
-            Button b = ui.rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
+            noTvSettings(col, "Couldn't read the TV's settings — is it connected?");
         }
+    }
+    /** Settings with no TV to read from used to be a dead end. These are THIS device's own options, so they
+        must always be reachable: the set-up check (which also changes the role) and the Connection page. */
+    private void noTvSettings(LinearLayout col, String why) {
+        col.addView(ui.noteText(why));
+        Button conn = ui.rowBtn("Connection… (find a TV)", ACCENT);
+        conn.setOnClickListener(v -> { closeSettings(); openConnection(); }); col.addView(conn);
+        Button chk = ui.rowBtn("This phone: set-up check · use as the TV", TXT);
+        chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class))); col.addView(chk);
+        Button about = ui.rowBtn("About BackSeat TV & feature levels", TXT);
+        about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
+        Button b = ui.rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
     }
     private void applyConfigJson(String json) {
         try {

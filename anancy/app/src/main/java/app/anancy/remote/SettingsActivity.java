@@ -40,7 +40,7 @@ import org.json.JSONObject;
 
 public class SettingsActivity extends Activity {
     private static final int BG = 0xFF101418, CARD = 0xFF1B2128, TXT = 0xFFF2F4F7, SUB = 0xFF9AA4B2, OK = 0xFF8FD694;
-    static final String DO_CMD = "adb shell dpm set-device-owner app.anancy/.AdminReceiver";
+    static final String DO_CMD = "adb shell dpm set-device-owner app.anancy/.admin.AdminReceiver";
     static final String[][] CONN_MODES = {
             {"ble", "Bluetooth only", "Remotes control the TV over Bluetooth: play, playlists, queue, volume, light, sleep, power, and a still image every second or so."},
             {"tv_hotspot", "TV hotspot", "The TV hosts its own Wi-Fi hotspot (on automatically at this level) and remotes join it. Adds a faster BackSeat Glance + fast library browsing. Works in the car."},

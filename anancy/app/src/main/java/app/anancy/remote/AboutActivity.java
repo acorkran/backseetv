@@ -48,7 +48,7 @@ public class AboutActivity extends Activity {
                 "Turn the screen on/off from the remotes",
         });
         note("To unlock: use a tablet with NO Google or Samsung account added, turn on USB debugging, plug it into a computer, and run:");
-        codeBlock("adb shell dpm set-device-owner app.anancy/.AdminReceiver");
+        codeBlock("adb shell dpm set-device-owner app.anancy/.admin.AdminReceiver");
         note("Then open BackSeat TV, choose \"This is the TV\", and turn on Kiosk lock in Settings. It's reversible any time.");
 
         tier("3 · Remote & Android Auto", 0xFFD8A657, "Install BackSeat TV on a phone or watch and pick \"Remote\".", new String[]{
