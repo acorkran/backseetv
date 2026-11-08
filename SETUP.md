@@ -208,8 +208,9 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
   On a phone remote it's in the **BackSeat TV ⌄** menu at the top ("This phone: set-up check · use as
   the TV"). On a TV it's in the grown-up menu → Settings → Set-up check.
 - **Any device can be the remote, including a tablet.** Two tablets can work as a pair: one set as
-  the TV, the other as the remote, with a Wear OS watch paired to the remote tablet. Nobody's phone is
-  needed, and the watch drives whatever the remote tablet is pointed at.
+  the TV, the other as its remote. The watch talks to TVs over its own Bluetooth, so it works
+  alongside either one. Following the remote's choice of screens needs the device the watch is
+  paired to, which is normally a phone.
 - **A TV can stream from another TV.** A TV with no shows of its own can play the library of a TV
   on the same network.
 - **More than one TV:** set each one up as a TV. The phone remote can drive them separately, all at
