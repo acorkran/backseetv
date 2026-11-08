@@ -4,9 +4,10 @@ package app.anancy.wear;
 //  Anancy watch remote, fitted to the ROUND face: content is centered and compact
 //  so nothing clips on the curved edges. HOME is glanceable — TV-battery chip +
 //  show/episode up top, Prev · big Play/Pause · Next, then a 2×3 action grid where
-//  EVERY function has a visible, labelled button: 💡 Light · 🎞 Playlists · 📷
-//  Camera / ⏱ Sleep · 🧸 Toddler · ⏻ Power. Swipe-up (Playlists) / swipe-left
-//  (Camera) stay as bonus shortcuts. The rotating bezel is context-aware: volume on
+//  EVERY function has a visible button: 💡 Light · ⏻ Power · 📷 Camera ·
+//  ⏱ Sleep · 🧸 Toddler. Swipe UP = the play queue (Up next), whose top button
+//  "Choose new playlist" opens the playlists; picking one replaces the queue.
+//  Swipe LEFT = camera. The rotating bezel is context-aware: volume on
 //  the player, zoom on the camera, and the sleep-timer value on the Sleep page — a
 //  big number you spin through Off · 5 · 10 · 15 · 30 · 45 · 60 min, then tap Set.
 //  Drives the tablet-player directly over BLE.
@@ -38,9 +39,14 @@ import org.json.JSONObject;
 public class WearRemoteActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private FrameLayout content;    // holds player or settings/playlists
-    private View playerView, settingsView, playlistView, current;
+    private View playerView, settingsView, playlistView, queueView, current;
     private LinearLayout plHolder;  // playlist rows (repopulated from the tablet)
     private TextView plStatus;
+    private final java.util.List<String> plNames = new java.util.ArrayList<>();   // pages accumulate here
+    private LinearLayout qHolder;   // queue rows
+    private TextView qStatus, qMore;
+    private ScrollView qScroll;
+    private int qNext = -1, qTotal = 0;   // next page start / queue length, from the last queue page
     private GestureDetector gd;
     private TextView status, title, subtitle;
     private Button playPause;
@@ -83,11 +89,12 @@ public class WearRemoteActivity extends Activity {
         playerView = buildPlayer();
         settingsView = buildSettings();
         playlistView = buildPlaylists();
+        queueView = buildQueue();
         cameraView = buildCamera();
         content.addView(playerView);
         current = playerView;
 
-        // On the player screen: swipe UP -> playlists, swipe LEFT -> camera. We deliberately AVOID
+        // On the player screen: swipe UP -> the play queue, swipe LEFT -> camera. We deliberately AVOID
         // swipe-down (watch quick-settings) and swipe-right (WearOS back/dismiss = one level back).
         gd = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
@@ -105,7 +112,7 @@ public class WearRemoteActivity extends Activity {
                 }
                 if (current != playerView) return false;   // the shortcuts below only act on the player
                 if (Math.abs(dy) >= Math.abs(dx)) {                 // vertical-dominant
-                    if (dy > pad(40) && Math.abs(vy) > 200) { openPlaylists(); return true; }   // UP -> playlists
+                    if (dy > pad(40) && Math.abs(vy) > 200) { openQueue(); return true; }   // UP -> play queue
                 } else {                                            // horizontal-dominant
                     if (dx < -pad(40) && Math.abs(vx) > 200) { openCamera(); return true; }     // LEFT -> camera
                 }
@@ -142,6 +149,7 @@ public class WearRemoteActivity extends Activity {
         public void onStatus(String s) { status.setText(s.startsWith("ready") ? "" : s); }
         public void onState(String json) {
             if (json != null && json.contains("\"type\":\"playlists\"")) populatePlaylists(json);
+            else if (json != null && json.contains("\"type\":\"queue\"")) populateQueue(json);
             else render(json);
         }
         public void onStill(byte[] jpeg) { showStill(jpeg); }
@@ -164,10 +172,8 @@ public class WearRemoteActivity extends Activity {
     // --- playlist library: a swipe-up page of the tablet's playlists ---------
     private void openPlaylists() {
         show(playlistView);
-        BleService svc = BleService.get();
-        String cached = svc != null ? svc.playlists() : null;
-        if (cached != null) populatePlaylists(cached); else if (plStatus != null) plStatus.setText("loading…");
-        send("list");   // ask the tablet to (re)push its playlist names
+        if (plNames.isEmpty() && plStatus != null) plStatus.setText("loading…");
+        send("list");   // ask the tablet to (re)push its playlist names (paged; see populatePlaylists)
     }
     private View buildPlaylists() {
         ScrollView sv = new ScrollView(this);
@@ -177,9 +183,14 @@ public class WearRemoteActivity extends Activity {
         sv.addView(col);
 
         TextView h = new TextView(this);
-        h.setText("Playlists"); h.setTextColor(Color.WHITE); h.setTextSize(17);
+        h.setText("Choose a playlist"); h.setTextColor(Color.WHITE); h.setTextSize(17);
         h.setTypeface(Typeface.DEFAULT_BOLD); h.setGravity(Gravity.CENTER); h.setPadding(0, 0, 0, pad(6));
         col.addView(h);
+
+        TextView sub = new TextView(this);
+        sub.setText("replaces the queue"); sub.setTextColor(0xFF6B7075); sub.setTextSize(9);
+        sub.setGravity(Gravity.CENTER); sub.setPadding(0, 0, 0, pad(4));
+        col.addView(sub);
 
         plStatus = new TextView(this);
         plStatus.setText("loading…"); plStatus.setTextColor(0xFF9AA0A6); plStatus.setTextSize(11);
@@ -194,12 +205,20 @@ public class WearRemoteActivity extends Activity {
     private void populatePlaylists(String json) {
         if (plHolder == null) return;
         try {
-            JSONArray names = new JSONObject(json).optJSONArray("names");
+            // One BLE notification holds ~460 bytes, so the TV sends the names a page at a time
+            // (from/total). Collect every page; page 0 starts the list over.
+            JSONObject o = new JSONObject(json);
+            JSONArray names = o.optJSONArray("names");
+            int from = o.optInt("from", 0), total = o.optInt("total", 0);
+            if (from == 0) plNames.clear();
+            if (from != plNames.size()) return;   // out-of-order page: page 0 will come round again
+            if (names != null) for (int i = 0; i < names.length(); i++) plNames.add(names.optString(i));
+            int got = plNames.size();
+            if (names != null && names.length() > 0 && got < total) send("list:" + got);   // fetch the next page
             plHolder.removeAllViews();
-            if (names == null || names.length() == 0) { if (plStatus != null) plStatus.setText("no playlists"); return; }
-            if (plStatus != null) plStatus.setText("");
-            for (int i = 0; i < names.length(); i++) {
-                final String name = names.optString(i);
+            if (plNames.isEmpty()) { if (plStatus != null) plStatus.setText("no playlists"); return; }
+            if (plStatus != null) plStatus.setText(got < total ? "loading… " + got + "/" + total : "");
+            for (final String name : plNames) {
                 Button row = new Button(this);
                 row.setAllCaps(false); row.setText(name);
                 row.setTextColor(Color.WHITE); row.setTextSize(15);
@@ -213,6 +232,90 @@ public class WearRemoteActivity extends Activity {
                 }});
                 plHolder.addView(row);
             }
+        } catch (Exception ignored) {}
+    }
+
+    // --- play queue ("Up next"): swipe up from the player. The current item first, then what follows;
+    //     "Choose new playlist" at the top swaps the whole queue; tap an item to jump to it. -----------
+    private void openQueue() {
+        qNext = -1; qTotal = 0;
+        if (qHolder != null) qHolder.removeAllViews();
+        if (qStatus != null) qStatus.setText("loading…");
+        if (qMore != null) qMore.setVisibility(View.GONE);
+        if (qScroll != null) qScroll.scrollTo(0, 0);
+        show(queueView);
+        send("queue");   // first page starts at the item playing now
+    }
+    private View buildQueue() {
+        qScroll = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(pad(20), pad(30), pad(20), pad(44));
+        qScroll.addView(col);
+
+        Button choose = new Button(this);
+        choose.setAllCaps(false); choose.setText("Choose new playlist");
+        choose.setTextColor(Color.WHITE); choose.setTextSize(13); choose.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable cg = new GradientDrawable(); cg.setColor(0xFF20303A); cg.setCornerRadius(pad(20));
+        choose.setBackground(cg);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(44));
+        clp.setMargins(pad(10), 0, pad(10), pad(6)); choose.setLayoutParams(clp);
+        choose.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { openPlaylists(); } });
+        col.addView(choose);
+
+        qStatus = new TextView(this);
+        qStatus.setText("loading…"); qStatus.setTextColor(0xFF9AA0A6); qStatus.setTextSize(10);
+        qStatus.setGravity(Gravity.CENTER); qStatus.setPadding(0, 0, 0, pad(4));
+        col.addView(qStatus);
+
+        qHolder = new LinearLayout(this);
+        qHolder.setOrientation(LinearLayout.VERTICAL);
+        col.addView(qHolder);
+
+        qMore = new TextView(this);
+        qMore.setText("more…"); qMore.setTextColor(0xFF8FD694); qMore.setTextSize(13);
+        qMore.setGravity(Gravity.CENTER); qMore.setPadding(0, pad(10), 0, pad(10));
+        qMore.setVisibility(View.GONE);
+        qMore.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            if (qNext >= 0 && qNext < qTotal) { qMore.setText("loading…"); send("queue:" + qNext); }
+        }});
+        col.addView(qMore);
+        return qScroll;
+    }
+    private void populateQueue(String json) {
+        if (qHolder == null || current != queueView) return;
+        try {
+            JSONObject o = new JSONObject(json);
+            JSONArray items = o.optJSONArray("items");
+            int from = o.optInt("from", 0), idx = o.optInt("index", -1);
+            qTotal = o.optInt("total", 0);
+            if (qNext >= 0 && from != qNext) return;   // a stale or repeated page
+            if (qNext < 0) {                          // first page: header line
+                String pl = o.optString("playlist", "");
+                qStatus.setText((pl.isEmpty() ? "Up next" : pl) + (qTotal > 0 ? "  ·  " + (idx + 1) + "/" + qTotal : ""));
+            }
+            int n = items != null ? items.length() : 0;
+            for (int i = 0; i < n; i++) {
+                final int at = from + i;
+                String t = items.optString(i).replaceAll("\\.(mp4|mkv|m4v)$", "").replace('.', ' ').replace('⧸', '/').trim();
+                boolean now = at == idx;
+                Button row = new Button(this);
+                row.setAllCaps(false); row.setText(now ? "▶  " + t : t);
+                row.setTextColor(now ? 0xFF8FD694 : Color.WHITE); row.setTextSize(12);
+                row.setMaxLines(2); row.setEllipsize(TextUtils.TruncateAt.END);
+                GradientDrawable g = new GradientDrawable(); g.setColor(now ? 0xFF1E2A20 : 0xFF202225); g.setCornerRadius(pad(14));
+                row.setBackground(g);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.setMargins(0, pad(3), 0, pad(3)); row.setLayoutParams(lp); row.setMinHeight(pad(40));
+                row.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+                    send("jump:" + at); show(playerView);
+                }});
+                qHolder.addView(row);
+            }
+            qNext = from + n;
+            if (n == 0 && qHolder.getChildCount() == 0) qStatus.setText("queue is empty");
+            qMore.setText("more…");
+            qMore.setVisibility(n > 0 && qNext < qTotal ? View.VISIBLE : View.GONE);
         } catch (Exception ignored) {}
     }
 
@@ -394,7 +497,7 @@ public class WearRemoteActivity extends Activity {
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         alp.topMargin = pad(5); actions.setLayoutParams(alp);
         actions.addView(iconBtn("💡", 0xFF3A3220, new Runnable() { public void run() { send("flash"); } }));
-        actions.addView(iconBtn("🎞", 0xFF20303A, new Runnable() { public void run() { openPlaylists(); } }));
+        actions.addView(iconBtn("⏻", 0xFF3A2020, new Runnable() { public void run() { send("power"); } }));
         actions.addView(iconBtn("📷", 0xFF203A2C, new Runnable() { public void run() { openCamera(); } }));
         actions.addView(iconBtn("⏱", 0xFF2A2A38, new Runnable() { public void run() { openSleep(); } }));
         toddlerCell = iconBtn("🧸", 0xFF2A2233, new Runnable() { public void run() { send(playModeOn ? "playmode:off" : "playmode:on"); } });
@@ -633,6 +736,7 @@ public class WearRemoteActivity extends Activity {
     // back key and the swipe-right gesture so BACK behaves identically however it's triggered.
     private void goBack() {
         if (current == cameraView) closeCamera();
+        else if (current == playlistView) show(queueView);   // playlists were opened from the queue
         else if (current != playerView) show(playerView);
     }
     // Back key: sub-view -> player; on the player -> exit (the link lingers ~45s in BleService, then shuts down).
