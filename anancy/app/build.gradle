@@ -11,7 +11,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode 1
-        versionName '0.1'
+        versionName anancyVersion
         // A plain Instrumentation, no androidx.test: it only drives the Android Auto media service
         // (src/androidTest/.../AaProbe.java), so it needs nothing beyond the framework.
         testInstrumentationRunner 'app.anancy.AaProbe'
@@ -39,6 +39,8 @@ android {
         }
     }
 }
+
+apply from: rootProject.file('signing.gradle')
 
 dependencies {
     // Own media engine. ExoPlayer's playlist (setMediaItems + shuffle + REPEAT_MODE_ALL) gives
@@ -87,9 +89,12 @@ dependencies {
 // Assets: wear.apk (the build), wear.sha (SHA-256 of those bytes — transfer check), wear.id (the
 // watch module's SOURCE hash — the update identity; matches BuildConfig.BUILD_ID inside the APK).
 def embeddedWear = layout.buildDirectory.dir('embedded-wear')
+// A release phone app must carry a release watch app: the Data Layer needs both signed with the same key.
+def releaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
 tasks.register('embedWearApk', Copy) {
-    dependsOn ':wear:assembleDebug', ':wear:writeWearBuildId'
-    from(project(':wear').layout.buildDirectory.file('outputs/apk/debug/wear-debug.apk')) { rename { 'wear.apk' } }
+    dependsOn(releaseBuild ? ':wear:assembleRelease' : ':wear:assembleDebug', ':wear:writeWearBuildId')
+    from(project(':wear').layout.buildDirectory.file(releaseBuild
+            ? "outputs/apk/release/BackSeatTV-wear-${anancyVersion}.apk" : 'outputs/apk/debug/wear-debug.apk')) { rename { 'wear.apk' } }
     from(project(':wear').layout.buildDirectory.file('wear-build-id.txt')) { rename { 'wear.id' } }
     into embeddedWear
     doLast {

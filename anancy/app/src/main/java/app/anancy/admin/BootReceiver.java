@@ -17,6 +17,8 @@ import android.content.Intent;
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context ctx, Intent i) {
         if (i == null || !Intent.ACTION_BOOT_COMPLETED.equals(i.getAction())) return;
+        // A phone remote stays closed until it's opened. Android also sends this after a force-stop, not just a reboot.
+        if ("remote".equals(ctx.getSharedPreferences("anancy", Context.MODE_PRIVATE).getString("role", ""))) return;
         try {
             Intent launch = new Intent(ctx, RouterActivity.class);
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

@@ -22,6 +22,8 @@ public final class SelfPlayer {
     private static Context app;
     private static TextureView small;           // the card, while the remote is on screen
     private static boolean pausedByLeaving;
+    private static long leftAt;
+    private static final long RESUME_WINDOW_MS = 60_000;   // a quick app switch resumes; coming back later stays quiet
 
     private SelfPlayer() {}
 
@@ -54,6 +56,13 @@ public final class SelfPlayer {
         if (small != null) player.setVideoTextureView(small);
     }
 
+    /** Main thread. The remote opened with the box already ticked: ready to go, but silent until Play. */
+    public static void startPaused(Context ctx) {
+        if (player != null) return;
+        PlayerController.get().holdNextStart();
+        start(ctx);
+    }
+
     /** Main thread. The box was unticked. */
     public static void stop() {
         if (player == null) return;
@@ -70,7 +79,10 @@ public final class SelfPlayer {
         small = view;
         if (player == null) return;
         player.setVideoTextureView(view);
-        if (pausedByLeaving) { pausedByLeaving = false; PlayerController.get().play(); }
+        if (pausedByLeaving) {
+            pausedByLeaving = false;
+            if (android.os.SystemClock.elapsedRealtime() - leftAt < RESUME_WINDOW_MS) PlayerController.get().play();
+        }
     }
 
     /** The remote left the screen: pause like any video app, unless it's because the show went large. */
@@ -80,6 +92,7 @@ public final class SelfPlayer {
         player.clearVideoTextureView(view);
         if (!PlayerActivity.isRunning() && player.getPlayWhenReady()) {
             pausedByLeaving = true;
+            leftAt = android.os.SystemClock.elapsedRealtime();
             PlayerController.get().pause();
         }
     }

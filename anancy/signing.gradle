@@ -1,0 +1,33 @@
+// Release builds. Applied by :app and :wear, which must share one key: the phone and watch only talk over
+// the Wear Data Layer when both are signed the same.
+//
+// Put the key's details in anancy/release-signing.properties (gitignored):
+//   storeFile=/full/path/to/backseat-release.jks
+//   storePassword=...
+//   keyAlias=...
+//   keyPassword=...
+def signingFile = rootProject.file('release-signing.properties')
+
+if (signingFile.exists()) {
+    def p = new Properties()
+    signingFile.withInputStream { p.load(it) }
+    android.signingConfigs {
+        release {
+            storeFile rootProject.file(p.getProperty('storeFile'))
+            storePassword p.getProperty('storePassword')
+            keyAlias p.getProperty('keyAlias')
+            keyPassword p.getProperty('keyPassword')
+        }
+    }
+    android.buildTypes.release.signingConfig = android.signingConfigs.release
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (!signingFile.exists() && graph.allTasks.any { it.name == 'assembleRelease' })
+        throw new GradleException('Release builds need anancy/release-signing.properties (see anancy/signing.gradle).')
+}
+
+android.applicationVariants.all { variant ->
+    if (variant.buildType.name == 'release')
+        variant.outputs.all { outputFileName = "BackSeatTV${project.name == 'wear' ? '-wear' : ''}-${anancyVersion}.apk" }
+}

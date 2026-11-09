@@ -801,7 +801,9 @@ public class PlayerActivity extends Activity {
         if (k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN) {
             // "Lock volume buttons": a child holding the tablet can't blast it or silence it by
             // accident. Consumed either way, so the system slider never shows; remotes still work.
-            if (e.getAction() == KeyEvent.ACTION_DOWN && Cfg.getInt(this, "anancy_lock_volkeys", 0) != 1)
+            // Toddler mode always locks them: mashing volume-up there raises the level and clears the
+            // saved mute, so the show would come back louder and with sound after exit.
+            if (e.getAction() == KeyEvent.ACTION_DOWN && playWeb == null && Cfg.getInt(this, "anancy_lock_volkeys", 0) != 1)
                 PlayerController.get().nudge(k == KeyEvent.KEYCODE_VOLUME_UP ? 0.1f : -0.1f);
             return true;   // consume -> no system volume slider (kid-proof)
         }

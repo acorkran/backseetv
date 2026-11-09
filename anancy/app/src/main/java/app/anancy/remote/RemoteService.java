@@ -624,10 +624,12 @@ public class RemoteService extends Service {
             return ip.isEmpty() ? null : ip;
         } catch (Exception e) { return null; }
     }
+    // Never starts the player. Android Auto binds on every car connection and its background queries come
+    // through send(), so starting here played the library out loud over the car's music with the app closed.
+    // Only ticking the box or the card coming on screen starts it.
     private void sendToSelf(final String cmd) {
         main.post(() -> {
-            if (!app.anancy.player.SelfPlayer.running()) app.anancy.player.SelfPlayer.start(this);
-            if (selfLink != null) selfLink.send(cmd);
+            if (app.anancy.player.SelfPlayer.running() && selfLink != null) selfLink.send(cmd);
         });
     }
 

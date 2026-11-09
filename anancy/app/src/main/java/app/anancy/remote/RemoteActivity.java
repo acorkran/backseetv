@@ -347,7 +347,7 @@ public class RemoteActivity extends Activity {
         if (selfCard == null) {
             selfCard = buildSelfCard(svc);
             deviceCards.addView(selfCard, 0, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            app.anancy.player.SelfPlayer.start(this);   // it was ticked before: the card coming back brings the player back
+            app.anancy.player.SelfPlayer.startPaused(this);   // it was ticked before: the card comes back, silent until Play
             app.anancy.player.SelfPlayer.showIn(selfVideo);
         }
         boolean sel = allSelected(svc) || svc.targets().contains(svc.selfId());

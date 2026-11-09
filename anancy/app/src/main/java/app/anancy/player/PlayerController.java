@@ -91,6 +91,9 @@ public class PlayerController {
 
     /** Scan the library (off-main), build playlists (Shuffle All + one per show), start Shuffle All. */
     public void loadLibrary(Context ctx) { loadLibrary(ctx, true, 0); }
+    private boolean holdFirstStart = false;
+    /** The next library load queues the show but leaves it paused. */
+    public void holdNextStart() { holdFirstStart = true; }
     /** Rebuild playlists after an import, WITHOUT disrupting current playback. */
     public void rescan(Context ctx) { loadLibrary(ctx, false, 0); }
     /** Start at the retry cap: a deliberate reload is not the boot race, so it must report an empty
@@ -159,6 +162,7 @@ public class PlayerController {
                     // with a full library behind it.
                     selectPlaylist("Shuffle All");
                 }
+                holdFirstStart = false;   // an empty library must not swallow the first real Play
                 Runnable cb = onLibraryLoaded;
                 if (cb != null) cb.run();
             });
@@ -277,7 +281,7 @@ public class PlayerController {
             p.setMediaItems(order);
             p.prepare();
             keepMute();   // audio-safety: a new media list must never start audible while muted
-            p.play();
+            if (holdFirstStart) holdFirstStart = false; else p.play();
         });
     }
     /** Re-assert the mute/volume multiplier (call after any setMediaItems). Cheap insurance so a
@@ -838,7 +842,9 @@ public class PlayerController {
         prefs = ctx.getApplicationContext().getSharedPreferences("anancy", Context.MODE_PRIVATE);
         muted = prefs.getBoolean("muted", true);   // first run = MUTED (nap-safe default); volume-up unmutes
         vol = readSystemVol();
-        if (vol <= 0.001f) writeSystemVol(0.5f);   // a 0 system stream makes "unmute" do nothing -> give it a floor (does NOT unmute)
+        // A 0 system stream makes "unmute" do nothing, so a muted TV gets a floor. Never raise it unmuted (that's
+        // instant sound), and never on a phone remote: its media volume is also the driver's music.
+        if (vol <= 0.001f && muted && !"remote".equals(prefs.getString("role", ""))) writeSystemVol(0.5f);
         applyMute();
     }
     private float readSystemVol() {

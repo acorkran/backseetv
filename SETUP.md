@@ -243,7 +243,7 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV â
 
 ## Building from source
 
-Java 17, Android SDK platform/build-tools 34, Gradle 8.7 on your `PATH` (there's no wrapper).
+Java 17, Android SDK platform/build-tools 35, Gradle 8.7 on your `PATH` (there's no wrapper).
 
 ```bash
 cd anancy
@@ -252,3 +252,8 @@ gradle :app:testDebugUnitTest     # unit tests
 ```
 
 The watch APK is built alongside, at `anancy/wear/build/outputs/apk/debug/wear-debug.apk`.
+
+For signed release APKs, put your key's details in `anancy/release-signing.properties` (the format is
+at the top of `anancy/signing.gradle`) and run `gradle assembleRelease`. Android won't update an app
+with one signed by a different key, so a device running a debug build has to be switched over: remove
+device owner if it has it, uninstall, then install the release and set it up again.

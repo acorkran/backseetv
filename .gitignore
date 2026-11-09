@@ -8,6 +8,8 @@ local.properties
 
 # never commit signing keystores (debug keystores regenerate locally via each build.sh / gradle)
 *.keystore
+*.jks
 debug.keystore
+release-signing.properties
 
 # kept intentionally: source, kodi-config, Pi scripts, prebuilt *.apk (handy for sideloading)
