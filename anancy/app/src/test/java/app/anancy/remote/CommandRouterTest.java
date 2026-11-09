@@ -69,9 +69,10 @@ public class CommandRouterTest {
     }
 
     @Test public void queryCommands_askRepresentativeOnly() {
-        for (String c : new String[]{"list", "queue", "conn", "cfg", "shows", "shows:3", "eps:Bluey:0"})
+        for (String c : new String[]{"list", "list:5", "queue", "queue:9", "conn", "cfg", "cfg@12", "shows", "shows:3", "eps:Bluey:0"})
             assertTrue(c + " should be a query", CommandRouter.isQueryCmd(c));
         assertFalse(CommandRouter.isQueryCmd("play"));
+        assertFalse("a setting write is not a query", CommandRouter.isQueryCmd("cfg:anancy_loop=1"));
         assertFalse(CommandRouter.isQueryCmd(null));
     }
 

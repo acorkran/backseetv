@@ -105,11 +105,11 @@ public class PlayerController {
     public void rescanAndRestart(Context ctx) { loadLibrary(ctx, true, NO_RETRY); }
     /** Re-read the library in CLIENT mode (anancy_host just set) so a follower can resolve the leader's ids.
         autoStart=false: don't blast playback — the sync loop drives what plays. */
-    public void reloadForSync(Context ctx) { loadLibrary(ctx, false, 0); }
+    public void reloadForSync(Context ctx) { gaveUpOnHost = null; loadLibrary(ctx, false, 0); }
     private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         appCtx = ctx.getApplicationContext();
         final String host = Cfg.getStr(appCtx, "anancy_host", "");
-        if (host != null && !host.isEmpty()) { new Thread(() -> loadClientLibrary(host, autoStart, 0)).start(); return; }
+        if (host != null && !host.isEmpty() && !host.equals(gaveUpOnHost)) { new Thread(() -> loadClientLibrary(host, autoStart, 0)).start(); return; }
         clientItems = null;
         new Thread(() -> {
             LinkedHashMap<String, List<File>> shows = Library.scanShows(ctx);
@@ -228,11 +228,13 @@ public class PlayerController {
         }
     }
     /** A client tablet used to retry an absent host FOREVER and never fall back, so one sync session
-        left it booting to a black screen with no escape from any remote. Give up and play our own SD. */
+        left it booting to a black screen with no escape from any remote. Give up and play our own SD,
+        for this run only: the host may just be slower to start, so the next boot tries it again. */
+    private volatile String gaveUpOnHost;
     private void retryClientLibrary(final String host, final boolean autoStart, final int attempt) {
         if (attempt >= 4) {
             android.util.Log.w("Anancy", "host " + host + " unreachable after " + (attempt + 1) + " tries - falling back to the local library");
-            try { Cfg.put(appCtx, "anancy_host", ""); } catch (Exception ignored) {}
+            gaveUpOnHost = host;
             clientItems = null;
             main.post(() -> loadLibrary(appCtx, true, 0));
             return;
@@ -393,10 +395,15 @@ public class PlayerController {
             JSONArray a = new JSONArray(), u = new JSONArray();
             o.put("type", "playlists"); o.put("from", from); o.put("total", total);
             o.put("names", a); o.put("user", u);
-            for (String n : userPlaylists.keySet()) u.put(n);
+            final int firstUser = playlists.size();   // "user" flags the user playlists on THIS page only
             for (int i = from; i < total; i++) {
                 a.put(all.get(i));
-                if (o.toString().length() > maxBytes) { a.remove(a.length() - 1); break; }
+                if (i >= firstUser) u.put(all.get(i));
+                if (o.toString().length() > maxBytes) {
+                    a.remove(a.length() - 1);
+                    if (i >= firstUser) u.remove(u.length() - 1);
+                    break;
+                }
             }
         } catch (Exception ignored) {}
         return o.toString();
@@ -488,7 +495,7 @@ public class PlayerController {
     private void startSyncLoop() {
         if (syncTick != null) return;
         final String host = Cfg.getStr(appCtx, "anancy_host", "");
-        if (host == null || host.isEmpty()) { syncEnabled = false; return; }   // only a client can follow
+        if (host == null || host.isEmpty() || host.equals(gaveUpOnHost)) { syncEnabled = false; return; }   // only a client can follow
         resetClock();
         new Thread(() -> { for (int i = 0; i < 6 && syncEnabled; i++) { probeClock(host); try { Thread.sleep(120); } catch (Exception ignored) {} } }).start();
         syncTick = new Runnable() { long lastClk = 0; public void run() {

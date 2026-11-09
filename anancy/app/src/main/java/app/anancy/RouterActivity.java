@@ -31,9 +31,11 @@ public class RouterActivity extends Activity {
 
         // Provisioning a kiosk already happens from a computer (dpm set-device-owner), so the role
         // must be settable the same way instead of forcing someone to walk over and tap a tablet:
-        //   adb shell am start -n app.anancy/.RouterActivity --es role player
+        //   adb shell am start -n app.anancy/.AdbSetRole --es role player
+        // Only through that alias, which other apps can't start; this launcher entry is open to all.
         try {
-            String forced = getIntent() != null ? getIntent().getStringExtra("role") : null;
+            boolean fromAdb = getComponentName().getClassName().endsWith(".AdbSetRole");
+            String forced = fromAdb && getIntent() != null ? getIntent().getStringExtra("role") : null;
             if ("player".equals(forced) || "remote".equals(forced))
                 getSharedPreferences(PREF, MODE_PRIVATE).edit().putString(KEY, forced).apply();
         } catch (Exception ignored) {}

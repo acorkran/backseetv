@@ -128,7 +128,7 @@ role:
 
 ```bash
 adb push "Bluey" /sdcard/Anancy/Bluey
-adb shell am start -n app.anancy/.SetupActivity --es role player      # or: --es role remote
+adb shell am start -n app.anancy/.AdbSetRole --es role player      # or: --es role remote
 ```
 
 ### B2. Make the TV a kiosk (device owner)

@@ -108,7 +108,7 @@ public class RemoteService extends Service {
     public void requestShows(int from) { requestTyped(from > 0 ? "shows:" + from : "shows", "library"); }
     public void requestEpisodes(String show, int from) { requestTyped("eps:" + show + ":" + from, "episodes"); }
     public void requestConn() { requestTyped("conn", "conn"); }
-    public void requestConfig() { cfgAccum = null; requestTyped("cfg", "config"); }
+    public void requestConfig() { cfgAccum = null; cfgNext = 0; requestTyped("cfg", "config"); }
     public String configJson() { return typed.get("config"); }
     /** Write one tablet setting from a remote (mirrors the on-tablet Settings screen). */
     public void setConfig(String key, String val) { send("cfg:" + key + "=" + val); }
@@ -119,18 +119,22 @@ public class RemoteService extends Service {
     public java.util.List<String> userPlaylistNames() { return userPlaylistNames; }
 
     private JSONObject cfgAccum;   // config arrives in pages over BLE; publish only once it is whole
+    private int cfgNext;           // the offset the next page must start at
 
     /** Merge a config page. The UI must never see a half-payload: it would render every setting at
         its default behind a padlock, which is indistinguishable from "this TV can't do that". */
     private void mergeConfig(String json) {
         try {
             JSONObject o = new JSONObject(json);
-            if (o.optInt("from", 0) > 0 && cfgAccum != null) {
+            int from = o.optInt("from", 0);
+            if (from > 0 && (cfgAccum == null || from != cfgNext)) return;   // another client's page, or a repeat
+            if (from > 0) {
                 JSONObject av = cfgAccum.optJSONObject("values"), nv = o.optJSONObject("values");
                 if (av != null && nv != null)
                     for (java.util.Iterator<String> it = nv.keys(); it.hasNext(); ) { String k = it.next(); av.put(k, nv.get(k)); }
             } else cfgAccum = o;        // first page carries device_owner + pin_set
             int more = o.optInt("more", 0);
+            cfgNext = more;
             if (more > 0) { typed.remove("config"); send("cfg@" + more); }
             else typed.put("config", cfgAccum.toString());
         } catch (Exception ignored) {}
@@ -152,15 +156,15 @@ public class RemoteService extends Service {
             if (a != null) for (int i = 0; i < a.length(); i++) page.add(a.optString(i));
             if (u != null) for (int i = 0; i < u.length(); i++) usr.add(u.optString(i));
             int from = o.optInt("from", 0), total = o.optInt("total", page.size());
+            if (from > 0 && from != playlistNames.size()) return;  // the TV notifies every client: skip others' pages and repeats
             playlistTotal = total;
-            if (from == 0) playlistNames = page;                  // first page replaces
+            if (from == 0) { playlistNames = page; userPlaylistNames = usr; }   // first page replaces
             else {                                                 // later pages append (BLE sends it in slices)
-                java.util.List<String> merged = new java.util.ArrayList<>(playlistNames);
-                merged.addAll(page);
-                playlistNames = merged;
+                java.util.List<String> merged = new java.util.ArrayList<>(playlistNames), mergedUser = new java.util.ArrayList<>(userPlaylistNames);
+                merged.addAll(page); mergedUser.addAll(usr);
+                playlistNames = merged; userPlaylistNames = mergedUser;
             }
-            if (!usr.isEmpty() || from == 0) userPlaylistNames = usr;
-            if (playlistNames.size() < total) send("list:" + playlistNames.size());   // pull the rest, unprompted
+            if (!page.isEmpty() && playlistNames.size() < total) send("list:" + playlistNames.size());   // pull the rest, unprompted
         } catch (Exception ignored) {}
     }
     /** Route one incoming payload: typed answers go to the cache, everything else is state. */
@@ -376,7 +380,9 @@ public class RemoteService extends Service {
         // One-time move to the "auto" default. The old default was a bare "ble" that never escalated,
         // so every existing install would sit on Bluetooth forever and never see the Wi-Fi tier even
         // when a feature needed it. A level picked explicitly AFTER this migration is left alone.
-        if (!"1".equals(Cfg.getStr(this, "anancy_conn_auto", null))) {
+        // Remote side only: a TV shares this key as its own hosting level, and its admin remote runs here too.
+        boolean tv = "player".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", ""));
+        if (!tv && !"1".equals(Cfg.getStr(this, "anancy_conn_auto", null))) {
             Cfg.put(this, "anancy_conn_auto", "1");
             String was = Cfg.getStr(this, "anancy_conn", null);
             if (was == null || "ble".equals(was) || "tv_hotspot".equals(was)) Cfg.put(this, "anancy_conn", "auto");

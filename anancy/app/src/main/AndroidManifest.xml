@@ -66,6 +66,10 @@
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </activity>
+        <!-- Set the role from a computer (the role extra, see SETUP.md B1).
+             DUMP is held by adb's shell and the system, so other apps can't start this. -->
+        <activity-alias android:name=".AdbSetRole" android:targetActivity=".RouterActivity"
+            android:exported="true" android:permission="android.permission.DUMP"/>
 
         <!-- Player role: the show is the home screen (fullscreen, landscape). -->
         <activity
@@ -87,8 +91,9 @@
 
         <!-- QR pairing: display creds/connection info as a QR, and scan one with the camera -->
         <activity android:name=".net.QrShareActivity" android:exported="true"
+            android:permission="android.permission.DUMP"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
-        <activity android:name=".net.QrScanActivity" android:exported="true"
+        <activity android:name=".net.QrScanActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>
 

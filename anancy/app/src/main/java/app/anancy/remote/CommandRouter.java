@@ -42,7 +42,8 @@ final class CommandRouter {
     /** Queries have a single answer — ask the representative only, never broadcast. */
     static boolean isQueryCmd(String c) {
         if (c == null) return false;
-        return c.equals("list") || c.equals("queue") || c.equals("conn") || c.equals("cfg")
+        return c.equals("list") || c.startsWith("list:") || c.equals("queue") || c.startsWith("queue:")
+                || c.equals("conn") || c.equals("cfg") || c.startsWith("cfg@")
                 || c.startsWith("shows") || c.startsWith("eps:");
     }
 

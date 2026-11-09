@@ -60,7 +60,7 @@ public class BleServer {
     private BluetoothGattCharacteristic stateChar;
     private BluetoothGattCharacteristic imgChar;
     private Runnable pusher;
-    private int cambleWant = 0;                                          // # of clients wanting BLE stills
+    private final java.util.Set<String> cambleClients = java.util.concurrent.ConcurrentHashMap.newKeySet();   // addresses wanting BLE stills
     private java.util.concurrent.ScheduledExecutorService imgExec;       // pushes chunked stills ~1/sec
 
     public BleServer(Context c, PlayerController ctrl) { this.ctx = c.getApplicationContext(); this.ctrl = ctrl; }
@@ -143,13 +143,15 @@ public class BleServer {
                 subs.remove(dev);
                 // A remote that vanished mid-"camble:on" can't send camble:off: with nobody subscribed,
                 // stop the BLE still pipeline (and the camera behind it) instead of running it forever.
-                if (subs.isEmpty() && cambleWant > 0) main.post(() -> { cambleWant = 1; setCamble(false); });
+                final String addr = dev.getAddress();
+                if (cambleClients.contains(addr)) main.post(() -> setCamble(addr, false));
             }
             Log.i(TAG, "BLE conn " + dev.getAddress() + " -> " + newState);
         }
         @Override public void onCharacteristicWriteRequest(BluetoothDevice dev, int rid, BluetoothGattCharacteristic ch,
                 boolean prep, boolean resp, int off, byte[] val) {
-            if (Ble.CMD.equals(ch.getUuid()) && val != null) { String cmd = new String(val).trim(); Log.i(TAG, "BLE cmd: " + cmd); exec(cmd); }
+            if (Ble.CMD.equals(ch.getUuid()) && val != null) { String cmd = new String(val).trim(); Log.i(TAG, "BLE cmd: " + cmd);
+                if (cmd.startsWith("camble:")) setCamble(dev.getAddress(), "on".equals(cmd.substring(7).trim())); else exec(cmd); }
                 main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
             if (resp && gatt != null) gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, null);
         }
@@ -184,7 +186,6 @@ public class BleServer {
             return;
         }
         if (cmd.startsWith("hotspot:")) { if ("on".equals(cmd.substring(8).trim())) HotspotService.start(ctx); else HotspotService.stop(ctx); return; }  // host hotspot + show QR
-        if (cmd.startsWith("camble:")) { setCamble("on".equals(cmd.substring(7).trim())); return; }  // reduced-res stills over BLE
         // --- library / queue editing / user playlists (replies are one-shot typed payloads on STATE) ---
         if (cmd.startsWith("enq:"))     { ctrl.enqueue(pi(cmd.substring(4)), false, false); return; }
         if (cmd.startsWith("enqnext:")) { ctrl.enqueue(pi(cmd.substring(8)), true, false); return; }
@@ -252,19 +253,19 @@ public class BleServer {
         for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
     }
 
-    /** Toggle BLE reduced-res still delivery (ref-counted across clients). While ≥1 client wants it,
+    /** Toggle BLE reduced-res still delivery for one client (a repeated "on" counts once). While ≥1 client wants it,
         a background thread pushes a fresh low-res still on the IMG characteristic ~once/second. */
-    private void setCamble(boolean on) {
+    private synchronized void setCamble(String client, boolean on) {
         if (on) {
-            cambleWant = 1;   // clamp: Android Auto re-sends "camble:on" every few ticks, which grew this forever
+            cambleClients.add(client);
             SnapshotService.want(ctx, "ble", true);
             if (imgExec == null) {
                 imgExec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
                 imgExec.scheduleWithFixedDelay(this::pushImg, 1000, 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
         } else {
-            if (cambleWant > 0) cambleWant--;
-            if (cambleWant == 0) {
+            cambleClients.remove(client);
+            if (cambleClients.isEmpty()) {
                 if (imgExec != null) { imgExec.shutdownNow(); imgExec = null; }
                 SnapshotService.want(ctx, "ble", false);
             }

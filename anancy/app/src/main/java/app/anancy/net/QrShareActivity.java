@@ -95,14 +95,18 @@ public class QrShareActivity extends Activity {
     /** The hotspot's creds only exist once it is actually up, so poll rather than render an empty
         code and leave someone pointing a camera at nothing. */
     private void awaitPairing() {
+        String ssid = HotspotService.currentSsid();
+        boolean creds = ssid != null && !ssid.isEmpty(), gaveUp = tries > 20;
         String p = pairingPayload(this);
-        if (p != null) {
+        if (p != null && (creds || gaveUp)) {   // an address alone only helps a phone already on this network
             Bitmap qr = QrCode.encode(p, side);
             if (qr != null) iv.setImageBitmap(qr);
-            cap.setText("Scan this with the BackSeat TV remote:  Set-up check → Scan the TV's QR");
+            cap.setText(creds ? "Scan this with the BackSeat TV remote:  Set-up check → Scan the TV's QR"
+                              : "Couldn't start the TV's hotspot. This code only works with the phone on the same Wi-Fi as the TV.");
             return;
         }
-        if (tries++ > 20) { cap.setText("Couldn't start the TV's hotspot. Use Bluetooth, or put both on the same Wi-Fi."); return; }
+        tries++;
+        if (gaveUp) { cap.setText("Couldn't start the TV's hotspot. Use Bluetooth, or put both on the same Wi-Fi."); return; }
         cap.setText("Starting the TV's hotspot…");
         main.postDelayed(this::awaitPairing, 700);
     }

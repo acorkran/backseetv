@@ -457,7 +457,10 @@ public class PlayerActivity extends Activity {
         emptyState.addView(d);
         Button b = new Button(this);
         b.setText("Open set-up check"); b.setAllCaps(false);
-        b.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
+        b.setOnClickListener(v -> {   // set-up check can change the role, so a locked screen asks first
+            if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) showUnlock();
+            else startActivity(new Intent(this, app.anancy.SetupActivity.class));
+        });
         emptyState.addView(b, new LinearLayout.LayoutParams(dp(260), dp(52)));
         emptyState.setVisibility(View.VISIBLE);
         emptyState.bringToFront();

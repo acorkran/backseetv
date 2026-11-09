@@ -122,16 +122,22 @@ public class BleService extends Service {
         if (!WatchTarget.relay(this) || isQuery(cmd)) { direct(cmd); return; }
         final android.content.Context c = getApplicationContext();
         relayPool.execute(() -> {
-            boolean ok = false;
+            boolean ok = false, waitingOnPhone = false;
             try {
                 java.util.List<com.google.android.gms.wearable.Node> nodes = com.google.android.gms.tasks.Tasks.await(
                         com.google.android.gms.wearable.Wearable.getNodeClient(c).getConnectedNodes(), 2, java.util.concurrent.TimeUnit.SECONDS);
                 for (com.google.android.gms.wearable.Node n : nodes) {
+                    waitingOnPhone = true;
                     byte[] r = com.google.android.gms.tasks.Tasks.await(com.google.android.gms.wearable.Wearable.getMessageClient(c)
                             .sendRequest(n.getId(), WatchTarget.PATH_CMD, cmd.getBytes()), 3, java.util.concurrent.TimeUnit.SECONDS);
+                    waitingOnPhone = false;
                     if (r != null && "ok".equals(new String(r))) { ok = true; break; }
                 }
-            } catch (Exception e) { Log.w(TAG, "relay failed (" + cmd + "): " + e); }
+            } catch (Exception e) {
+                Log.w(TAG, "relay failed (" + cmd + "): " + e);
+                // A late phone still runs it, so sending it here too would double a next or undo a toggle.
+                if (waitingOnPhone && e instanceof java.util.concurrent.TimeoutException) return;
+            }
             if (!ok) main.post(() -> direct(cmd));
         });
     }

@@ -144,7 +144,7 @@ if exist "%HERE%Anancy\" (
     %A% push "%HERE%Anancy" /sdcard/ || echo       Some files did not copy. Run this again to retry.
 )
 %A% shell settings put global anancy_kiosk 1 >nul 2>&1
-%A% shell am start -n app.anancy/.RouterActivity --es role player >nul 2>&1
+%A% shell am start -n app.anancy/.AdbSetRole --es role player >nul 2>&1
 
 del "%OUT%" >nul 2>&1
 echo.

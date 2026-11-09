@@ -169,7 +169,8 @@ public class WifiClient {
     }
     /** Commands whose HTTP response is a {"type":...} payload the UI waits for. */
     private static boolean isQuery(String cmd) {
-        return cmd.equals("list") || cmd.equals("queue") || cmd.equals("conn") || cmd.equals("cfg") || cmd.startsWith("shows") || cmd.startsWith("eps:");
+        return cmd.equals("list") || cmd.startsWith("list:") || cmd.equals("queue") || cmd.startsWith("queue:")
+                || cmd.equals("conn") || cmd.equals("cfg") || cmd.startsWith("cfg@") || cmd.startsWith("shows") || cmd.startsWith("eps:");
     }
 
     /** BLE command vocabulary -> the player's HTTP endpoints (must stay in step with ControlServer). */
@@ -198,6 +199,8 @@ public class WifiClient {
         if (cmd.startsWith("delpl:")) return "/delplaylist?name=" + enc(cmd.substring(6));
         // config sync
         if (cmd.equals("cfg")) return "/config";
+        if (cmd.startsWith("list:")) return "/playlists";   // HTTP sends the whole list
+        if (cmd.startsWith("queue:")) return queuePage(cmd.substring(6));
         if (cmd.equals("rescan")) return "/rescan";
         if (cmd.startsWith("cfg@")) return "/config";   // HTTP has no notification budget: one page, no "more"
         if (cmd.startsWith("cfg:")) {   // cfg:KEY=VALUE
@@ -222,6 +225,12 @@ public class WifiClient {
             case "queue": return "/queue?center=-1&n=4";   // same ±4 window BLE pushes
             default: return "/" + cmd;   // play, pause, playpause, next, prev, flash (Cfg duration), power
         }
+    }
+    /** /queue serves [center-n, center+n], so centring n past the start gives a page beginning there. */
+    private static String queuePage(String from) {
+        final int n = 20;
+        int f; try { f = Math.max(0, Integer.parseInt(from.trim())); } catch (Exception e) { f = 0; }
+        return "/queue?center=" + (f + n) + "&n=" + n;
     }
     private static String onOff(String s) { return "on".equals(s.trim()) ? "1" : "0"; }
     private static String onOffToggle(String base, String s) {
