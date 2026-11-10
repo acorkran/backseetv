@@ -121,7 +121,7 @@ public class PlayerActivity extends Activity {
         boolean shared = remoteRole();   // "this phone as playback": the running engine is handed over (SelfPlayer)
         if (shared) SelfPlayer.start(this);
         adopted = shared;
-        player = shared ? SelfPlayer.player() : new ExoPlayer.Builder(this).build();
+        player = shared ? SelfPlayer.player() : new ExoPlayer.Builder(this).setLoadControl(PlayerController.loadControl()).build();
         player.setVideoSurfaceView(surface);
         adoptedSurface = shared ? surface : null;
         videoSurface = surface;
@@ -428,6 +428,7 @@ public class PlayerActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         enterKiosk();
+        main.removeCallbacks(pinWatch); main.postDelayed(pinWatch, PIN_WATCH_MS);
         // Coming back from granting the permission (or picking a folder) is exactly the moment the
         // library can suddenly exist, and nothing else would notice until the next cold start.
         if (PlayerController.get().libraryEmpty()) PlayerController.get().rescan(this);
@@ -467,10 +468,76 @@ public class PlayerActivity extends Activity {
     }
 
     // --- kid-proof shell: device-owner lock-task + hidden-gesture admin unlock (PIN) ---
+    /** Android's unpin shortcut can't be disabled without device owner, but it needn't be final: if the
+        show is still on screen and nobody used the grown-up menu, pin again. Only after a pin that was
+        accepted, so someone who declined the prompt isn't asked every couple of seconds. */
+    private static final long PIN_WATCH_MS = 1500;
+    static final String HOME_ALIAS = "app.anancy.HomeAlias";
+    /** Offer the show as a home screen, or stop offering it. Off also undoes a "use as home: Always"
+        choice, because Android drops a home it can no longer resolve and falls back to the launcher. */
+    public static void setHomeAlias(android.content.Context c, boolean on) {
+        try {
+            android.content.pm.PackageManager pm = c.getPackageManager();
+            ComponentName alias = new ComponentName(c.getPackageName(), HOME_ALIAS);
+            int want = on ? android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                          : android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+            if (pm.getComponentEnabledSetting(alias) != want)
+                pm.setComponentEnabledSetting(alias, want, android.content.pm.PackageManager.DONT_KILL_APP);
+        } catch (Exception e) { Log.w(TAG, "home alias: " + e); }
+    }
+    private boolean pinSeen = false;
+    private final Runnable pinWatch = new Runnable() { @Override public void run() {
+        if (isFinishing()) return;
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) pinSeen = true;
+        else if (pinSeen && visible) {
+            pinSeen = false;
+            if (Cfg.getInt(PlayerActivity.this, "anancy_kiosk", 0) == 1) {
+                Log.i(TAG, "unpinned without the grown-up menu -> pin again");
+                requestPin();
+            }
+        }
+        main.postDelayed(this, PIN_WATCH_MS);
+    }};
+    /** The grown-up code was typed: a non-owner pin comes off now, or Android blocks Settings, the remote
+        and anything else the menu opens. Device owner keeps its lock; its own screens are allowed in it. */
+    private void releasePinForAdmin() {
+        if (deviceOwner()) return;
+        pinSeen = false; main.removeCallbacks(pinRequest); hidePinHint();
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) {
+            Log.i(TAG, "grown-up menu -> unpin");
+            try { stopLockTask(); } catch (Exception ignored) {}
+        }
+    }
+    /** Back to the show from the grown-up menu: ask to pin again. Settings and the remote need nothing
+        here, because coming back to the player resumes it and that asks anyway. */
+    private void repinAfterAdmin() {
+        if (deviceOwner() || !visible || Cfg.getInt(this, "anancy_kiosk", 0) != 1) return;
+        if (lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_NONE) requestPin();
+    }
+    /** The toddler lock ("anancy_kiosk") changed, possibly from a remote: without this it only applied at the next launch.
+        Device owner keeps its documented next-launch behaviour. */
+    public static void applyPinSetting() {
+        final PlayerActivity a = sRef.get();
+        if (a == null) return;
+        a.runOnUiThread(() -> { if (!a.isFinishing() && a.visible && !a.deviceOwner()) a.enterKiosk(); });
+    }
+    private boolean deviceOwner() {
+        try { DevicePolicyManager d = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE); return d != null && d.isDeviceOwnerApp(getPackageName()); }
+        catch (Exception e) { return false; }
+    }
     private void enterKiosk() {
         int on = 0;
         on = Cfg.getInt(this, "anancy_kiosk", 0);   // Settings screen (prefs) or adb Settings.Global
-        if (on != 1) return;   // gated so dev builds aren't trapped; `settings put global anancy_kiosk 1` to lock
+        if (on != 1) {   // gated so dev builds aren't trapped; `settings put global anancy_kiosk 1` to lock
+            setHomeAlias(this, false);
+            if (!deviceOwner() && lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_PINNED) {
+                pinSeen = false;
+                try { stopLockTask(); } catch (Exception ignored) {}
+            }
+            return;
+        }
+        setHomeAlias(this, true);   // Home and restarts come back to the show while it's locked
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) return;   // already held; don't re-prompt
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
             if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
@@ -492,11 +559,100 @@ public class PlayerActivity extends Activity {
                     android.content.IntentFilter home = new android.content.IntentFilter(Intent.ACTION_MAIN);
                     home.addCategory(Intent.CATEGORY_HOME);
                     home.addCategory(Intent.CATEGORY_DEFAULT);
-                    dpm.addPersistentPreferredActivity(admin, home, new ComponentName(this, RouterActivity.class));
+                    dpm.clearPackagePersistentPreferredActivities(admin, getPackageName());   // drops the pre-alias entry too
+                    dpm.addPersistentPreferredActivity(admin, home, new ComponentName(getPackageName(), HOME_ALIAS));
                 } catch (Exception e) {}
             }
-            startLockTask();
+            if (deviceOwner()) startLockTask(); else requestPin();
         } catch (Exception e) {}
+    }
+
+    /** Ordinary install: show the toddler lock screen first, bright, then ask Android to pin. Android dims
+        everything behind its prompt, so the parent gets a moment to read ours before that happens. */
+    private static final long PIN_PROMPT_DELAY_MS = 1600;
+    private final Runnable pinRequest = () -> {
+        if (isFinishing() || !visible || Cfg.getInt(this, "anancy_kiosk", 0) != 1) { hidePinHint(); return; }
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) return;
+        try { startLockTask(); } catch (Exception ignored) {}
+    };
+    private void requestPin() {
+        main.removeCallbacks(pinRequest);
+        showPinHint();
+        main.postDelayed(pinRequest, PIN_PROMPT_DELAY_MS);
+    }
+
+    // ---- Toddler lock screen ------------------------------------------------------------------------
+    // Android's own pin prompt is small and easy to misread. Behind it, say in big letters what to press.
+    // Every maker draws that prompt somewhere else (Samsung: a box in the middle; AOSP: a card along the
+    // bottom; others unknown) and we cannot ask where, so there is no arrow and one layout: the call to
+    // action sits in a strip along the top, clear of the prompts we have seen, and the rest is read in the
+    // bright moment before Android's prompt dims and covers it.
+    private android.view.View pinHint;
+    private long pinHintUntil = 0;
+    private static final long PIN_HINT_MAX_MS = 25000;
+    private final Runnable pinHintCheck = new Runnable() { @Override public void run() {
+        if (pinHint == null) return;
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE
+                || android.os.SystemClock.elapsedRealtime() > pinHintUntil || isFinishing()) { hidePinHint(); return; }
+        main.postDelayed(this, 250);
+    }};
+    private void hidePinHint() {
+        main.removeCallbacks(pinHintCheck);
+        if (pinHint != null && root != null) root.removeView(pinHint);
+        pinHint = null;
+    }
+    private void showPinHint() {
+        if (root == null || deviceOwner()) return;
+        if (lockTaskState() != android.app.ActivityManager.LOCK_TASK_MODE_NONE) return;
+        hidePinHint();
+        android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+        int h = root.getHeight() > 0 ? root.getHeight() : m.heightPixels;
+        // Scale to the screen: a landscape phone is ~320dp tall, a tablet 600dp or more.
+        float k = Math.max(0.55f, Math.min(1f, h / m.density / 600f));
+        String btn = "samsung".equalsIgnoreCase(android.os.Build.MANUFACTURER) ? "OK" : "GOT IT";
+        // Android dims everything behind its prompt, so only the brightest colours still read: white and yellow.
+        final int YELLOW = 0xFFFFEE33;
+
+        FrameLayout f = new FrameLayout(this);
+        f.setBackgroundColor(0xF2070A10);   // full screen: the show stops competing for attention
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        String pre = "Tap ", mid = " " + btn + " ", post = " to switch on the toddler lock";
+        android.text.SpannableString head = new android.text.SpannableString(pre + mid + post);
+        head.setSpan(new android.text.style.BackgroundColorSpan(YELLOW), pre.length(), pre.length() + mid.length(), 0);
+        head.setSpan(new android.text.style.ForegroundColorSpan(0xFF000000), pre.length(), pre.length() + mid.length(), 0);
+        TextView headline = hintText("", Math.round(46 * k), Color.WHITE, true);
+        headline.setText(head); headline.setMaxLines(1); headline.setShadowLayer(0, 0, 0, 0);
+        box.addView(headline);
+
+        TextView what = hintText("Home, Back and Recents stop working until a grown-up unlocks it.",
+                Math.round(30 * k), Color.WHITE, false);
+        what.setPadding(0, dp(Math.round(40 * k)), 0, 0);
+        box.addView(what);
+        TextView owner = hintText("Setting up a dedicated kids' device? Install BackSeat TV as a device-owner "
+                + "kiosk and it locks by itself, with no prompt.", Math.round(26 * k), YELLOW, true);
+        owner.setPadding(0, dp(Math.round(24 * k)), 0, 0);
+        box.addView(owner);
+        for (int i = 0; i < box.getChildCount(); i++) ((TextView) box.getChildAt(i)).setGravity(Gravity.CENTER_HORIZONTAL);
+
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        blp.leftMargin = blp.rightMargin = dp(24); blp.topMargin = dp(Math.round(14 * k));
+        f.addView(box, blp);
+        f.setOnClickListener(v -> hidePinHint());   // after "No thanks", a tap anywhere clears it
+        root.addView(f, new FrameLayout.LayoutParams(-1, -1));
+        pinHint = f;
+
+        pinHintUntil = android.os.SystemClock.elapsedRealtime() + PIN_HINT_MAX_MS;
+        main.postDelayed(pinHintCheck, 400);
+    }
+    private TextView hintText(String t, int sp, int color, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(t); v.setTextColor(color); v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp);
+        if (bold) v.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        v.setShadowLayer(dp(3), 0, dp(1), 0xFF000000);
+        return v;
     }
     /** Admin PIN pad (on-screen digit grid, no soft keyboard). Auto-checks when the entered length
         matches; wrong clears; cancel/back keeps the kiosk locked. Default PIN 1234, override with
@@ -687,6 +843,7 @@ public class PlayerActivity extends Activity {
     /** After the PIN: the TV's own admin menu. The kiosk has to be fully usable with no phone or
         watch around, so "Remote" is the complete remote UI running locally against this player. */
     private void showAdminMenu(final float restoreBrightness) {
+        releasePinForAdmin();
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
         col.setPadding(dp(24), dp(16), dp(24), dp(16));
@@ -695,7 +852,7 @@ public class PlayerActivity extends Activity {
         h.setGravity(Gravity.CENTER); h.setPadding(0, dp(8), 0, dp(16));
         col.addView(h);
         final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
-                .setOnCancelListener(d -> setBrightness(napped ? 0.02f : restoreBrightness)).create();
+                .setOnCancelListener(d -> { setBrightness(napped ? 0.02f : restoreBrightness); repinAfterAdmin(); }).create();
         String[][] items = {
                 {"Remote  ·  playlist, up next, controls", "remote"},
                 {"Settings  ·  unlock gesture, PIN, Wi-Fi, camera", "settings"},
@@ -724,7 +881,7 @@ public class PlayerActivity extends Activity {
                     case "settings": startActivity(new Intent(this, SettingsActivity.class)); break;
                     case "playmode": startPlayMode(); return;
                     case "exit":     unlock(); return;
-                    default: break;
+                    default: repinAfterAdmin(); break;   // "Back to the show"
                 }
                 setBrightness(napped ? 0.02f : restoreBrightness);
             });
@@ -746,6 +903,8 @@ public class PlayerActivity extends Activity {
     /** Drop kiosk enforcement and hand to the real launcher. Device owner is KEPT, and re-opening
         the Anancy player re-locks (enterKiosk). Reaching here already passed the PIN. */
     private void unlock() {
+        pinSeen = false; main.removeCallbacks(pinWatch); main.removeCallbacks(pinRequest); hidePinHint();
+        setHomeAlias(this, false);   // an adult's own launcher is home again, including any "Always" choice
         try { stopLockTask(); } catch (Exception e) {}
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
@@ -780,6 +939,8 @@ public class PlayerActivity extends Activity {
     private boolean remoteRole() { return "remote".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", "")); }
     /** Leave fullscreen for the remote; the show carries on in this device's card. */
     private void backToRemote() {
+        pinSeen = false; main.removeCallbacks(pinWatch); main.removeCallbacks(pinRequest); hidePinHint();
+        setHomeAlias(this, false);
         try { stopLockTask(); } catch (Exception ignored) {}
         startActivity(new Intent(this, RemoteActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));

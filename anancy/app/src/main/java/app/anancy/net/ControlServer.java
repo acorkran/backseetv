@@ -184,6 +184,7 @@ public class ControlServer {
                     } else body = Cfg.configJson(ctx, true);
                     break;
                 }
+                case "/hold": ctrl.groupHold(param(q, "id"), "1".equals(param(q, "on"))); body = ok(); break;   // a synced follower is buffering
                 case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }

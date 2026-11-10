@@ -47,45 +47,62 @@ public class SyncMathTest {
         assertEquals(1000 + 59999, SyncMath.expectedPos(1000, 5000, true, 5000 + 59999, true));
     }
 
-    // ---- shouldHardSeek: big drift => seek, small drift => nudge ----
+    // ---- shouldHardSeek: big drift => re-align, small drift => nudge ----
 
     @Test public void shouldHardSeek_boundary() {
-        assertFalse(SyncMath.shouldHardSeek(SyncMath.HARD_SEEK_MS));       // exactly 250 -> nudge
-        assertTrue(SyncMath.shouldHardSeek(SyncMath.HARD_SEEK_MS + 1));    // 251 -> seek
-        assertTrue(SyncMath.shouldHardSeek(-(SyncMath.HARD_SEEK_MS + 1))); // symmetric behind
+        assertFalse(SyncMath.shouldHardSeek(SyncMath.HARD_SEEK_MS));
+        assertTrue(SyncMath.shouldHardSeek(SyncMath.HARD_SEEK_MS + 1));
+        assertTrue(SyncMath.shouldHardSeek(-(SyncMath.HARD_SEEK_MS + 1)));
     }
 
-    // ---- driftSpeed: converge small drift with an inaudible speed change ----
+    // ---- driftSpeed: converge small drift with a speed change nobody hears ----
 
     @Test public void driftSpeed_zeroIsRealtime() {
         assertEquals(1.0f, SyncMath.driftSpeed(0), 1e-4f);
     }
 
+    @Test public void driftSpeed_deadbandLeavesSpeedAlone() {
+        assertEquals(1.0f, SyncMath.driftSpeed(SyncMath.DEADBAND_MS), 1e-4f);
+        assertEquals(1.0f, SyncMath.driftSpeed(-SyncMath.DEADBAND_MS), 1e-4f);
+    }
+
     @Test public void driftSpeed_aheadPlaysSlower() {
-        // +60ms ahead -> 1 - 60/6000 = 0.99 (slow down to let the leader catch up)
-        assertEquals(0.99f, SyncMath.driftSpeed(60), 1e-4f);
+        assertEquals(0.97f, SyncMath.driftSpeed(60), 1e-4f);
     }
 
     @Test public void driftSpeed_behindPlaysFaster() {
-        assertEquals(1.01f, SyncMath.driftSpeed(-60), 1e-4f);
+        assertEquals(1.03f, SyncMath.driftSpeed(-60), 1e-4f);
     }
 
     @Test public void driftSpeed_clampedBothWays() {
-        assertEquals(0.985f, SyncMath.driftSpeed(1_000_000), 1e-4f);   // wildly ahead -> floor
-        assertEquals(1.015f, SyncMath.driftSpeed(-1_000_000), 1e-4f);  // wildly behind -> ceiling
+        assertEquals(0.96f, SyncMath.driftSpeed(1_000_000), 1e-4f);
+        assertEquals(1.04f, SyncMath.driftSpeed(-1_000_000), 1e-4f);
     }
 
     @Test public void driftSpeed_justInsideTheClamp() {
-        // +89ms ahead -> 1 - 89/6000 = 0.985167 (still above the 0.985 floor)
-        assertEquals(0.985167f, SyncMath.driftSpeed(89), 1e-4f);
-        // -89ms behind -> 1 + 89/6000 = 1.014833 (still below the 1.015 ceiling)
-        assertEquals(1.014833f, SyncMath.driftSpeed(-89), 1e-4f);
+        assertEquals(0.9605f, SyncMath.driftSpeed(79), 1e-4f);
+        assertEquals(1.0395f, SyncMath.driftSpeed(-79), 1e-4f);
     }
 
     @Test public void driftSpeed_exactlyAtTheClamp() {
-        // ±90ms lands exactly on the floor/ceiling (1 - 90/6000 = 0.985)
-        assertEquals(0.985f, SyncMath.driftSpeed(90), 1e-4f);
-        assertEquals(1.015f, SyncMath.driftSpeed(-90), 1e-4f);
+        assertEquals(0.96f, SyncMath.driftSpeed(80), 1e-4f);
+        assertEquals(1.04f, SyncMath.driftSpeed(-80), 1e-4f);
+    }
+
+    // ---- lead: how far ahead a follower seeks so it can buffer and start on time ----
+
+    @Test public void leadFromReady_coversTheMeasuredSeekWithMargin() {
+        assertEquals(1450L, SyncMath.leadFromReady(1000));
+    }
+
+    @Test public void leadFromReady_staysInRange() {
+        assertEquals(SyncMath.MIN_LEAD_MS, SyncMath.leadFromReady(0));
+        assertEquals(SyncMath.MAX_LEAD_MS, SyncMath.leadFromReady(60_000));
+    }
+
+    @Test public void missedLead_doublesUpToTheLimit() {
+        assertEquals(1600L, SyncMath.missedLead(800));
+        assertEquals(SyncMath.MAX_LEAD_MS, SyncMath.missedLead(SyncMath.MAX_LEAD_MS));
     }
 
     // ---- fold: NTP-lite offset estimate from /clock probes ----

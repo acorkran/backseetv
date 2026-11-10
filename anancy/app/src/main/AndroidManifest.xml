@@ -61,11 +61,19 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
-                <!-- also a HOME app: the show IS the home screen (device-owner pins us as preferred home) -->
+            </intent-filter>
+        </activity>
+        <!-- The show as the HOME screen, only while the TV is locked (Pin the screen or kiosk); see
+             PlayerActivity.setHomeAlias. Switched off on Exit, so an adult's own launcher is home again
+             and swiping the app away doesn't bring it back. -->
+        <activity-alias android:name=".HomeAlias" android:targetActivity=".RouterActivity"
+            android:exported="true" android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.HOME"/>
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
-        </activity>
+        </activity-alias>
         <!-- Set the role from a computer (the role extra, see SETUP.md B1).
              DUMP is held by adb's shell and the system, so other apps can't start this. -->
         <activity-alias android:name=".AdbSetRole" android:targetActivity=".RouterActivity"

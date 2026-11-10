@@ -98,17 +98,17 @@ public class SettingsActivity extends Activity {
         actionRow("Admin PIN", "change", this::changePin);
         if ("pattern".equals(style))
             actionRow("Unlock pattern", Cfg.getStr(this, "anancy_pattern", "").isEmpty() ? "set" : "change", this::setPattern);
-        boolRow(owner ? "Kiosk lock (device owner)" : "Pin the screen", "anancy_kiosk", 0);
+        boolRow(owner ? "Kiosk lock (device owner)" : "Toddler lock", "anancy_kiosk", 0);
         note("Unlock method: Randomized PIN = copy a random code shown on screen, within the time + attempts you set "
                 + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
                 + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
                 + "set it below, falls back to the PIN pad until you do)."
                 + (owner ? " Kiosk lock pins BackSeat TV as home + blocks Home/Back/Recents (next launch)." : "")
-                + (owner ? "" : "\n\nPin the screen (no device owner needed): Android's own app pinning. Home, Recents and "
+                + (owner ? "" : "\n\nToddler lock (no device owner needed): pins the show with Android's own screen pinning, after one tap to confirm. Home, Recents and "
                 + "the notification shade stop working while the show is on; the unlock gesture above gets you out. Android "
-                + "shows an \"App is pinned\" note the first time. This is a soft lock: the way out varies by device and a "
-                + "curious kid can find it. Only device owner, set up from a computer, is a lockout you can rely on. Give "
-                + "the phone a screen lock too, so Android can ask for its PIN when the pin ends."));
+                + "shows an \"App is pinned\" note the first time. Android keeps its own way out, holding Back + Recents. If "
+                + "that's used, BackSeat TV asks to pin again. Device owner, set up from a computer, needs no prompts and "
+                + "survives a restart. Give the phone a screen lock too, so Android can ask for its PIN when the pin ends."));
 
         // --- Playback --------------------------------------------------------------------------
         section("Playback");
@@ -223,6 +223,7 @@ public class SettingsActivity extends Activity {
                     try {
                         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
                         Cfg.put(this, "anancy_kiosk", 0);
+                        app.anancy.player.PlayerActivity.setHomeAlias(this, false);
                         if (dpm != null) dpm.clearDeviceOwnerApp(getPackageName());
                         toast("Device owner removed"); postRebuild();
                     } catch (Exception e) { toast("Couldn't remove: " + e.getMessage()); }

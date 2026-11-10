@@ -16,8 +16,13 @@ package app.anancy.player;
 final class SyncMath {
     private SyncMath() {}
 
-    /** Drift beyond this (ms) warrants a seek; under it, a gentle speed nudge. */
-    static final long HARD_SEEK_MS = 250;
+    /** Drift beyond this (ms) warrants a re-align; under it, a gentle speed nudge. Must comfortably
+        exceed what one seek costs, or a follower seeks, falls behind while buffering, and seeks again. */
+    static final long HARD_SEEK_MS = 600;
+    /** Drift this small isn't visible; leave the speed alone. */
+    static final long DEADBAND_MS = 35;
+    /** How far ahead of the leader a follower seeks, so it can buffer there and start on time. */
+    static final long MIN_LEAD_MS = 800, MAX_LEAD_MS = 8000;
 
     /** Immutable running clock estimate produced by {@link #fold}. */
     static final class Clock {
@@ -65,10 +70,20 @@ final class SyncMath {
 
     /**
      * Playback speed to converge small drift: drift>0 means we're AHEAD of the
-     * leader, so play slightly slower. Clamped to ±1.5% so it stays inaudible.
+     * leader, so play slightly slower. Clamped to ±4% (pitch is preserved), so the largest
+     * drift this handles closes in about 15 seconds.
      */
     static float driftSpeed(long drift) {
-        float sp = 1f - drift / 6000f;
-        return Math.max(0.985f, Math.min(1.015f, sp));
+        if (Math.abs(drift) <= DEADBAND_MS) return 1f;
+        float sp = 1f - drift / 2000f;
+        return Math.max(0.96f, Math.min(1.04f, sp));
     }
+
+    /** Lead for the next re-align, from how long this seek took to become ready. */
+    static long leadFromReady(long readyMs) {
+        return Math.max(MIN_LEAD_MS, Math.min(MAX_LEAD_MS, readyMs * 5 / 4 + 200));
+    }
+
+    /** Lead after the leader reached the target before the follower was ready. */
+    static long missedLead(long lead) { return Math.min(MAX_LEAD_MS, lead * 2); }
 }

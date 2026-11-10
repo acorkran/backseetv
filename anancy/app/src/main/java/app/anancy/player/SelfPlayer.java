@@ -40,7 +40,7 @@ public final class SelfPlayer {
     public static void start(Context ctx) {
         if (player != null) return;
         app = ctx.getApplicationContext();
-        player = new ExoPlayer.Builder(app).build();
+        player = new ExoPlayer.Builder(app).setLoadControl(PlayerController.loadControl()).build();
         PlayerController c = PlayerController.get();
         c.setAudio(app);        // before attach: it loads the persisted mute, so there's no audible window
         c.attach(player);

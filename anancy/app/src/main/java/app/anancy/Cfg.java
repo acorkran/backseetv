@@ -128,5 +128,6 @@ public class Cfg {
         if ("int".equals(m[1])) { try { put(c, key, Integer.parseInt(value.trim())); } catch (Exception e) { return; } }
         else put(c, key, value);
         if ("anancy_conn".equals(key)) { try { HotspotService.applyMode(c, value); } catch (Exception ignored) {} }
+        if ("anancy_kiosk".equals(key)) app.anancy.player.PlayerActivity.applyPinSetting();
     }
 }

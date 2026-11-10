@@ -36,8 +36,10 @@ public class RouterActivity extends Activity {
         try {
             boolean fromAdb = getComponentName().getClassName().endsWith(".AdbSetRole");
             String forced = fromAdb && getIntent() != null ? getIntent().getStringExtra("role") : null;
-            if ("player".equals(forced) || "remote".equals(forced))
+            if ("player".equals(forced) || "remote".equals(forced)) {
                 getSharedPreferences(PREF, MODE_PRIVATE).edit().putString(KEY, forced).apply();
+                pinByDefault();
+            }
         } catch (Exception ignored) {}
 
         String role = getSharedPreferences(PREF, MODE_PRIVATE).getString(KEY, null);
@@ -69,11 +71,23 @@ public class RouterActivity extends Activity {
         SysBars.pad(root);   // keep the nav bar off the content (edge-to-edge)
     }
 
+    /** A fresh ordinary install pins the show every time it goes full screen (Android asks for one tap).
+        Only when nobody has chosen yet: an explicit off in Settings stays off. A device-owner kiosk has
+        its own Kiosk lock switch. */
+    private void pinByDefault() {
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) return;
+            if (!Cfg.p(this).contains("anancy_kiosk")) Cfg.put(this, "anancy_kiosk", 1);
+        } catch (Exception ignored) {}
+    }
+
     private Button bigBtn(String label, final String role) {
         Button btn = new Button(this);
         btn.setText(label);
         btn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
             getSharedPreferences(PREF, MODE_PRIVATE).edit().putString(KEY, role).apply();
+            pinByDefault();
             route("player".equals(role) ? PlayerActivity.class : RemoteActivity.class);
         }});
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pad(72));
@@ -114,6 +128,8 @@ public class RouterActivity extends Activity {
             // device-owner TV it's DPM-granted already (so it's filtered out below); this covers the
             // NON-owner remote / Play flavor, where nothing else requests it.
             if (android.os.Build.VERSION.SDK_INT >= 33) want.add("android.permission.POST_NOTIFICATIONS");
+            // Android 10 and older read the shows through this. Only a device-owner kiosk grants it to itself.
+            if (android.os.Build.VERSION.SDK_INT < 30) want.add(android.Manifest.permission.READ_EXTERNAL_STORAGE);
             // QR pairing puts up a local-only hotspot, and startLocalOnlyHotspot throws
             // SecurityException without this. The device-owner TV grants it to itself, so the gap
             // only ever showed on a plain install -- where "Show pairing QR" sat on a blank white

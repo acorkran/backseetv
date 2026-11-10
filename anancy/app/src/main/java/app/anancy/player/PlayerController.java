@@ -84,7 +84,16 @@ public class PlayerController {
     private volatile long clkOffset = 0;
     private volatile boolean clkValid = false;
     private volatile long clkBestRtt = Long.MAX_VALUE;
-    private static final long START_LEAD = 400;    // ms the follower seeks ahead then waits, so its first frame lands in step
+    // Group buffering (follower side): see mirror().
+    private long alignTarget = -1, alignStarted = 0, alignLead = SyncMath.MIN_LEAD_MS, bufferingSince = 0, settleUntil = 0;
+    private boolean alignReadySeen = false, holdSent = false;
+    private int alignMisses = 0;
+    private float followerSpeed = 1f;
+    // Group buffering (leader side): follower id -> when its hold lapses. Main thread only.
+    private final java.util.Map<String, Long> holds = new java.util.HashMap<>();
+    private boolean heldByGroup = false;
+    private long holdCooldownUntil = 0;
+    private static final long REBUFFER_HOLD_MS = 1500, ALIGN_SETTLE_MS = 1500, HOLD_MAX_MS = 8000, HOLD_COOLDOWN_MS = 20000;
     // (clock-offset filtering + drift math live in SyncMath — pure + unit-tested; HARD_SEEK_MS is there)
 
     public void setNapped(boolean n) { napped = n; applyMute(); }   // re-assert volume so a napped ("off") player goes silent immediately
@@ -171,8 +180,10 @@ public class PlayerController {
 
     /** False when the library is unreadable for a reason that no amount of waiting will fix, so the
         caller reports it instead of retrying into a black screen. */
-    private static boolean canWaitForStorage() {
+    private boolean canWaitForStorage() {
         try {
+            if (android.os.Build.VERSION.SDK_INT < 30 && appCtx != null && appCtx.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
             return android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager();
         } catch (Exception e) { return true; }
     }
@@ -358,7 +369,7 @@ public class PlayerController {
     }
 
     /** Jump to item i of the current queue and play. */
-    public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { p.seekToDefaultPosition(i); p.play(); } }); }
+    public void jumpTo(final int i) { on(() -> { if (p != null && i >= 0 && i < p.getMediaItemCount()) { clearHolds(); p.seekToDefaultPosition(i); p.play(); } }); }
     /** The current queue as JSON: titles in PLAY order + current index. n>0 = a window of center±n (fits BLE); n<=0 = full list. */
     public String queueJson(int center, int n) { return queueJson(center, n, Integer.MAX_VALUE); }
     /** maxTitle bounds each item title so a BLE window fits ONE MTU (~509 bytes); HTTP passes MAX_VALUE. */
@@ -518,44 +529,134 @@ public class PlayerController {
     }
     private void stopSyncLoop() {
         if (syncTick != null) { main.removeCallbacks(syncTick); syncTick = null; }
-        if (startPending != null) { main.removeCallbacks(startPending); startPending = null; }
-        on(() -> { try { if (p != null) { p.setPlaybackParameters(new PlaybackParameters(1f)); keepMute(); } } catch (Exception ignored) {} });   // restore the device's own volume (no longer a forced-silent follower)
+        cancelAlign(); bufferingSince = 0; requestHold(false);
+        on(() -> { try { if (p != null) { followerSpeed = 1f; p.setPlaybackParameters(new PlaybackParameters(1f)); keepMute(); } } catch (Exception ignored) {} });   // restore the device's own volume (no longer a forced-silent follower)
     }
     /** The leader's position RIGHT NOW, extrapolated from a timestamped sample on the shared clock. */
     private long expectedPos(long leaderPos, long leaderClock, boolean lplaying) {
         return SyncMath.expectedPos(leaderPos, leaderClock, lplaying, leaderNow(), clkValid);
     }
-    /** One mirror step (main thread): match the leader's item + shared-clock position and play/pause. Kept
-        muted — a follower's audio would echo the leader. First frame is aligned by a seek-ahead start:
-        seek START_LEAD past the leader, wait that long, then play, so we begin exactly where it will be. */
+    /** One mirror step (main thread): match the leader's item + shared-clock position and play/pause.
+        A follower must never seek while it's still buffering: the leader moves on meanwhile, the drift
+        looks worse, and it seeks again, forever. So a big correction aligns instead: seek AHEAD of the
+        leader, buffer there paused, and start the moment the leader reaches that frame. */
     private void mirror(int cur, long leaderPos, long leaderClock, boolean lplaying) {
-        if (p == null || cur < 0) return;
-        if (startPending != null) { syncMute(); return; }   // a scheduled start is mid-flight; don't fight it
+        if (p == null || cur < 0 || !clkValid) return;
         final long expected = expectedPos(leaderPos, leaderClock, lplaying);
-        if (currentLibId() != cur) {                         // wrong item -> switch + scheduled seek-ahead start
+        if (currentLibId() != cur) {                         // wrong item -> switch + align
             MediaItem mi = itemFor(cur);
             if (mi != null) {
-                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare(); syncMute();
-                if (lplaying) { p.seekTo(expected + START_LEAD); p.pause(); schedulePlayAfter(START_LEAD); }
+                cancelAlign(); bufferingSince = 0; setFollowerSpeed(1f);
+                p.setMediaItems(java.util.Collections.singletonList(mi)); p.prepare();
+                if (lplaying) beginAlign(expected);
                 else { p.seekTo(expected); p.pause(); }
             }
             syncMute(); return;
         }
+        if (alignTarget >= 0) {
+            if (lplaying) { stepAlign(expected); syncMute(); return; }
+            cancelAlign();                                   // leader paused (or is waiting for us): just match it
+        }
+        if (p.getPlaybackState() == Player.STATE_BUFFERING) {
+            if (lplaying && p.getPlayWhenReady()) {          // stalled mid-show: if it lasts, the group waits for us
+                long n = clockNow();
+                if (bufferingSince == 0) bufferingSince = n;
+                else if (n - bufferingSince > REBUFFER_HOLD_MS) requestHold(true);
+            }
+            syncMute(); return;
+        }
+        bufferingSince = 0;
         long drift = p.getCurrentPosition() - expected;      // >0 = we're ahead of the leader
-        if (SyncMath.shouldHardSeek(drift)) { p.seekTo(expected); p.setPlaybackParameters(new PlaybackParameters(1f)); }
-        else { p.setPlaybackParameters(new PlaybackParameters(SyncMath.driftSpeed(drift))); }
+        if (holdSent && !SyncMath.shouldHardSeek(drift)) requestHold(false);   // caught up: the group can carry on
+        if (SyncMath.shouldHardSeek(drift) && clockNow() >= settleUntil) {
+            long d = p.getDuration();
+            if (lplaying && d != androidx.media3.common.C.TIME_UNSET && expected + alignLead >= d) { syncMute(); return; }   // about to change item anyway
+            setFollowerSpeed(1f);
+            if (lplaying) beginAlign(expected);
+            else { p.pause(); p.seekTo(expected); }
+            syncMute(); return;
+        }
+        setFollowerSpeed(lplaying ? SyncMath.driftSpeed(drift) : 1f);
         if (lplaying && !p.isPlaying()) p.play();
         else if (!lplaying && p.isPlaying()) p.pause();
         syncMute();
     }
+    private void beginAlign(long expected) {
+        cancelStart();
+        alignTarget = expected + alignLead; alignStarted = clockNow(); alignReadySeen = false;
+        p.pause(); p.seekTo(alignTarget);
+    }
+    private void stepAlign(long expected) {
+        if (startPending != null) return;                    // start already timed
+        boolean ready = p.getPlaybackState() == Player.STATE_READY;
+        if (ready && !alignReadySeen) { alignReadySeen = true; alignLead = SyncMath.leadFromReady(clockNow() - alignStarted); }
+        long wait = alignTarget - expected;
+        if (wait <= 0) {                                     // the leader got there first
+            alignLead = SyncMath.missedLead(alignLead);
+            if (++alignMisses >= 2) requestHold(true);       // twice late: ask the group to wait for us
+            beginAlign(expected);
+            return;
+        }
+        if (!ready) return;
+        startPending = () -> {
+            startPending = null; alignTarget = -1; alignMisses = 0;
+            settleUntil = clockNow() + ALIGN_SETTLE_MS;
+            if (syncEnabled && p != null) { syncMute(); p.play(); }
+        };
+        main.postDelayed(startPending, wait);
+    }
+    private void cancelStart() { if (startPending != null) { main.removeCallbacks(startPending); startPending = null; } }
+    private void cancelAlign() { cancelStart(); alignTarget = -1; alignMisses = 0; }
+    private void setFollowerSpeed(float s) {
+        if (p == null || Math.abs(s - followerSpeed) < 0.0005f) return;
+        followerSpeed = s; p.setPlaybackParameters(new PlaybackParameters(s));
+    }
     /** Follower audio each mirror tick. In LEADER-ONLY mode force gain 0 (audio comes from the leader, no
         echo — and a stray broadcast unmute can't make it sound). In EACH-SCREEN mode play its own volume. */
     private void syncMute() { if (p != null && !sleeping) p.setVolume(syncMuteFollower ? 0f : effMult()); }
-    /** Wait `ms` (the seek-ahead lead) then start — by then the leader has reached the frame we seeked to. */
-    private void schedulePlayAfter(long ms) {
-        if (startPending != null) main.removeCallbacks(startPending);
-        startPending = () -> { startPending = null; if (syncEnabled && p != null) { syncMute(); p.play(); } };
-        main.postDelayed(startPending, Math.max(0, ms));
+    /** Follower -> leader: "wait for me" / "carry on". */
+    private void requestHold(final boolean want) {
+        if (holdSent == want || appCtx == null) return;
+        holdSent = want;
+        final String host = Cfg.getStr(appCtx, "anancy_host", "");
+        final String id = Identity.id(appCtx);
+        if (host == null || host.isEmpty()) return;
+        new Thread(() -> { try { httpGet("http://" + host + ":8090/hold?id=" + id + "&on=" + (want ? "1" : "0")); } catch (Exception ignored) {} }).start();
+    }
+    /** Leader: a follower is buffering, so the group waits for it. Bounded, so a screen that dropped off
+        can't leave the show stopped: the hold expires, and that screen is then ignored for a while. */
+    public void groupHold(final String id, final boolean want) { on(() -> {
+        if (p == null || id == null) return;
+        long now = clockNow();
+        if (want) {
+            if (now < holdCooldownUntil || (!heldByGroup && !p.isPlaying())) return;   // a parent's pause isn't ours to manage
+            holds.put(id, now + HOLD_MAX_MS);
+            if (!heldByGroup) { heldByGroup = true; p.pause(); android.util.Log.i("Anancy", "group hold: waiting for " + id); }
+            main.removeCallbacks(holdExpiry); main.postDelayed(holdExpiry, HOLD_MAX_MS);
+        } else {
+            holds.remove(id);
+            if (holds.isEmpty()) resumeFromHold();
+        }
+    }); }
+    private final Runnable holdExpiry = () -> {
+        android.util.Log.i("Anancy", "group hold expired; carrying on");
+        holds.clear(); holdCooldownUntil = clockNow() + HOLD_COOLDOWN_MS; resumeFromHold();
+    };
+    private void resumeFromHold() {
+        main.removeCallbacks(holdExpiry);
+        if (!heldByGroup) return;
+        heldByGroup = false;
+        if (p != null && !napped) p.play();
+    }
+    /** Someone pressed a control: their choice wins over any screen still buffering. True if we were holding. */
+    private boolean clearHolds() {
+        boolean was = heldByGroup;
+        holds.clear(); heldByGroup = false; main.removeCallbacks(holdExpiry);
+        return was;
+    }
+    /** Starts quickly, which group start-up depends on. The defaults wait for 2.5s of video (5s after a stall). */
+    public static androidx.media3.exoplayer.LoadControl loadControl() {
+        return new androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(30000, 50000, 1000, 2000).build();
     }
     /** Append (or insert after the current item when next/now); now = also jump to it. False = bad id. */
     public boolean enqueue(final int id, final boolean next, final boolean now) {
@@ -832,14 +933,15 @@ public class PlayerController {
 
     // --- commands (marshaled to main) --------------------------------------
     public void play()      { on(() -> {
+        clearHolds();
         if (!sleeping) p.setVolume(effMult());   // restore the multiplier (a sleep fade may have zeroed it)
         if (p.getPlaybackState() == Player.STATE_ENDED) p.seekToDefaultPosition(0);   // loop-off ended: start over
         p.play();
     }); }
-    public void pause()     { on(() -> p.pause()); }
+    public void pause()     { on(() -> { clearHolds(); p.pause(); }); }
     public void toggle()    { on(() -> { if (p.isPlaying()) p.pause(); else play(); }); }
-    public void next()      { on(() -> p.seekToNextMediaItem()); }
-    public void prev()      { on(() -> p.seekToPreviousMediaItem()); }
+    public void next()      { on(() -> { boolean h = clearHolds(); p.seekToNextMediaItem(); if (h) p.play(); }); }
+    public void prev()      { on(() -> { boolean h = clearHolds(); p.seekToPreviousMediaItem(); if (h) p.play(); }); }
     public void seekNearEnd(){ on(() -> { long d = p.getDuration(); if (d > 0) p.seekTo(Math.max(0, d - 3000)); }); }
     /** Bind system audio: read the current media volume, restore the persisted mute, and make sure the
         appliance never boots stuck silent (system volume 0 -> 50%). */

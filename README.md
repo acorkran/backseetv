@@ -92,7 +92,7 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 See **[SETUP.md](SETUP.md)**: a no-computer route (download the APK, screen pinning), an adb route
 (device-owner kiosk, watch remote, Android Auto without the developer toggle), and a one-step Windows
 script that does the adb route for you.
-Only the device-owner route is a real lockout; screen pinning is a soft lock a curious kid can get out of.
+Screen pinning blocks Home, Back and Recents. The device-owner route adds no prompts and survives a restart.
 
 ## Build & test
 

@@ -1393,7 +1393,7 @@ public class RemoteActivity extends Activity {
         }
         Button pin = setRow(col, "Admin PIN"); pin.setText(cfgPinSet ? "change" : "set"); pin.setOnClickListener(v -> changeTvPin());
         final boolean k = cfgI("anancy_kiosk", 0) == 1;
-        Button kb = setRow(col, cfgOwner ? "Kiosk lock" : "Pin the screen"); kb.setText(k ? "on" : "off");
+        Button kb = setRow(col, cfgOwner ? "Kiosk lock" : "Toddler lock"); kb.setText(k ? "on" : "off");
         kb.setOnClickListener(v -> { setCfg("anancy_kiosk", cfgI("anancy_kiosk", 0) == 1 ? "0" : "1"); renderSettings(); });
 
         Button setup = ui.rowBtn("This phone: set-up check", TXT);   // includes Change role

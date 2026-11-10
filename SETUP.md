@@ -14,13 +14,13 @@ There are two ways to set it up:
 | | **No computer** (Part A) | **With adb** (Part B) |
 |---|---|---|
 | Install | Download the APK and open it | `adb install` |
-| Locking the TV | Android's own **screen pinning**. A soft lock: fine for a quick distraction, but a curious kid can get out of it | **Kiosk**: the only real lockout. The show *is* the home screen; Home, Back and Recents are blocked; it boots straight into the show |
+| Locking the TV | Android's own **screen pinning**. Blocks Home, Back and Recents and pins itself again if released, but asks for one tap to confirm and ends on a restart | **Kiosk**: no prompts, and it survives a restart. The show *is* the home screen; Home, Back and Recents are blocked; it boots straight into the show |
 | Permissions | You tap "Allow" a few times | Granted silently |
 | Watch remote | Not yet (it will arrive with the Play Store version) | Yes |
 | Android Auto | Yes, with one developer toggle | Yes, with no toggle (see B5) |
 
-Start with Part A. You can move a TV to Part B later without reinstalling. **If a child will be using the
-screen unsupervised, use Part B:** only device owner locks the device down properly.
+Start with Part A. You can move a TV to Part B later without reinstalling. **For a screen a child uses
+unsupervised, Part B is the strongest lock.**
 
 ---
 
@@ -55,26 +55,41 @@ screen unsupervised, use Part B:** only device owner locks the device down prope
 5. The library appears and starts playing, **muted**. You get a **Shuffle All** playlist plus one
    playlist per show.
 
-### A3. Lock it (screen pinning)
+### A3. Lock it (toddler lock)
+
+The toddler lock is on from the start. Each time the show goes full screen, Android asks you to confirm the pin
+with one tap (**Got it** or **OK**).
+
+To get out, or to turn pinning off:
 
 1. Get into the grown-up menu: **tap with four fingers, four times, within 3 seconds**, anywhere on
    the show.
 2. Copy the code shown on screen (it changes every time; a toddler can't read it in time).
-3. **Settings → Pin the screen → on**.
+3. **Exit to launcher**, or **Settings → Toddler lock → off**.
+
+The code takes the pin off straight away, so Settings and the remote open normally. **Back to the
+show** asks to pin again. On a Samsung with a screen lock, taking the pin off also locks the phone:
+unlock it as usual and the grown-up menu is waiting.
 
 While pinned, Home, Recents and the notification shade do nothing. The four-finger taps still get
 you out.
 
-**Screen pinning is a soft lock, not a real one.** It's an Android convenience feature, and this app
-can't make it any stronger without device owner:
+**How strong is it?** On Android 10 and 15, Home, Recents and Back do nothing while pinned, and the
+screen ignores taps apart from the four-finger unlock. Three limits come from Android and need device
+owner to remove:
 
-- The way to unpin varies by device, so don't plan around a particular shortcut. Holding Back + Recents
-  never unpinned the tablet we tested, and on other devices it may unpin straight away.
+- Android asks you to confirm each pin with one tap.
+- Android keeps its own way out: touch and hold Back and Recents. If that's used, BackSeat TV asks to
+  pin again straight away.
 - The power button still works, and pinning ends if the device restarts.
-- Toddler play mode and the grown-up menu are only as locked as the screen underneath them.
 
 Give the TV a screen lock too (PIN or pattern in Android Settings), so Android can ask for it when the
-pin ends. For a lockout you can rely on, use **device owner (B2)**.
+pin ends. For no prompts and a lock that survives a restart, use **device owner (B2)**.
+
+**Coming back to the show after a restart (optional).** While the toddler lock is on, BackSeat TV can be
+the Home app: set it in Android Settings → Default apps → Home app, or tap **Always** if Android asks.
+**Exit to launcher** in the grown-up menu hands Home back to your normal launcher, so the device works
+as usual for you afterwards. Set it again next time you lock the tablet up.
 
 ### A4. Set up the phone remote
 
@@ -228,7 +243,7 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
   adb the permission is `adb shell pm grant app.anancy android.permission.CAMERA` (a kiosk grants
   it itself).
 - **Toddler play mode:** grown-up menu → Toddler play mode. A tap-the-letters screen over the show.
-  It only keeps little hands in the app on a device-owner kiosk (B2). With screen pinning it's a soft lock.
+  Use it with the toddler lock or a device-owner kiosk (B2), or little hands can leave the app.
 - **Switching a device's role:** open the **set-up check** and tap **Change role** on the Role line.
   On a phone remote it's at the bottom of **Settings** ("This phone: set-up check"). On a TV it's in
   the grown-up menu → Settings → Set-up check.
@@ -236,7 +251,7 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
   **This phone as playback**. The show plays in a small card at the top of the screens list, marked
   **"<name> (this device)"**, and you keep the whole remote. Tap the card to include or leave out that
   screen. The corners button on the card makes it **large**: full-screen, with the same unlock gesture,
-  Pin the screen and volume-button lock as a TV. Back (or the grown-up menu → Remote) returns it to
+  toddler lock and volume-button lock as a TV. Back (or the grown-up menu → Remote) returns it to
   the card. Tick **Sync Playback** in the same menu to keep the selected screens in step.
 
   **The watch is the best way to use a large show.** Once it's full-screen the phone's remote is
