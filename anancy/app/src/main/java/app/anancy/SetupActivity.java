@@ -248,7 +248,8 @@ public class SetupActivity extends Activity {
             owner = dpm != null && dpm.isDeviceOwnerApp(getPackageName());
         } catch (Exception ignored) {}
         if (owner) { row(true, "Kiosk mode", "Set up as device owner: pinned as home, inescapable lock, silent Wi-Fi joins.", null, null); return; }
-        info("Kiosk mode (optional)", "BackSeat TV works fine as a normal player. The locked-down appliance is a one-time "
+        info("Kiosk mode (optional)", "BackSeat TV works fine as a normal player, but Android's screen pinning is the only lock it has, and a curious "
+                + "kid can get out of that. The properly locked-down appliance is a one-time "
                 + "setup from a computer with adb, on a tablet with no Google or Samsung account:\n\n"
                 + SettingsCmd() + "\n\nThen reopen BackSeat TV and turn on Kiosk lock in Settings.",
                 "Copy command", () -> {

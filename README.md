@@ -17,10 +17,7 @@ uses every day, not a commercial product. You bring your own videos.
 
 ## Demo
 
-<!-- TODO(owner): drop a screen recording here — phone remote driving two tablets in sync.
-     See docs/README.md for how to record the clip, convert it, and drop it in
-     (save it as docs/demo.gif and swap this comment for: ![Anancy demo](docs/demo.gif)). -->
-_A 20-second clip of the phone remote driving two screens in lock-step will go here._
+![BackSeat TV: the phone switches the tablet's show, then joins in as a synced second screen](docs/demo.gif)
 
 ## What makes it interesting
 
@@ -95,6 +92,7 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 See **[SETUP.md](SETUP.md)**: a no-computer route (download the APK, screen pinning), an adb route
 (device-owner kiosk, watch remote, Android Auto without the developer toggle), and a one-step Windows
 script that does the adb route for you.
+Only the device-owner route is a real lockout; screen pinning is a soft lock a curious kid can get out of.
 
 ## Build & test
 
@@ -133,6 +131,22 @@ via the device-owner exemption), and on-device verification on a physical Androi
 ## Contributing
 
 This is a personal portfolio project — issues and pull requests aren't being accepted. You're welcome to fork it under the license below.
+
+## Credits
+
+The letter and number voices in toddler mode are clips rendered ahead of time with
+[Piper](https://github.com/rhasspy/piper) (MIT), using these voices:
+
+- **Jenny (Dioco)**: from the [Jenny TTS dataset](https://github.com/dioco-group/jenny-tts-dataset) by Dioco.
+- **Cori**: [voice model](https://brycebeattie.com/files/tts/) by Bryce Beattie, trained on
+  [LibriVox](https://librivox.org) recordings (public domain).
+- **Linda**: [voice model](https://brycebeattie.com/files/tts/) by Bryce Beattie, trained on the
+  [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/) by Keith Ito (public domain).
+
+The cartoons in the demo clip are
+[*The Village Barber*](https://archive.org/details/TheVillageBarber1930UbIwerks) (Ub Iwerks, 1930)
+and [*Out of the Inkwell*](https://archive.org/details/out-of-the-inkwell-cartoon-collection)
+(Fleischer Studios), both marked Public Domain on the Internet Archive.
 
 ## License
 

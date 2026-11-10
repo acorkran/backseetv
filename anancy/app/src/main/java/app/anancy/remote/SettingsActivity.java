@@ -106,8 +106,9 @@ public class SettingsActivity extends Activity {
                 + (owner ? " Kiosk lock pins BackSeat TV as home + blocks Home/Back/Recents (next launch)." : "")
                 + (owner ? "" : "\n\nPin the screen (no device owner needed): Android's own app pinning. Home, Recents and "
                 + "the notification shade stop working while the show is on; the unlock gesture above gets you out. Android "
-                + "shows an \"App is pinned\" note the first time. Holding Back + Recents also unpins, so give the phone "
-                + "a screen lock: Android then asks for the phone's PIN after any unpin, including Exit from the admin menu."));
+                + "shows an \"App is pinned\" note the first time. This is a soft lock: the way out varies by device and a "
+                + "curious kid can find it. Only device owner, set up from a computer, is a lockout you can rely on. Give "
+                + "the phone a screen lock too, so Android can ask for its PIN when the pin ends."));
 
         // --- Playback --------------------------------------------------------------------------
         section("Playback");

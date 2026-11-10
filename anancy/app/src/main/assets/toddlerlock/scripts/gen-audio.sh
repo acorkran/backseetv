@@ -31,7 +31,7 @@ ESPEAK_DATA="$PIPER_DIR/espeak-ng-data"
 # permitted"), cori (LibriVox — public domain), ljspeech (LJ Speech — public domain).
 # Amy was dropped: its mimic3 source license couldn't be confirmed for commercial use.
 VOICES=(
-  "jenny|Jenny (British)|en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium"
+  "jenny|Jenny (Dioco)|en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium"
   "cori|Cori (British, HQ)|en/en_GB/cori/high/en_GB-cori-high"
   "linda|Linda (American)|en/en_US/ljspeech/medium/en_US-ljspeech-medium"
 )
