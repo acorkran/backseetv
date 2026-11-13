@@ -104,7 +104,10 @@ public class BleClient {
     /** Hold a link to EVERY tablet we hear — selection filters commands, not connections (instant switch). */
     private boolean want(String id) { return true; }
     /** TVs that refused our key, with the key they refused: don't hammer them until it changes. */
-    private final java.util.Map<String, String> rejected = new java.util.concurrent.ConcurrentHashMap<>();
+    // An "authfail" is unauthenticated: anyone can advertise our TV's id and send one. So it never
+    // blacklists the TV; it backs off (1, 2, 4... min) and only asks for a re-scan after 3 in a row.
+    private final java.util.Map<String, Long> backoffUntil = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Integer> fails = new java.util.concurrent.ConcurrentHashMap<>();
 
     public void start() {
         stopped = false;
@@ -130,11 +133,13 @@ public class BleClient {
                 final String id = tag[0], name = tag[1];
                 // Only TVs we've paired with (scanned their QR). Another family's TV in the same car
                 // park is listed as "not paired" and never connected to.
-                String key = app.anancy.Pairing.keyFor(ctx, id);
-                if (key == null || key.equals(rejected.get(id))) {
+                String key = app.anancy.Pairing.controlKey(ctx, id);
+                if (key == null) {
                     if (announced.add("u " + id + " " + name)) main.post(() -> l.onUnpaired(id, name));
                     return;
                 }
+                Long wait = backoffUntil.get(id);
+                if (wait != null && System.currentTimeMillis() < wait) return;
                 if (announced.add(id + " " + name)) main.post(() -> l.onSeen(id, name));
                 if (!want(id)) return;
                 Conn ex = conns.get(id);
@@ -231,7 +236,7 @@ public class BleClient {
         if (!s.contains("\"type\":\"auth")) return false;
         try {
             org.json.JSONObject o = new org.json.JSONObject(s);
-            String type = o.optString("type"), key = app.anancy.Pairing.keyFor(ctx, c.id);
+            String type = o.optString("type"), key = app.anancy.Pairing.controlKey(ctx, c.id);
             if ("auth".equals(type)) {
                 if (!c.id.equals(o.optString("id")) || key == null) { drop(c, "wrong TV"); return true; }   // not the TV we paired with
                 c.myNonce = PairCrypto.nonce(); c.tvNonce = o.optString("n");
@@ -244,13 +249,15 @@ public class BleClient {
                 }
                 c.sk = PairCrypto.sessionKey(key, c.id, c.tvNonce, c.myNonce); c.ctr = 0;
                 c.authed = true; c.lastStateMs = System.currentTimeMillis();
+                fails.remove(c.id); backoffUntil.remove(c.id);
                 Log.i(TAG, "BLE paired link up: " + c.id);
                 status("ready");
             } else if ("authfail".equals(type)) {
-                if (key != null) rejected.put(c.id, key);
-                Log.w(TAG, "BLE " + c.id + " rejected our key");
-                main.post(() -> l.onPairingRejected(c.id));
-                drop(c, "key rejected");
+                int n = fails.merge(c.id, 1, Integer::sum);
+                backoffUntil.put(c.id, System.currentTimeMillis() + Math.min(16, 1L << (n - 1)) * 60_000L);
+                Log.w(TAG, "BLE " + c.id + " refused our key (" + n + " in a row)");
+                if (n == 3) main.post(() -> l.onPairingRejected(c.id));   // likely really reset: tell the user once
+                drop(c, "key refused");
             }
         } catch (Exception ignored) {}
         return true;
@@ -258,8 +265,9 @@ public class BleClient {
     /** Drop links to TVs this phone is no longer paired with (Forget). */
     public void dropUnpaired() {
         for (Conn c : new java.util.ArrayList<>(conns.values()))
-            if (app.anancy.Pairing.keyFor(ctx, c.id) == null) drop(c, "forgotten");
+            if (app.anancy.Pairing.controlKey(ctx, c.id) == null) drop(c, "forgotten");
         announced.clear();   // re-announce: a TV may have moved between paired and not
+        fails.clear(); backoffUntil.clear();   // a fresh scan of its code: try again at once
     }
     private void drop(Conn c, String why) {
         Log.w(TAG, "BLE drop " + c.id + ": " + why);

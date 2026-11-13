@@ -153,4 +153,44 @@ public class PairCryptoTest {
         assertEquals("cfg:a=b|c", c[1]);
         assertNull(PairCrypto.openCommand(s1, "next".getBytes()));   // a plain command is refused
     }
+
+    @Test public void mediaKeyIsNotTheTvKey() {
+        String k = PairCrypto.newKey(), m = PairCrypto.mediaKey(k);
+        assertTrue(PairCrypto.validKey(m));
+        assertNotEquals(k, m);
+        assertEquals(m, PairCrypto.mediaKey(k));
+        assertNotEquals(m, PairCrypto.mediaKey(PairCrypto.newKey()));
+        // a request signed with the media key does not pass as one signed with the TV key
+        String h = PairCrypto.signRequest(m, "f1", "GET", "/state", NOW);
+        assertFalse(v0().verify(k, h, "GET", "/state", NOW));
+        assertTrue(v0().verify(m, h, "GET", "/state", NOW));
+    }
+
+    @Test public void streamKeyIsPerRequest() {
+        String k = PairCrypto.newKey(), n1 = PairCrypto.nonce(), n2 = PairCrypto.nonce();
+        byte[] a = PairCrypto.streamKey(k, n1);
+        assertArrayEquals(a, PairCrypto.streamKey(k, n1));
+        assertFalse(java.util.Arrays.equals(a, PairCrypto.streamKey(k, n2)));
+        byte[] frame = PairCrypto.sealBytes(a, new byte[]{(byte) 0xFF, (byte) 0xD8, 1, 2, (byte) 0xFF, (byte) 0xD9});
+        assertNull(PairCrypto.openBytes(PairCrypto.streamKey(k, n2), frame));   // someone else's stream
+        assertNotNull(PairCrypto.openBytes(a, frame));
+    }
+
+    @Test public void mediaBlocksOpenOnlyInPlace() {
+        String k = PairCrypto.newKey();
+        byte[] sk = PairCrypto.mediaStreamKey(k, PairCrypto.nonce());
+        assertFalse(java.util.Arrays.equals(sk, PairCrypto.streamKey(k, "n")));
+        long total = PairCrypto.MEDIA_BLOCK * 2L + 100;
+        assertEquals(PairCrypto.MEDIA_BLOCK, PairCrypto.blockLen(total, 1));
+        assertEquals(100, PairCrypto.blockLen(total, 2));
+        byte[] b = new byte[100]; new java.util.Random(2).nextBytes(b);
+        byte[] s2 = PairCrypto.sealBlock(sk, total, 2, b, 0, 100);
+        assertEquals(100 + PairCrypto.BLOCK_TAG, s2.length);
+        assertArrayEquals(b, PairCrypto.openBlock(sk, total, 2, s2, 0, s2.length));
+        assertNull(PairCrypto.openBlock(sk, total, 1, s2, 0, s2.length));        // moved to another place
+        assertNull(PairCrypto.openBlock(sk, total + 1, 2, s2, 0, s2.length));    // claimed another length
+        assertNull(PairCrypto.openBlock(PairCrypto.mediaStreamKey(k, PairCrypto.nonce()), total, 2, s2, 0, s2.length)); // another request
+        s2[5] ^= 1;
+        assertNull(PairCrypto.openBlock(sk, total, 2, s2, 0, s2.length));        // tampered
+    }
 }

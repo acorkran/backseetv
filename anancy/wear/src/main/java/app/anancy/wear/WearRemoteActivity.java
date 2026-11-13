@@ -400,11 +400,15 @@ public class WearRemoteActivity extends Activity {
                 c.setConnectTimeout(2500); c.setReadTimeout(6000);
                 String key = WatchKeys.keyFor(this, tabletId);   // the TV only serves its camera to paired devices
                 if (key == null) { c.disconnect(); return; }
-                c.setRequestProperty(PairCrypto.HEADER, PairCrypto.signRequest(key, WatchKeys.clientId(this), "GET", "/live", System.currentTimeMillis()));
+                String auth = PairCrypto.signRequest(key, WatchKeys.clientId(this), "GET", "/live", System.currentTimeMillis());
+                c.setRequestProperty(PairCrypto.HEADER, auth);
+                final byte[] sk = PairCrypto.streamKey(key, PairCrypto.nonceOf(auth));   // each frame is sealed for this request
                 if (c.getResponseCode() != 200) { c.disconnect(); return; }
                 java.io.InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 1 << 15);
                 byte[] jpg;
                 while (liveRun && (jpg = readMjpegFrame(in)) != null) {
+                    jpg = PairCrypto.openBytes(sk, jpg);
+                    if (jpg == null) continue;   // not from our TV, or damaged
                     final android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
                     if (bmp != null) main.post(() -> {
                         camWifiOn = true;

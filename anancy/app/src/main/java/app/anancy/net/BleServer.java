@@ -159,15 +159,7 @@ public class BleServer {
 
     private final BluetoothGattServerCallback serverCb = new BluetoothGattServerCallback() {
         @Override public void onConnectionStateChange(BluetoothDevice dev, int status, int newState) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                final BluetoothDevice d = dev;
-                main.postDelayed(() -> {   // never proved itself: drop it
-                    if (!isAuthed(d) && gatt != null) {
-                        Log.w(TAG, "BLE " + d.getAddress() + " didn't pair in time, dropping");
-                        try { gatt.cancelConnection(d); } catch (Exception ignored) {}
-                    }
-                }, AUTH_TIMEOUT_MS);
-            }
+            if (newState == BluetoothProfile.STATE_CONNECTED) armAuthTimeout(dev);
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 subs.remove(dev);
                 forget(dev.getAddress());
@@ -195,7 +187,7 @@ public class BleServer {
                 // connection, so we never saw it drop and still hold the old session. A fresh hello
                 // starts a new handshake (it proves nothing by itself; the key is still needed).
                 String hs = new String(val).trim();
-                if (hs.startsWith("hello:")) { forget(dev.getAddress()); main.post(() -> onAuthCmd(d, hs)); return; }
+                if (hs.startsWith("hello:")) { forget(dev.getAddress()); armAuthTimeout(d); main.post(() -> onAuthCmd(d, hs)); return; }
                 Log.w(TAG, "BLE " + dev.getAddress() + ": a command that didn't open, ignored");
                 return;
             }
@@ -204,7 +196,7 @@ public class BleServer {
             if (last != null && n <= last) { Log.w(TAG, "BLE " + dev.getAddress() + ": replayed command, ignored"); return; }
             lastCounter.put(dev.getAddress(), n);
             final String cmd = opened[1].trim();
-            Log.i(TAG, "BLE cmd: " + (cmd.startsWith("wifi") || cmd.startsWith("grant:") ? cmd.substring(0, cmd.indexOf(':') + 1) + "<secret>" : cmd));
+            Log.i(TAG, "BLE cmd: " + app.anancy.Diag.redact(cmd));
             if (cmd.startsWith("camble:")) setCamble(dev.getAddress(), "on".equals(cmd.substring(7).trim())); else exec(cmd);
             main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
         }
@@ -251,6 +243,15 @@ public class BleServer {
         Log.i(TAG, "BLE " + addr + " paired (" + client + ")");
         notifyOne(d, "{\"type\":\"authok\",\"p\":\"" + PairCrypto.tvProof(key, tvId, p[1]) + "\"}");
         main.postDelayed(this::pushState, 200);
+    }
+    /** A link that hasn't proved itself within AUTH_TIMEOUT_MS is dropped. */
+    private void armAuthTimeout(final BluetoothDevice d) {
+        main.postDelayed(() -> {
+            if (!isAuthed(d) && gatt != null) {
+                Log.w(TAG, "BLE " + d.getAddress() + " didn't pair in time, dropping");
+                try { gatt.cancelConnection(d); } catch (Exception ignored) {}
+            }
+        }, AUTH_TIMEOUT_MS);
     }
     /** A notification to ONE device in the clear: only ever the handshake. */
     private void notifyOne(BluetoothDevice d, String json) { notifyRaw(d, stateChar, json.getBytes()); }
@@ -333,7 +334,7 @@ public class BleServer {
         if (cmd.startsWith("grant:")) {   // grant:<id>:<ip>:<key sealed with OUR key> -> may now stream from that TV
             String[] g = cmd.substring(6).split(":", 3);
             String k = g.length == 3 ? app.anancy.Pairing.openMine(ctx, g[2]) : null;
-            if (k != null) { app.anancy.Pairing.remember(ctx, g[0], "", k); app.anancy.Pairing.noteHost(ctx, g[1], g[0]); }
+            if (k != null) { app.anancy.Pairing.rememberMedia(ctx, g[0], k); app.anancy.Pairing.noteHost(ctx, g[1], g[0]); }
             return;
         }   // re-read the media folders (hand-copied media)
         if (cmd.equals("conn")) { pushJson(ctrl.connJson()); return; }

@@ -105,6 +105,31 @@ public class QrShareActivity extends Activity {
         root.addView(cap);
 
         this.cap = cap;
+        if (firstRun) {
+            // A TV that will only ever be used on its own shouldn't show this at every start.
+            android.widget.Button later = new android.widget.Button(this);
+            later.setText("Not now");
+            later.setAllCaps(false);
+            later.setOnClickListener(v -> { app.anancy.Pairing.setPromptOff(this, true); finish(); });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = dp(12);
+            root.addView(later, lp);
+            TextView hint = new TextView(this);
+            hint.setText("You can pair a phone later: Settings > Pair a remote.");
+            hint.setTextColor(0xFFB0B0B0);
+            hint.setTextSize(13);
+            hint.setGravity(Gravity.CENTER);
+            hint.setPadding(0, dp(6), 0, 0);
+            root.addView(hint);
+            // the code and caption have to leave room for the button and hint
+            LinearLayout.LayoutParams ip = (LinearLayout.LayoutParams) iv.getLayoutParams();
+            int s2 = Math.max(dp(200), side - dp(90));
+            ip.width = s2; ip.height = s2; iv.setLayoutParams(ip);
+            this.side = s2 - quiet * 2;
+            Bitmap q2 = QrCode.encode(payload, this.side);
+            if (q2 != null) iv.setImageBitmap(q2);
+        }
         setContentView(root);
         app.anancy.SysBars.pad(root);   // keep the nav bar off the content (edge-to-edge)
         if (pair) {

@@ -1,7 +1,7 @@
 package app.anancy.wear;
 
 // ============================================================================
-//  Pairing crypto: a copy of the phone app's net/PairCrypto (tested there). Keep the two in step.
+//  Pairing crypto. Pure Java (no Android), so it is unit-tested on the JVM.
 //
 //  Every TV holds one random 256-bit key. The key leaves the TV only inside
 //  its pairing QR, so holding it proves someone stood in front of that screen.
@@ -171,6 +171,63 @@ public final class PairCrypto {
     public static String sha256Hex(byte[] b) {
         try { return hex(java.security.MessageDigest.getInstance("SHA-256").digest(b)); }
         catch (Exception e) { throw new IllegalStateException(e); }
+    }
+
+    // --- narrower keys --------------------------------------------------------------------------------
+
+    /** A key that only reaches a TV's shows: what a follower in a synced group gets instead of the
+        TV's own key, so a TV that was once in a group can stream from its leader but never drive it,
+        change it or see its camera. The TV accepts it only on its media paths. */
+    public static String mediaKey(String key) {
+        return b64(hmac(unb64(key), "media1".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** Seals one streamed response (the camera) under the key the request was signed with and that
+        request's nonce: only the device that asked can open it. */
+    public static byte[] streamKey(String key, String reqNonce) {
+        return hmac(unb64(key), ("live1|" + reqNonce).getBytes(StandardCharsets.UTF_8));
+    }
+
+    // --- a show streamed from one TV to another in a synced group ----------------------------------
+
+    /** Video goes in blocks so the player can still seek: each block is sealed on its own, its
+        number and the file's length are bound into the seal, and the key is new for every request. */
+    public static final int MEDIA_BLOCK = 64 * 1024, BLOCK_TAG = 16;
+
+    /** One /media answer's key: the requester's key and that request's nonce, kept apart from the camera's. */
+    public static byte[] mediaStreamKey(String key, String reqNonce) {
+        return hmac(unb64(key), ("media2|" + reqNonce).getBytes(StandardCharsets.UTF_8));
+    }
+    private static GCMParameterSpec blockIv(long index) {
+        byte[] iv = new byte[12];
+        iv[0] = 'B'; iv[1] = 'S'; iv[2] = 'T'; iv[3] = 'm';
+        for (int i = 0; i < 8; i++) iv[4 + i] = (byte) (index >>> (56 - 8 * i));
+        return new GCMParameterSpec(128, iv);
+    }
+    private static byte[] blockAad(long total) { return ("media2|" + total).getBytes(StandardCharsets.UTF_8); }
+
+    /** Seal block `index` (its plaintext is buf[off..off+len)) of a file `total` bytes long. Output is len + 16. */
+    public static byte[] sealBlock(byte[] k, long total, long index, byte[] buf, int off, int len) {
+        try {
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(k, "AES"), blockIv(index));
+            c.updateAAD(blockAad(total));
+            return c.doFinal(buf, off, len);
+        } catch (Exception e) { throw new IllegalStateException(e); }
+    }
+    /** The plaintext of a sealed block, or null if it was altered, moved, or belongs to another request. */
+    public static byte[] openBlock(byte[] k, long total, long index, byte[] in, int off, int len) {
+        try {
+            if (k == null || len < BLOCK_TAG) return null;
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(k, "AES"), blockIv(index));
+            c.updateAAD(blockAad(total));
+            return c.doFinal(in, off, len);
+        } catch (Exception e) { return null; }
+    }
+    /** Plaintext size of block `index` of a `total`-byte file. */
+    public static int blockLen(long total, long index) {
+        return (int) Math.max(0, Math.min(MEDIA_BLOCK, total - index * MEDIA_BLOCK));
     }
 
     // --- the Bluetooth session after the handshake --------------------------------------------------

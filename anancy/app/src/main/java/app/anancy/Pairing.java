@@ -64,12 +64,28 @@ public final class Pairing {
         Runnable r = onFirstPair;
         if (r != null) try { r.run(); } catch (Exception ignored) {}
     }
+    /** "Not now" on the first-run pairing screen: a TV used without any phone stops showing its
+        code at every start. Pair a remote in Settings shows it again whenever it's wanted. */
+    public static boolean promptOff(Context c) { return p(c).getBoolean("prompt_off", false); }
+    public static void setPromptOff(Context c, boolean off) { p(c).edit().putBoolean("prompt_off", off).apply(); }
     /** Set by the first-run pairing screen so it can close itself. */
     public static volatile Runnable onFirstPair;
 
-    /** Check a signed HTTP request against this TV's key. */
-    public static boolean verifyRequest(Context c, String header, String method, String pathAndQuery) {
-        return VERIFIER.verify(myKey(c), header, method, pathAndQuery, System.currentTimeMillis());
+    /** What a follower's media-only key may reach (see PairCrypto.mediaKey). */
+    private static final java.util.Set<String> MEDIA_PATHS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "/media", "/library", "/clock", "/state", "/hold"));
+
+    /** Check a signed HTTP request. Returns the key it was signed with (this TV's own, or the media-only
+        key on a media path), or null if it isn't genuine. The answer is MACed with the same key. */
+    public static String verifyRequest(Context c, String header, String method, String pathAndQuery) {
+        long now = System.currentTimeMillis();
+        String k = myKey(c);
+        if (VERIFIER.verify(k, header, method, pathAndQuery, now)) return k;
+        int q = pathAndQuery.indexOf('?');
+        String path = q >= 0 ? pathAndQuery.substring(0, q) : pathAndQuery;
+        String mk = PairCrypto.mediaKey(k);
+        if (MEDIA_PATHS.contains(path) && VERIFIER.verify(mk, header, method, pathAndQuery, now)) return mk;
+        return null;
     }
 
     // --- this device as a remote -----------------------------------------------------------------
@@ -87,20 +103,35 @@ public final class Pairing {
         return PairCrypto.validKey(k) ? k : null;
     }
 
-    public static boolean isPaired(Context c, String id) { return keyFor(c, id) != null; }
+    /** Paired to CONTROL that TV (its own key, from its QR). A follower's media-only key doesn't count:
+        it signs streaming requests to its leader and nothing else. */
+    public static boolean isPaired(Context c, String id) { return controlKey(c, id) != null; }
+    /** The key for driving TV `id` over Bluetooth or Wi-Fi, or null if we only hold a media key. */
+    public static String controlKey(Context c, String id) {
+        if (id == null) return null;
+        if (id.equals(Identity.id(c))) return myKey(c);
+        JSONObject o = peers(c).optJSONObject(id);
+        return o != null && !o.optBoolean("media", false) && PairCrypto.validKey(o.optString("key", null)) ? o.optString("key") : null;
+    }
 
-    /** Remember a TV from its QR (or a key handed over by a remote). */
-    public static synchronized boolean remember(Context c, String id, String name, String key) {
+    /** Remember a TV from its QR. */
+    public static boolean remember(Context c, String id, String name, String key) { return remember(c, id, name, key, false); }
+    /** Remember a key handed over by a remote: media-only (streaming from a leader). */
+    public static boolean rememberMedia(Context c, String id, String key) { return remember(c, id, "", key, true); }
+    private static synchronized boolean remember(Context c, String id, String name, String key, boolean mediaOnly) {
         if (id == null || id.isEmpty() || !PairCrypto.validKey(key)) return false;
         try {
             JSONObject all = peers(c);
             JSONObject prev = all.optJSONObject(id);
+            String had = prev != null ? prev.optString("key", null) : null;
+            if (PairCrypto.validKey(had) && PairCrypto.mediaKey(had).equals(key)) return true;   // we hold more than this already
             if (prev != null && key.equals(prev.optString("key")) && (name == null || name.isEmpty() || name.equals(prev.optString("name"))))
                 return true;   // nothing new (a sync group re-sends its leader's key): don't stir the links
             JSONObject o = new JSONObject();
             String was = prev != null ? prev.optString("name", "") : "";
             o.put("name", name != null && !name.isEmpty() ? name : was);
             o.put("key", key);
+            if (mediaOnly) o.put("media", true);
             all.put(id, o);
             p(c).edit().putString(PEERS, all.toString()).commit();
             Diag.log("Anancy", "pairing: paired with " + id + (name != null && !name.isEmpty() ? " (" + name + ")" : ""));
@@ -125,7 +156,7 @@ public final class Pairing {
         JSONObject all = peers(c);
         for (java.util.Iterator<String> it = all.keys(); it.hasNext(); ) {
             String id = it.next(); JSONObject o = all.optJSONObject(id);
-            if (o != null && PairCrypto.validKey(o.optString("key", null))) m.put(id, o.optString("name", id));
+            if (o != null && !o.optBoolean("media", false) && PairCrypto.validKey(o.optString("key", null))) m.put(id, o.optString("name", id));
         }
         return m;
     }
@@ -135,7 +166,7 @@ public final class Pairing {
         JSONObject all = peers(c);
         for (java.util.Iterator<String> it = all.keys(); it.hasNext(); ) {
             String id = it.next(); JSONObject o = all.optJSONObject(id);
-            String k = o != null ? o.optString("key", null) : null;
+            String k = o != null && !o.optBoolean("media", false) ? o.optString("key", null) : null;
             if (PairCrypto.validKey(k)) m.put(id, k);
         }
         return m;
@@ -223,15 +254,30 @@ public final class Pairing {
             String[] sent = SENT.remove(conn);
             if (sent == null || sent[1] == null) return false;
             String key = keyFor(c, sent[0]);
-            String mac = conn.getHeaderField(PairCrypto.RESP_HEADER), t = conn.getHeaderField(PairCrypto.TIME_HEADER);
-            if (key == null || mac == null || t == null) return false;
+            String mac = conn.getHeaderField(PairCrypto.RESP_HEADER), macM = conn.getHeaderField(PairCrypto.RESP_HEADER + "-M"),
+                    t = conn.getHeaderField(PairCrypto.TIME_HEADER);
+            if (key == null || t == null || (mac == null && macM == null)) return false;
             String want = PairCrypto.responseMac(key, sent[1], status + "|" + t.trim() + "|" + PairCrypto.sha256Hex(body == null ? new byte[0] : body));
-            if (!PairCrypto.same(want, mac)) return false;
+            if (!PairCrypto.same(want, mac) && !PairCrypto.same(want, macM)) return false;
             long off = Long.parseLong(t.trim()) - System.currentTimeMillis();
             String host = conn.getURL().getHost();
             if (Math.abs(off) > 30_000) OFFSETS.put(host, off); else OFFSETS.remove(host);
             return true;
         } catch (Exception e) { return false; }
+    }
+
+    /** The key that opens a streamed answer (the camera) to this signed request, or null. */
+    public static byte[] streamKey(Context c, java.net.HttpURLConnection conn) {
+        String[] sent = SENT.get(conn);
+        String key = sent == null ? null : keyFor(c, sent[0]);
+        return key == null || sent[1] == null ? null : PairCrypto.streamKey(key, sent[1]);
+    }
+
+    /** The key that opens a /media answer to this signed request, or null. */
+    public static byte[] mediaStreamKey(Context c, java.net.HttpURLConnection conn) {
+        String[] sent = SENT.get(conn);
+        String key = sent == null ? null : keyFor(c, sent[0]);
+        return key == null || sent[1] == null ? null : PairCrypto.mediaStreamKey(key, sent[1]);
     }
 
     /** Read a signed GET: the body when the TV answered 200 AND proved it's the TV, else null.
@@ -252,7 +298,7 @@ public final class Pairing {
 
     /** Seal `plain` so only TV `id` (or someone holding its key) can read it; null if not paired. */
     public static String sealFor(Context c, String id, String plain) {
-        String k = keyFor(c, id);
+        String k = controlKey(c, id);
         return k == null ? null : PairCrypto.seal(k, plain);
     }
     /** Open something sealed for this device as a TV. */

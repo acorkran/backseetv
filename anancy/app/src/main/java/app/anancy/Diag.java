@@ -41,4 +41,13 @@ public final class Diag {
             }
         } catch (Exception ignored) {}
     }
+
+    /** A command as it may appear in a log: Wi-Fi passwords, keys, the PIN and the unlock pattern
+        replaced with <secret>. */
+    public static String redact(String cmd) {
+        if (cmd == null) return null;
+        if (cmd.startsWith("wifi") || cmd.startsWith("grant:")) return cmd.substring(0, cmd.indexOf(':') + 1) + "<secret>";
+        if (cmd.startsWith("cfg:anancy_pin=") || cmd.startsWith("cfg:anancy_pattern=")) return cmd.substring(0, cmd.indexOf('=') + 1) + "<secret>";
+        return cmd;
+    }
 }

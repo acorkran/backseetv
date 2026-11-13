@@ -107,8 +107,10 @@ as usual for you afterwards. Set it again next time you lock the tablet up.
 
 **Only paired devices can control a TV or see its camera.** The pairing code is the only way in:
 whoever can see the TV's screen can pair. Another family's BackSeeTV nearby shows on your phone as
-"not paired" and is never connected to, and theirs can't reach yours. Everything between paired
-devices is encrypted or signed, over Bluetooth and Wi-Fi. Lost or sold a phone? On the TV: grown-up
+"not paired" and is never connected to, and theirs can't reach yours. Controls, settings and the
+camera are encrypted or signed between paired devices, over Bluetooth and Wi-Fi; the shows one TV
+streams to another in a synced group are not. After the grown-up unlock, the TV goes back to the
+locked show by itself after a minute with no touches. Lost or sold a phone? On the TV: grown-up
 unlock → Settings → **Unpair all remotes**, then pair the phones you still have again. On a phone,
 **Connection…** lists the paired screens and can forget one.
 

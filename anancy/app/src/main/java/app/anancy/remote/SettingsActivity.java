@@ -58,7 +58,25 @@ public class SettingsActivity extends Activity {
         app.anancy.SysBars.pad(sv);   // keep the nav bar off the content (edge-to-edge)
         build();
     }
-    @Override protected void onResume() { super.onResume(); refreshStatus(); }
+    @Override protected void onResume() {
+        super.onResume(); refreshStatus();
+        lastTouch = android.os.SystemClock.elapsedRealtime();
+        idle.removeCallbacks(idleCheck); idle.postDelayed(idleCheck, 5_000);
+    }
+    @Override protected void onPause() { idle.removeCallbacks(idleCheck); super.onPause(); }
+    // On a TV these settings sit behind the grown-up unlock: left alone for a minute, close (the remote
+    // page underneath does the same, so the TV ends up back on the locked show).
+    private final android.os.Handler idle = new android.os.Handler(android.os.Looper.getMainLooper());
+    private long lastTouch = 0;
+    private final Runnable idleCheck = new Runnable() { public void run() {
+        if ("remote".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", ""))) return;
+        if (android.os.SystemClock.elapsedRealtime() - lastTouch >= 60_000) { finish(); return; }
+        idle.postDelayed(this, 5_000);
+    }};
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+        lastTouch = android.os.SystemClock.elapsedRealtime();
+        return super.dispatchTouchEvent(e);
+    }
 
     private void build() {
         col.removeAllViews();

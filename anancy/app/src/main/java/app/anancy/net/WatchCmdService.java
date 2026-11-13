@@ -32,7 +32,7 @@ public class WatchCmdService extends WearableListenerService {
         }
         main.removeCallbacks(releaseWatch);
         main.postDelayed(releaseWatch, 120_000);   // keep the links warm while the watch is in use
-        Log.i(WatchLink.TAG, "relayed from watch: " + cmd);
+        Log.i(WatchLink.TAG, "relayed from watch: " + app.anancy.Diag.redact(cmd));
         sendWhenReady(cmd, 0);
         return Tasks.forResult("ok".getBytes());
     }

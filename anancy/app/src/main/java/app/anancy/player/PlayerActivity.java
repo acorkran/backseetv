@@ -441,7 +441,8 @@ public class PlayerActivity extends Activity {
         if (PlayerController.get().libraryEmpty()) PlayerController.get().rescan(this);
         // A TV no remote has paired with yet shows its pairing code, once per start, until one does.
         // That's the moment of setting it up, with an adult in front of it.
-        if (!remoteRole() && !pairPromptShown && !app.anancy.Pairing.everPaired(this)) {
+        if (!remoteRole() && !pairPromptShown && !app.anancy.Pairing.everPaired(this)
+                && !app.anancy.Pairing.promptOff(this)) {
             pairPromptShown = true;
             main.postDelayed(() -> {
                 if (isFinishing() || isPlayModeActive() || app.anancy.Pairing.everPaired(this)) return;

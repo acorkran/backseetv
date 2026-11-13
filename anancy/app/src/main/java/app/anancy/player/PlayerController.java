@@ -659,21 +659,13 @@ public class PlayerController {
         return was;
     }
     /** Starts quickly, which group start-up depends on. The defaults wait for 2.5s of video (5s after a stall). */
-    /** Media sources whose HTTP requests (a follower streaming from its leader's /media) are signed
-        with the key for that TV. Each open, including every seek's range request, gets a fresh nonce. */
+    /** Media sources for local files and, on a follower, its leader's /media. Those HTTP opens (every
+        seek is one) are signed with that TV's key and arrive sealed; SealedMediaDataSource opens them. */
     @SuppressLint("UnsafeOptInUsageError")
     public static androidx.media3.exoplayer.source.MediaSource.Factory mediaSources(Context ctx) {
         final Context actx = ctx.getApplicationContext();
-        androidx.media3.datasource.DataSource.Factory up = new androidx.media3.datasource.DefaultDataSource.Factory(actx);
-        androidx.media3.datasource.DataSource.Factory signed = new androidx.media3.datasource.ResolvingDataSource.Factory(up, spec -> {
-            if (!"http".equalsIgnoreCase(spec.uri.getScheme())) return spec;
-            String h = app.anancy.Pairing.headerFor(actx, spec.uri.toString(), "GET");
-            if (h == null) return spec;
-            java.util.Map<String, String> m = new java.util.HashMap<>();
-            m.put(app.anancy.net.PairCrypto.HEADER, h);
-            return spec.withAdditionalHeaders(m);
-        });
-        return new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(signed);
+        return new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                new androidx.media3.datasource.DefaultDataSource.Factory(actx, () -> new SealedMediaDataSource(actx)));
     }
 
     public static androidx.media3.exoplayer.LoadControl loadControl() {

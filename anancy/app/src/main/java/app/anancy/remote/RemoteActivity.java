@@ -583,10 +583,7 @@ public class RemoteActivity extends Activity {
         java.net.HttpURLConnection c = null;
         try {
             c = openOnWifi(url); c.setConnectTimeout(1500); c.setReadTimeout(1500);
-            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream()));
-            StringBuilder sb = new StringBuilder(); String line;
-            while ((line = r.readLine()) != null) sb.append(line);
-            r.close(); return sb.toString();
+            return app.anancy.Pairing.fetch(this, c);   // only an answer the TV proves it sent
         } catch (Exception e) { return null; }
         finally { if (c != null) try { c.disconnect(); } catch (Exception ignored) {} }
     }
@@ -781,7 +778,8 @@ public class RemoteActivity extends Activity {
                 try {
                     java.net.HttpURLConnection c = openOnWifi("http://" + tabletIp + ":8090/queue?center=-1&n=80");
                     c.setConnectTimeout(2000); c.setReadTimeout(4000);
-                    if (c.getResponseCode() == 200) { final String json = readAll(c.getInputStream()); main.post(() -> { if (queueView != null) renderQueue(col, json); }); }
+                    final String json = app.anancy.Pairing.fetch(this, c);
+                    if (json != null) main.post(() -> { if (queueView != null) renderQueue(col, json); });
                     c.disconnect();
                 } catch (Exception ignored) {}   // the BLE window still paints
             }).start();
@@ -914,8 +912,9 @@ public class RemoteActivity extends Activity {
                 try {
                     c = openOnWifi("http://" + ip + ":8090" + httpPath);
                     c.setConnectTimeout(1500); c.setReadTimeout(5000);
-                    if (c.getResponseCode() == 200) {
-                        final JSONObject o = new JSONObject(readAll(c.getInputStream()));
+                    String body = app.anancy.Pairing.fetch(this, c);   // only an answer the TV proves it sent
+                    if (body != null) {
+                        final JSONObject o = new JSONObject(body);
                         if (type.equals(o.optString("type"))) { main.post(() -> cb.accept(o)); return; }
                     }
                 } catch (Exception ignored) {} finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
@@ -1215,7 +1214,7 @@ public class RemoteActivity extends Activity {
             if (ip.isEmpty()) r = "unknown (no IP from the TV yet)";
             else {
                 java.net.HttpURLConnection c = null;
-                try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1500); c.setReadTimeout(1500); r = c.getResponseCode() == 200 ? "reachable at " + ip : "not reachable (" + ip + ")"; }
+                try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1500); c.setReadTimeout(1500); r = app.anancy.Pairing.fetch(this, c) != null ? "reachable at " + ip : "not reachable (" + ip + ")"; }
                 catch (Exception e) { r = "not reachable (" + ip + ")"; }
                 finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
             }
@@ -1669,7 +1668,7 @@ public class RemoteActivity extends Activity {
 
     private boolean reachable(String ip) {
         java.net.HttpURLConnection c = null;
-        try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1200); c.setReadTimeout(1200); return c.getResponseCode() == 200; }
+        try { c = openOnWifi("http://" + ip + ":8090/state"); c.setConnectTimeout(1200); c.setReadTimeout(1200); return app.anancy.Pairing.fetch(this, c) != null; }
         catch (Exception e) { return false; }
         finally { try { if (c != null) c.disconnect(); } catch (Exception ignore) {} }
     }
@@ -1683,6 +1682,8 @@ public class RemoteActivity extends Activity {
                 try {
                     c = openOnWifi("http://" + host + "/live");
                     c.setConnectTimeout(2500); c.setReadTimeout(6000);
+                    final byte[] sk = app.anancy.Pairing.streamKey(this, c);   // frames are sealed for this request
+                    if (sk == null) throw new Exception("not paired with that TV");
                     if (c.getResponseCode() != 200) throw new Exception("http " + c.getResponseCode());
                     java.io.InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 1 << 16);
                     fails = 0;
@@ -1695,10 +1696,12 @@ public class RemoteActivity extends Activity {
                         }
                         if (line == null) break;                      // stream ended
                         if (len <= 0 || len > 4_000_000) continue;
-                        byte[] jpg = new byte[len]; int r = 0, k;
-                        while (r < len && (k = in.read(jpg, r, len - r)) >= 0) r += k;
+                        byte[] sealed = new byte[len]; int r = 0, k;
+                        while (r < len && (k = in.read(sealed, r, len - r)) >= 0) r += k;
                         if (r != len) break;
-                        final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, len);
+                        byte[] jpg = app.anancy.net.PairCrypto.openBytes(sk, sealed);
+                        if (jpg == null) continue;   // not from our TV, or damaged: never shown
+                        final Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
                         if (bmp != null) main.post(() -> { showFrame(img, bmp); status.setText(""); });
                     }
                 } catch (Exception e) {
@@ -1938,10 +1941,24 @@ public class RemoteActivity extends Activity {
         attach();
         showTab(0);   // always land on the Remote tab
         refreshAll(); startCardPolling();   // per-screen cards + their live state
-        if (local) attachTvVideo(true);
+        if (local) { attachTvVideo(true); lastTouch = android.os.SystemClock.elapsedRealtime(); main.removeCallbacks(idleCheck); main.postDelayed(idleCheck, 5_000); }
         main.removeCallbacks(uiTick); main.post(uiTick);
     }
+    // The TV's own remote page sits behind the grown-up unlock. Left alone for a minute (handed back
+    // to a child, say), it returns to the show, locked again, rather than staying open.
+    static final long LOCAL_IDLE_MS = 60_000;
+    private long lastTouch = 0;
+    private final Runnable idleCheck = new Runnable() { public void run() {
+        if (!local) return;
+        if (android.os.SystemClock.elapsedRealtime() - lastTouch >= LOCAL_IDLE_MS) { finish(); return; }
+        main.postDelayed(this, 5_000);
+    }};
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+        lastTouch = android.os.SystemClock.elapsedRealtime();
+        return super.dispatchTouchEvent(e);
+    }
     @Override protected void onPause() {
+        main.removeCallbacks(idleCheck);
         if (local) attachTvVideo(false);
         main.removeCallbacks(uiTick);
         stopCardPolling();

@@ -40,6 +40,10 @@ public class RouterActivity extends Activity {
                 getSharedPreferences(PREF, MODE_PRIVATE).edit().putString(KEY, forced).apply();
                 pinByDefault();
             }
+            // The Windows setup script copies shows over adb, then asks a running TV to look again.
+            // (Its HTTP /rescan is for paired remotes only; this alias is reachable from adb alone.)
+            if (fromAdb && getIntent() != null && getIntent().getBooleanExtra("rescan", false))
+                app.anancy.player.PlayerController.get().rescan(this);
         } catch (Exception ignored) {}
 
         String role = getSharedPreferences(PREF, MODE_PRIVATE).getString(KEY, null);

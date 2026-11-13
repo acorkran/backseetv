@@ -41,9 +41,11 @@ uses every day, not a commercial product. You bring your own videos.
 - **Only paired devices get in.** Each TV has its own key, and the only way to get it is to scan the
   code on that TV's screen. Bluetooth sessions start with a challenge-response both ways, then every
   message is encrypted with a key for that session. Every HTTP request is signed and can't be replayed,
-  and every answer is signed back. Keys handed between TVs in a synced group are sealed for the one
-  TV that needs them. Another family's BackSeeTV in the same car park can't see or drive yours. The
-  crypto is pure and unit-tested:
+  control answers are signed back, and camera frames over Wi-Fi are encrypted for the device that
+  asked. A TV in a synced group gets only a streaming key for its leader, sealed for it alone: it can
+  play the leader's shows but never drive it or see its camera. Another family's BackSeeTV in the same
+  car park can't see or drive yours. The video streamed between TVs in a group is the one thing not
+  signed. The crypto is pure and unit-tested:
   [`net/PairCrypto.java`](anancy/app/src/main/java/app/anancy/net/PairCrypto.java).
 - **Correct command routing.** In a synced group, playback drives the leader alone
   (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —

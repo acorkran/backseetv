@@ -58,7 +58,9 @@ public class BleClient {
     private volatile String myNonce, tvNonce;
     private volatile byte[] sk; private long ctr = 0;   // session key + command counter, once paired
     private volatile long connectedAt = 0;
-    private final java.util.Map<String, String> rejected = new java.util.concurrent.ConcurrentHashMap<>();   // id -> refused key
+    // "authfail" is unauthenticated, so it only ever backs off (1, 2, 4... min), never blacklists.
+    private final java.util.Map<String, Long> backoffUntil = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Integer> fails = new java.util.concurrent.ConcurrentHashMap<>();
 
     // Which TVs we may connect to (null = any): set from what the phone says (WatchTarget). Every player
     // puts "<id>:<name>" in its scan response under manufacturer id 0xFFFF (the phone's BleServer.MFG_ID).
@@ -67,6 +69,7 @@ public class BleClient {
     static final int MFG_ID = 0xFFFF;
     public void setAllowed(java.util.Set<String> ids) {
         allowed = ids;
+        fails.clear(); backoffUntil.clear();   // new target or new keys from the phone: try again at once
         String cur = connectedId;
         boolean noKey = gatt != null && WatchKeys.keyFor(ctx, cur) == null;   // the phone forgot this TV
         if (gatt != null && (noKey || (ids != null && (cur == null || !ids.contains(cur))))) {   // linked to the wrong TV now
@@ -117,7 +120,9 @@ public class BleClient {
                 java.util.Set<String> ok = allowed;
                 if (ok != null && (id == null || !ok.contains(id))) return;   // not a TV the phone pointed us at
                 String key = WatchKeys.keyFor(ctx, id);
-                if (key == null || key.equals(rejected.get(id))) return;    // not paired (another family's TV)
+                if (key == null) return;    // not paired (another family's TV)
+                Long wait = backoffUntil.get(id);
+                if (wait != null && System.currentTimeMillis() < wait) return;
                 connectedId = id;
                 scanning = false;
                 status("connecting...");
@@ -245,10 +250,14 @@ public class BleClient {
                 if (key == null || myNonce == null || !PairCrypto.same(PairCrypto.tvProof(key, id, myNonce), o.optString("p"))) { dropLink("TV couldn't prove its key"); return; }
                 sk = PairCrypto.sessionKey(key, id, tvNonce, myNonce); ctr = 0;
                 authed = true; lastStateMs = System.currentTimeMillis();
+                if (id != null) { fails.remove(id); backoffUntil.remove(id); }
                 status("ready");
             } else if ("authfail".equals(type)) {
-                if (key != null && id != null) rejected.put(id, key);
-                dropLink("key rejected");
+                if (id != null) {
+                    int n = fails.merge(id, 1, Integer::sum);
+                    backoffUntil.put(id, System.currentTimeMillis() + Math.min(16, 1L << (n - 1)) * 60_000L);
+                }
+                dropLink("key refused");
             }
         } catch (Exception ignored) {}
     }

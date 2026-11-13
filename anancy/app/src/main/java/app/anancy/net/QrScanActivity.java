@@ -111,7 +111,7 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
                     if (p.id != null) result.putExtra(RESULT_TV_ID, p.id);
                     // Seeing the TV's screen is what authorises this phone: its QR holds the key.
                     if (p.id != null && p.key != null) {
-                        String had = app.anancy.Pairing.keyFor(this, p.id);
+                        String had = app.anancy.Pairing.controlKey(this, p.id);
                         if (had != null && !had.equals(p.key)) {   // a code claiming to be a TV we already know
                             confirmReplace(p, result);
                             return;

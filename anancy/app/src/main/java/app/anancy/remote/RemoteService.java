@@ -120,7 +120,8 @@ public class RemoteService extends Service {
     private void grantHostTo(String hostIp) {
         String hostId = null;
         for (Map.Entry<String, String> e : deviceIps.entrySet()) if (hostIp.equals(e.getValue())) hostId = e.getKey();
-        String hostKey = hostId == null ? null : app.anancy.Pairing.keyFor(this, hostId);
+        String fullHost = hostId == null ? null : app.anancy.Pairing.controlKey(this, hostId);
+        String hostKey = fullHost == null ? null : app.anancy.net.PairCrypto.mediaKey(fullHost);   // streaming only
         if (hostKey == null) { toastMain("This phone isn't paired with the screen at " + hostIp + ", so it can't share its library."); return; }
         for (String id : effectiveTargets().isEmpty() ? seenTablets.keySet() : effectiveTargets()) {
             if (id.equals(hostId)) continue;
@@ -598,7 +599,9 @@ public class RemoteService extends Service {
         for (String id : known) if (!members.contains(id)) httpArm(deviceIp(id), "/sync?on=0");   // dropped screens leave the group
         httpArm(leaderIp, "/sync?on=0");                                   // the leader plays normally (audio source)
         int mute = groupLeaderOnly() ? 1 : 0;
-        String leaderKey = app.anancy.Pairing.keyFor(this, leader);
+        // Only the leader's MEDIA key: enough to stream from it, never to drive it or see its camera.
+        String full = app.anancy.Pairing.controlKey(this, leader);
+        String leaderKey = full == null ? null : app.anancy.net.PairCrypto.mediaKey(full);
         for (String id : groupOrder()) {
             if (id.equals(leader)) continue;
             String fip = deviceIp(id);
@@ -693,7 +696,7 @@ public class RemoteService extends Service {
         main.post(() -> {
             for (String id : new java.util.ArrayList<>(unpaired.keySet())) if (app.anancy.Pairing.isPaired(this, id)) unpaired.remove(id);
             for (String id : new java.util.ArrayList<>(rejectedIds.keySet()))   // re-scanned: a new key, try again
-                if (!String.valueOf(app.anancy.Pairing.keyFor(this, id)).equals(rejectedIds.get(id))) rejectedIds.remove(id);
+                if (!String.valueOf(app.anancy.Pairing.controlKey(this, id)).equals(rejectedIds.get(id))) rejectedIds.remove(id);
             for (String id : new java.util.ArrayList<>(seenTablets.keySet()))
                 if (!id.equals(selfId()) && !app.anancy.Pairing.isPaired(this, id)) seenTablets.remove(id);
             if (!local) {
@@ -802,7 +805,7 @@ public class RemoteService extends Service {
             }
             public void onUnpaired(String id, String name) { noteUnpaired(id, name); }
             public void onPairingRejected(String id) {
-                String k = app.anancy.Pairing.keyFor(RemoteService.this, id);
+                String k = app.anancy.Pairing.controlKey(RemoteService.this, id);
                 if (k != null) rejectedIds.put(id, k);
                 toastMain("A screen no longer accepts this phone. Scan its pairing QR again.");
             }

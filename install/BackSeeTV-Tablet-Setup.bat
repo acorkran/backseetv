@@ -233,7 +233,7 @@ call :need_device
 %A% shell settings put global anancy_kiosk 1 >>"%LOG%" 2>&1
 %A% shell am start -n app.anancy/.AdbSetRole --es role player >>"%LOG%" 2>&1
 rem A tablet that was already set up is running, so it won't notice new shows on
-rem its own: ask it to look again through its local control port.
+rem its own: ask it to look again.
 if defined ALREADY if defined SRC call :rescan
 
 call :log "Finished OK"
@@ -351,12 +351,10 @@ call :need_device
 if errorlevel 1 set "PUSHFAIL=1"
 exit /b 0
 
-rem Ask the running app to re-read its media folders.
+rem Ask the running app to re-read its media folders. Through the adb-only role
+rem alias: the app's network control port answers paired remotes only.
 :rescan
-%A% forward tcp:28090 tcp:8090 >>"%LOG%" 2>&1
-curl.exe -s -m 5 http://127.0.0.1:28090/rescan >>"%LOG%" 2>&1
->>"%LOG%" echo.
-%A% forward --remove tcp:28090 >nul 2>&1
+%A% shell am start -n app.anancy/.AdbSetRole --es role player --ez rescan true >>"%LOG%" 2>&1
 call :log "Asked the app to rescan its shows"
 exit /b 0
 

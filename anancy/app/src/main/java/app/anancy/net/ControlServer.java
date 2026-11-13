@@ -52,10 +52,19 @@ public class ControlServer {
             while (run) {
                 final Socket s = server.accept();
                 // Bounded: a flood of half-open connections from anyone on the network used to start a
-                // thread each, forever. A full pool turns the newcomer away instead.
-                try { s.setSoTimeout(5_000); pool.execute(() -> handle(s)); }   // 5 s to send the headers
+                // thread each, forever. A full pool turns the newcomer away instead, and no one address
+                // may hold more than PER_IP of them, so one device can't starve the rest.
+                final String ip = s.getInetAddress().getHostAddress();
+                if (!s.getInetAddress().isLoopbackAddress() && perIp.merge(ip, 1, Integer::sum) > PER_IP) {
+                    perIp.merge(ip, -1, Integer::sum);
+                    Log.w(TAG, "HTTP: too many connections from " + ip);
+                    try { s.close(); } catch (Exception ignored) {}
+                    continue;
+                }
+                try { s.setSoTimeout(2_000); pool.execute(() -> { try { handle(s); } finally { release(s, ip); } }); }
                 catch (java.util.concurrent.RejectedExecutionException busy) {
-                    Log.w(TAG, "HTTP busy (" + pool.getActiveCount() + " running): turned away " + s.getInetAddress().getHostAddress());
+                    Log.w(TAG, "HTTP busy (" + pool.getActiveCount() + " running): turned away " + ip);
+                    release(s, ip);
                     try { s.close(); } catch (Exception ignored) {}
                 }
             }
@@ -67,17 +76,29 @@ public class ControlServer {
     private final java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
             4, 48, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
     static final int MAX_HEADERS = 8 * 1024;
+    /** The whole request line + headers must arrive within this, however slowly they trickle. */
+    static final long HEADER_DEADLINE_MS = 5_000;
+    static final int PER_IP = 12;
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> perIp = new java.util.concurrent.ConcurrentHashMap<>();
+    private void release(Socket s, String ip) {
+        if (s.getInetAddress().isLoopbackAddress()) return;
+        perIp.computeIfPresent(ip, (k, v) -> v <= 1 ? null : v - 1);
+    }
     /** The nonce of the request being answered on this thread, so the answer can be tied to it. */
     private static final ThreadLocal<String> REQ_NONCE = new ThreadLocal<>();
+    /** The key that request was signed with (the TV's own, or a follower's media-only key). */
+    private static final ThreadLocal<String> REQ_KEY = new ThreadLocal<>();
 
     private void handle(Socket c) {
-        REQ_NONCE.remove();
+        REQ_NONCE.remove(); REQ_KEY.remove();
         try {
             InputStream in = c.getInputStream();
             StringBuilder h = new StringBuilder(); int b, nl = 0;
+            long deadline = android.os.SystemClock.elapsedRealtime() + HEADER_DEADLINE_MS;
             while ((b = in.read()) != -1) {
                 h.append((char) b);
                 if (h.length() > MAX_HEADERS) return;   // nobody legitimate sends 8 KB of headers
+                if (android.os.SystemClock.elapsedRealtime() > deadline) return;   // a byte at a time won't hold a slot
                 if (b == '\n') { if (++nl == 2) break; } else if (b != '\r') nl = 0;
             }
             String line = h.length() > 0 ? h.toString().split("\r\n", 2)[0] : "";
@@ -92,7 +113,9 @@ public class ControlServer {
             String method = parts.length >= 1 ? parts[0] : "GET";
             String auth = header(h.toString(), app.anancy.net.PairCrypto.HEADER);
             REQ_NONCE.set(app.anancy.net.PairCrypto.nonceOf(auth));
-            if (!app.anancy.Pairing.verifyRequest(ctx, auth, method, target)) {
+            String usedKey = app.anancy.Pairing.verifyRequest(ctx, auth, method, target);
+            REQ_KEY.set(usedKey);
+            if (usedKey == null) {
                 Log.w(TAG, "HTTP " + path + " refused: not paired (" + c.getInetAddress().getHostAddress() + ")");
                 write(c, 401, "{\"ok\":false,\"error\":\"not paired\"}");
                 return;
@@ -101,7 +124,6 @@ public class ControlServer {
 
             c.setSoTimeout(30_000);   // a paired client's body (an upload) may pause longer between chunks
             if (path.equals("/upload")) { handleUpload(param(q, "name"), param(q, "sha"), h.toString(), in, c); return; }   // wifi file import
-            if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
             if (path.equals("/live")) { handleLive(c); return; }   // MJPEG live feed (Wi-Fi tier)
             if (path.equals("/media")) { handleMedia(c, param(q, "id"), h.toString()); return; }   // stream a library file by id (Range-capable) for a client tablet
             if (path.equals("/clock")) { write(c, "{\"t\":" + android.os.SystemClock.elapsedRealtime() + "}"); return; }   // leader's monotonic clock (NTP-lite offset for synced playback)
@@ -291,6 +313,10 @@ public class ControlServer {
         Bumps SnapshotService to the live rate on connect, drops it on disconnect. Long-lived — runs on
         this connection's own handler thread, so it never blocks accept(). */
     private void handleLive(Socket c) {
+        // Every frame is sealed for the device that asked (key from its request): a picture of a child
+        // never crosses the Wi-Fi readable, and nobody on the network can swap in frames of their own.
+        byte[] sk = REQ_NONCE.get() == null || REQ_KEY.get() == null ? null : PairCrypto.streamKey(REQ_KEY.get(), REQ_NONCE.get());
+        if (sk == null) { try { c.close(); } catch (Exception ignored) {} return; }
         SnapshotService.setLive(ctx, true);
         try {
             OutputStream os = c.getOutputStream();
@@ -298,9 +324,10 @@ public class ControlServer {
                     + "Cache-Control: no-cache\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
             os.flush();
             while (run) {
-                byte[] jpeg = SnapshotService.latestSnapshot();
-                if (jpeg != null) {
-                    os.write(("--anancyframe\r\nContent-Type: image/jpeg\r\nContent-Length: " + jpeg.length + "\r\n\r\n").getBytes("UTF-8"));
+                byte[] raw = SnapshotService.latestSnapshot();
+                if (raw != null) {
+                    byte[] jpeg = PairCrypto.sealBytes(sk, raw);
+                    os.write(("--anancyframe\r\nContent-Type: application/octet-stream\r\nContent-Length: " + jpeg.length + "\r\n\r\n").getBytes("UTF-8"));
                     os.write(jpeg);
                     os.write("\r\n".getBytes("UTF-8"));
                     os.flush();
@@ -342,43 +369,37 @@ public class ControlServer {
         if (start < 0) start = 0;
         if (end >= len) end = len - 1;
         if (start > end) { start = 0; end = len - 1; partial = false; }
-        long clen = end - start + 1;
+        // Sealed in whole blocks (see PairCrypto.MEDIA_BLOCK) under a key only the requester can
+        // derive, so nobody else on the network can watch the show or swap the picture.
+        byte[] sk = REQ_NONCE.get() == null || REQ_KEY.get() == null ? null
+                : PairCrypto.mediaStreamKey(REQ_KEY.get(), REQ_NONCE.get());
+        if (sk == null) {
+            os.write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("UTF-8"));
+            os.flush(); return;
+        }
+        final int B = PairCrypto.MEDIA_BLOCK;
+        long first = start / B, last = end / B, clen = 0;
+        for (long i = first; i <= last; i++) clen += PairCrypto.blockLen(len, i) + PairCrypto.BLOCK_TAG;
         StringBuilder hdr = new StringBuilder();
         hdr.append(partial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n");
-        if (partial) hdr.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(len).append("\r\n");
-        hdr.append("Content-Type: ").append(mediaType(f.getName())).append("\r\n")
-           .append("Accept-Ranges: bytes\r\n")
+        hdr.append("Content-Type: application/octet-stream\r\n")
+           .append("X-BST-Len: ").append(len).append("\r\n")
+           .append("X-BST-Block: ").append(first).append("\r\n")
            .append("Content-Length: ").append(clen).append("\r\n")
            .append("Connection: close\r\n\r\n");
         os.write(hdr.toString().getBytes("UTF-8"));
         java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
         try {
-            raf.seek(start);
-            byte[] buf = new byte[64 * 1024];
-            long remaining = clen; int n;
-            while (remaining > 0 && (n = raf.read(buf, 0, (int) Math.min(buf.length, remaining))) > 0) {
-                os.write(buf, 0, n); remaining -= n;
+            raf.seek(first * B);
+            byte[] buf = new byte[B];
+            for (long i = first; i <= last; i++) {
+                int n = PairCrypto.blockLen(len, i);
+                raf.readFully(buf, 0, n);
+                os.write(PairCrypto.sealBlock(sk, len, i, buf, 0, n));
             }
             os.flush();
         } catch (Exception ignored) {   // client seeked/closed mid-stream — normal for video
         } finally { try { raf.close(); } catch (Exception ignored) {} }
-    }
-    private static String mediaType(String name) {
-        String n = name.toLowerCase();
-        if (n.endsWith(".mkv")) return "video/x-matroska";
-        if (n.endsWith(".mp4") || n.endsWith(".m4v")) return "video/mp4";
-        return "application/octet-stream";
-    }
-
-    private void writeJpeg(Socket c, byte[] data) throws Exception {
-        OutputStream os = c.getOutputStream();
-        if (data == null) {   // snapshots off or not ready yet
-            os.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("UTF-8"));
-            os.flush(); return;
-        }
-        os.write(("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
-        os.write(data); os.flush();
     }
 
     /** Store another TV's key that a paired remote sealed for us; true when it opened cleanly. */
@@ -387,7 +408,7 @@ public class ControlServer {
         String key = app.anancy.Pairing.openMine(ctx, urlDecode(sealed));
         if (key == null) { Log.w(TAG, "grant: couldn't open the key for " + id); return false; }
         id = urlDecode(id);
-        app.anancy.Pairing.remember(ctx, id, "", key);
+        app.anancy.Pairing.rememberMedia(ctx, id, key);
         if (ip != null) app.anancy.Pairing.noteHost(ctx, urlDecode(ip), id);
         return true;
     }
@@ -416,9 +437,16 @@ public class ControlServer {
         long now = System.currentTimeMillis();
         // The answer is MACed against the request's nonce: a client believes a body, an address or a
         // clock offset only from the TV it is paired with (status + time ride in the MAC too).
-        String n = REQ_NONCE.get(), mac = "";
-        if (n != null) mac = "\r\n" + PairCrypto.RESP_HEADER + ": " + PairCrypto.responseMac(app.anancy.Pairing.myKey(ctx), n,
-                status + "|" + now + "|" + PairCrypto.sha256Hex(data));
+        String n = REQ_NONCE.get(), k = REQ_KEY.get(), mac = "";
+        if (n != null) {
+            String msg = status + "|" + now + "|" + PairCrypto.sha256Hex(data);
+            if (k != null) mac = "\r\n" + PairCrypto.RESP_HEADER + ": " + PairCrypto.responseMac(k, n, msg);
+            else {   // refused: prove it's us to whichever key the client holds, so it can fix its clock
+                String full = app.anancy.Pairing.myKey(ctx);
+                mac = "\r\n" + PairCrypto.RESP_HEADER + ": " + PairCrypto.responseMac(full, n, msg)
+                    + "\r\n" + PairCrypto.RESP_HEADER + "-M: " + PairCrypto.responseMac(PairCrypto.mediaKey(full), n, msg);
+            }
+        }
         os.write(("HTTP/1.1 " + status + reason + "\r\nContent-Type: application/json\r\n" + PairCrypto.TIME_HEADER + ": " + now + mac + "\r\nContent-Length: "
                 + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
         os.write(data); os.flush();
