@@ -492,7 +492,54 @@ public class RemoteService extends Service {
     public boolean groupLeaderOnly() { return "leader".equals(Cfg.p(this).getString(PREF_GROUP_AUDIO, "each")); }
     public void setGroupAudio(boolean leaderOnly) {
         Cfg.p(this).edit().putString(PREF_GROUP_AUDIO, leaderOnly ? "leader" : "each").apply();
-        if (isSyncGroup()) armGroup();   // push the new audio mode to the current followers
+        if (!isSyncGroup()) return;
+        armGroup();   // push the new audio mode to the current followers
+        carryGroupSound(leaderOnly);
+    }
+    /** Ticking the box moves the sound; it doesn't just change who may make it. Each screen keeps its own
+        mute, and a TV starts muted, so a muted leader went silent with leader-only on, and muted followers
+        stayed silent with it off, until someone touched the volume. Now leader-only unmutes the leader if
+        any screen was playing sound, and each-screen gives the followers the leader's mute. A group that
+        was silent stays silent, and no volume level is ever raised. */
+    private void carryGroupSound(final boolean leaderOnly) {
+        final String leader = syncLeaderId();
+        if (leader == null) return;
+        final java.util.List<String> members = new java.util.ArrayList<>(groupOrder());
+        new Thread(() -> { try {
+            java.util.Map<String, Boolean> muted = new java.util.HashMap<>();
+            boolean anyAudible = false;
+            for (String id : members) {
+                JSONObject s = memberState(id);
+                if (s == null) continue;
+                boolean m = s.optBoolean("muted", true);
+                muted.put(id, m);
+                if (!m && !s.optBoolean("napped", false) && s.optDouble("volume", 0) > 0) anyAudible = true;
+            }
+            Boolean leaderMuted = muted.get(leader);
+            if (leaderMuted == null) { Diag.warn(TAG, "group audio: couldn't read the leader " + leader + " (" + deviceIp(leader) + ")"); return; }
+            if (leaderOnly) {
+                if (anyAudible && leaderMuted) httpArm(deviceIp(leader), "/mute?on=0");
+            } else {
+                for (java.util.Map.Entry<String, Boolean> e : muted.entrySet())
+                    if (!e.getKey().equals(leader) && e.getValue() != leaderMuted)
+                        httpArm(deviceIp(e.getKey()), "/mute?on=" + (leaderMuted ? 1 : 0));
+            }
+            Diag.log(TAG, "group audio -> " + (leaderOnly ? "leader only" : "each screen") + ", muted " + muted + ", audible " + anyAudible);
+        } catch (Throwable t) { Diag.warn(TAG, "group audio failed: " + t); } }, "group-audio").start();
+    }
+    /** One group member's /state over signed Wi-Fi, or null. */
+    private JSONObject memberState(String id) {
+        String ip = deviceIp(id);
+        if (ip == null || ip.isEmpty()) return null;
+        try {
+            java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + ip + ":8090/state").openConnection();
+            cn.setConnectTimeout(2500); cn.setReadTimeout(2500);
+            app.anancy.Pairing.noteHost(this, ip, id);
+            app.anancy.Pairing.sign(this, cn, id);
+            String body = app.anancy.Pairing.fetch(this, cn);
+            if (body == null) Diag.warn(TAG, "group audio: no genuine /state from " + id + " @ " + ip);
+            return body == null ? null : new JSONObject(body);
+        } catch (Exception e) { Diag.warn(TAG, "group audio: /state from " + id + " @ " + ip + ": " + e); return null; }
     }
     /** Arm/disarm a synced group over the CURRENT selection. */
     // Sync is HTTP between the screens, so they need a shared network. At home that's the house Wi-Fi.
@@ -589,6 +636,17 @@ public class RemoteService extends Service {
         syncPending = true; syncLinkToasted = false; syncPendingSince = android.os.SystemClock.elapsedRealtime();
         main.removeCallbacks(syncWait); main.postDelayed(syncWait, 800);
         return true;
+    }
+    /** A group saved from before the app restarted. Its screens' addresses may have changed (a new hotspot
+        hands out new ones), and nothing re-armed it, so a follower kept asking the leader's OLD address,
+        gave up, and played nothing while the menu still said Sync Playback. Arm it again from scratch
+        once both screens have been heard. */
+    private void resumeGroup(final int tries) {
+        main.postDelayed(() -> {
+            if (!"1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, "")) || syncPending) return;
+            if (groupOrder().size() >= 2) { Diag.log(TAG, "sync group: resuming the saved group"); setSyncGroup(true); }
+            else if (tries < 10) resumeGroup(tries + 1);
+        }, 3000);
     }
     /** (Re)arm the current group: leader plays, non-member screens stop, follower members mirror the leader. */
     private void armGroup() {
@@ -818,6 +876,7 @@ public class RemoteService extends Service {
         if (wifi == null) startWifi(null, 0);            // Wi-Fi always up: Wi-Fi-only screens (a TV) + representative state
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
         app.anancy.net.WatchLink.publishKeys(this);   // the watch pairs through this phone
+        if ("1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, ""))) resumeGroup(0);
         applySelfPlay();
         publishWatchTarget();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level

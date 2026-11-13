@@ -61,7 +61,8 @@ public class ControlServer {
                     try { s.close(); } catch (Exception ignored) {}
                     continue;
                 }
-                try { s.setSoTimeout(2_000); pool.execute(() -> { try { handle(s); } finally { release(s, ip); } }); }
+                try { s.setSoTimeout(2_000); final boolean[] held = {true};
+                      pool.execute(() -> { try { handle(s, held); } finally { if (held[0]) release(s, ip); } }); }
                 catch (java.util.concurrent.RejectedExecutionException busy) {
                     Log.w(TAG, "HTTP busy (" + pool.getActiveCount() + " running): turned away " + ip);
                     release(s, ip);
@@ -89,7 +90,7 @@ public class ControlServer {
     /** The key that request was signed with (the TV's own, or a follower's media-only key). */
     private static final ThreadLocal<String> REQ_KEY = new ThreadLocal<>();
 
-    private void handle(Socket c) {
+    private void handle(Socket c, boolean[] held) {
         REQ_NONCE.remove(); REQ_KEY.remove();
         try {
             InputStream in = c.getInputStream();
@@ -121,6 +122,10 @@ public class ControlServer {
                 return;
             }
             if (!c.getInetAddress().isLoopbackAddress()) app.anancy.Pairing.markPaired(ctx);
+            // The per-address cap is for devices that haven't proved anything. A paired follower holds
+            // several long streams at once (and dead ones linger after its hotspot restarts), and was
+            // being turned away mid-group with "too many connections".
+            if (held[0]) { held[0] = false; release(c, c.getInetAddress().getHostAddress()); }
 
             c.setSoTimeout(30_000);   // a paired client's body (an upload) may pause longer between chunks
             if (path.equals("/upload")) { handleUpload(param(q, "name"), param(q, "sha"), h.toString(), in, c); return; }   // wifi file import

@@ -49,7 +49,7 @@ public class WearRemoteActivity extends Activity {
     private GestureDetector gd;
     private TextView status, title, subtitle;
     private Button playPause;
-    private RingGauge gauge;           // edge arcs: battery (left) + volume (right)
+    private RingGauge gauge;           // edge arcs: volume (over the top) + battery (bottom)
     // HOME action row: the toddler button is state-aware (tint flips with playmode)
     private TextView toddlerCell;
     private boolean playModeOn;        // last-known toddler-mode state from the tablet
@@ -524,7 +524,7 @@ public class WearRemoteActivity extends Activity {
         status.setText("scanning…"); status.setTextColor(0xFFFFC107);
         status.setGravity(Gravity.CENTER); status.setTextSize(10);
         FrameLayout.LayoutParams stp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        stp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; stp.topMargin = pad(6);
+        stp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; stp.topMargin = pad(14);   // below the volume arc
         status.setLayoutParams(stp);
         wrap.addView(status);
 
@@ -611,7 +611,7 @@ public class WearRemoteActivity extends Activity {
     }
 
     private void showVol() {
-        if (gauge != null) gauge.setVolume(volPct);   // live-update the right-edge arc
+        if (gauge != null) gauge.setVolume(volPct);   // live-update the volume arc
         volText.setText("Volume  " + volPct + "%");
         FrameLayout.LayoutParams fp = (FrameLayout.LayoutParams) volFill.getLayoutParams();
         fp.width = Math.round(volFillMaxPx * (volPct / 100f));
@@ -702,11 +702,11 @@ public class WearRemoteActivity extends Activity {
             subtitle.setText(ep.replace('.', ' ').replace('⧸', '/').trim());
             if (volOverlay.getVisibility() != View.VISIBLE)
                 volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
-            if (gauge != null) gauge.setVolume(volPct);   // right-edge arc
+            if (gauge != null) gauge.setVolume(volPct);   // volume arc
             String ip = o.optString("ip", ""); if (!ip.isEmpty()) { tabletIp = ip; tabletId = o.optString("id", null); }   // for Wi-Fi /live
             playModeOn = o.optBoolean("playmode", false);
             updateToddlerCell();
-            if (o.has("battery") && gauge != null) {   // TV battery -> left-edge arc (not the status chip)
+            if (o.has("battery") && gauge != null) {   // TV battery -> bottom arc (not the status chip)
                 int bat = o.optInt("battery", -1);
                 if (bat >= 0) gauge.setBattery(bat, o.optBoolean("charging", false));
             }

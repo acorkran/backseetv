@@ -244,6 +244,12 @@ public class PlayerController {
         for this run only: the host may just be slower to start, so the next boot tries it again. */
     private volatile String gaveUpOnHost;
     private void retryClientLibrary(final String host, final boolean autoStart, final int attempt) {
+        // A remote may have pointed us at a new leader address meanwhile (a group re-formed on a new
+        // hotspot). The old address's retries must stop there, not fall back over the new library.
+        if (appCtx != null && !host.equals(Cfg.getStr(appCtx, "anancy_host", ""))) {
+            android.util.Log.i("Anancy", "stopped retrying " + host + ": now following another host");
+            return;
+        }
         if (attempt >= 4) {
             android.util.Log.w("Anancy", "host " + host + " unreachable after " + (attempt + 1) + " tries - falling back to the local library");
             gaveUpOnHost = host;
