@@ -11,6 +11,7 @@ package app.anancy.net;
 //     best-effort — expect a one-tap confirm, not an instant join.
 // ============================================================================
 
+import app.anancy.Diag;
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
 import android.net.wifi.WifiConfiguration;
@@ -66,14 +67,14 @@ public final class WifiJoiner {
                     try { cm.bindProcessToNetwork(n); } catch (Exception ignored) {}
                     boundSsid = c.ssid; directPending = false;
                     try { app.anancy.Cfg.p(ctx).edit().putString("direct_ssid", c.ssid).apply(); } catch (Exception ignored) {}
-                    Log.i(TAG, "wifi joinDirect: bound to " + n);
+                    Diag.log(TAG, "wifi joinDirect: bound to " + n);
                     if (onOk != null) onOk.run();
                 }
-                @Override public void onUnavailable() { boundSsid = null; directPending = false; Log.w(TAG, "wifi joinDirect: unavailable"); if (onFail != null) onFail.run(); }
+                @Override public void onUnavailable() { boundSsid = null; directPending = false; Diag.warn(TAG, "wifi joinDirect: unavailable"); if (onFail != null) onFail.run(); }
                 @Override public void onLost(android.net.Network n) {
                     boundSsid = null; directPending = false;
                     try { cm.bindProcessToNetwork(null); } catch (Exception ignored) {}
-                    Log.i(TAG, "wifi joinDirect: lost, unbound");
+                    Diag.log(TAG, "wifi joinDirect: lost, unbound");
                 }
             };
             // NO timeout: the system dialog waits for a human, and a 30s request expired before the
@@ -81,7 +82,7 @@ public final class WifiJoiner {
             cm.requestNetwork(req, directCb);
             directPending = true;
             return true;
-        } catch (Exception e) { Log.w(TAG, "joinDirect: " + e); return false; }
+        } catch (Exception e) { Diag.warn(TAG, "joinDirect: " + e); return false; }
     }
 
     /** Drop the request and unbind, so the phone goes back to its normal network. */
@@ -122,11 +123,11 @@ public final class WifiJoiner {
                 if (open) cfg.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
                 else cfg.preSharedKey = "\"" + c.pass + "\"";
                 int id = wm.addNetwork(cfg);
-                if (id >= 0) { wm.enableNetwork(id, true); wm.reconnect(); Log.i(TAG, "wifi join (DO) '" + c.ssid + "' -> " + id); return true; }
-                Log.w(TAG, "wifi join (DO) addNetwork failed for '" + c.ssid + "'");
+                if (id >= 0) { wm.enableNetwork(id, true); wm.reconnect(); Diag.log(TAG, "wifi join (DO) '" + c.ssid + "' -> " + id); return true; }
+                Diag.warn(TAG, "wifi join (DO) addNetwork failed for '" + c.ssid + "'");
                 return false;
             }
-        } catch (Exception e) { Log.w(TAG, "wifi join (DO): " + e); }
+        } catch (Exception e) { Diag.warn(TAG, "wifi join (DO): " + e); }
 
         // NON-DEVICE-OWNER: a suggestion (API 29+). System decides / may prompt. Cannot force.
         try {
@@ -137,10 +138,10 @@ public final class WifiJoiner {
                 sug.add(b.build());
                 wm.removeNetworkSuggestions(sug);   // clear a stale one first
                 int status = wm.addNetworkSuggestions(sug);
-                Log.i(TAG, "wifi suggestion (non-DO) '" + c.ssid + "' -> status " + status + " (system decides / may prompt)");
+                Diag.log(TAG, "wifi suggestion (non-DO) '" + c.ssid + "' -> status " + status + " (system decides / may prompt)");
                 return status == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS;
             }
-        } catch (Exception e) { Log.w(TAG, "wifi suggestion (non-DO): " + e); }
+        } catch (Exception e) { Diag.warn(TAG, "wifi suggestion (non-DO): " + e); }
         return false;
     }
 }

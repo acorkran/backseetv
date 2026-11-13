@@ -1,29 +1,29 @@
 @echo off
 rem ============================================================================
-rem  BackSeat TV - one-step tablet setup for Windows 10 / 11
+rem  BackSeeTV - one-step tablet setup for Windows 10 / 11
 rem
 rem  Plug a freshly reset tablet in over USB and double-click this file. It gets
-rem  Google's adb tools, finds the tablet, installs BackSeat TV and sets it up
+rem  Google's adb tools, finds the tablet, installs BackSeeTV and sets it up
 rem  as a locked kiosk (device owner).
 rem
 rem  Put next to this file:
-rem    BackSeatTV-VERSION.apk     the app (or set APK_URL below)
+rem    BackSeeTV-VERSION.apk     the app (or set APK_URL below)
 rem    Anancy\                    optional: your shows, one folder per show
 rem ============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
-title BackSeat TV - tablet setup
+title BackSeeTV - tablet setup
 
 rem Where to download the app from when no APK sits next to this file.
 set "APK_URL="
 
 set "HERE=%~dp0"
-set "BST_HOME=%LOCALAPPDATA%\BackSeatTV"
+set "BST_HOME=%LOCALAPPDATA%\BackSeeTV"
 set "ADB=%BST_HOME%\platform-tools\adb.exe"
 set "OUT=%TEMP%\backseat-setup-%RANDOM%.txt"
 set "ADMIN=app.anancy/.admin.AdminReceiver"
 
 echo.
-echo  BackSeat TV - tablet setup
+echo  BackSeeTV - tablet setup
 echo  --------------------------
 echo  Before you start, on the tablet:
 echo    1. Factory reset it, or use one with NO Google or Samsung account on it.
@@ -51,13 +51,13 @@ rem --- 2. the app ----------------------------------------------------------
 echo.
 echo [2/6] Finding the app...
 set "APK="
-for %%F in ("%HERE%BackSeatTV*.apk") do (
+for %%F in ("%HERE%BackSeeTV*.apk") do (
     set "NAME=%%~nF"
     if /i "!NAME:wear=!"=="!NAME!" set "APK=%%~fF"
 )
 if defined APK goto have_apk
 if not defined APK_URL goto no_apk
-set "APK=%BST_HOME%\BackSeatTV.apk"
+set "APK=%BST_HOME%\BackSeeTV.apk"
 set "BST_APK=%APK%"
 set "BST_URL=%APK_URL%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri $env:BST_URL -OutFile $env:BST_APK"
@@ -103,7 +103,7 @@ set "ALREADY="
 %A% shell dumpsys device_policy > "%OUT%" 2>&1
 findstr /c:"admin=ComponentInfo{app.anancy" "%OUT%" >nul && set "ALREADY=1"
 if defined ALREADY (
-    echo       Already set up as a BackSeat TV kiosk. Updating it.
+    echo       Already set up as a BackSeeTV kiosk. Updating it.
     goto confirmed
 )
 set "ACCTS="
@@ -111,7 +111,7 @@ set "ACCTS="
 for /f "tokens=2" %%n in ('findstr /c:"Accounts:" "%OUT%"') do if not defined ACCTS set "ACCTS=%%n"
 if defined ACCTS if not "%ACCTS%"=="0" goto has_accounts
 echo.
-echo  This will turn %MODEL% into a locked BackSeat TV kiosk.
+echo  This will turn %MODEL% into a locked BackSeeTV kiosk.
 echo  You can undo it later in the app: Settings - Remove device owner.
 echo.
 set "OK="
@@ -121,7 +121,7 @@ if /i not "%OK%"=="Y" goto cancelled
 
 rem --- 5. install and take ownership -----------------------------------------
 echo.
-echo [5/6] Installing BackSeat TV (this can take a minute)...
+echo [5/6] Installing BackSeeTV (this can take a minute)...
 %A% install -r "%APK%" > "%OUT%" 2>&1
 findstr /c:"Success" "%OUT%" >nul || goto install_failed
 if defined ALREADY goto owned
@@ -148,7 +148,7 @@ if exist "%HERE%Anancy\" (
 
 del "%OUT%" >nul 2>&1
 echo.
-echo  All done. The tablet is now a BackSeat TV.
+echo  All done. The tablet is now a BackSeeTV.
 echo    - Grown-up menu: tap with four fingers, four times, within 3 seconds.
 echo    - On your phone, install the app and choose "This is a Remote".
 echo    - You can unplug the tablet.
@@ -173,7 +173,7 @@ echo  Couldn't download the Android tools. Check the internet connection and try
 goto fail
 :no_apk
 echo.
-echo  Couldn't find the app. Put BackSeatTV-^<version^>.apk in the same folder as this file.
+echo  Couldn't find the app. Put BackSeeTV-^<version^>.apk in the same folder as this file.
 goto fail
 :many_devices
 echo.

@@ -230,9 +230,9 @@ public class SnapshotService extends LifecycleService {
         String ch = "anancy_snapshot";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null && nm.getNotificationChannel(ch) == null)
-            nm.createNotificationChannel(new NotificationChannel(ch, "BackSeat TV snapshots", NotificationManager.IMPORTANCE_MIN));
+            nm.createNotificationChannel(new NotificationChannel(ch, "BackSeeTV snapshots", NotificationManager.IMPORTANCE_MIN));
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ch) : new Notification.Builder(this);
-        return b.setContentTitle("BackSeat TV").setContentText("Camera snapshots on")
+        return b.setContentTitle("BackSeeTV").setContentText("Camera snapshots on")
                 .setSmallIcon(android.R.drawable.ic_menu_camera).setOngoing(true).build();
     }
 }

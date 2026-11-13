@@ -1,6 +1,6 @@
-# BackSeat TV — install and setup
+# BackSeeTV — install and setup
 
-BackSeat TV is **one Android app** (package `app.anancy`; "Anancy" is the codename). The same APK
+BackSeeTV is **one Android app** (package `app.anancy`; "Anancy" is the codename). The same APK
 runs in two roles, chosen the first time you open it:
 
 - **TV (player)** — the screen that plays your shows: a tablet, an old phone, any Android 8+ device.
@@ -28,7 +28,7 @@ unsupervised, Part B is the strongest lock.**
 
 ### A1. Install the app (TV and phone)
 
-1. On each device, download `BackSeatTV-<version>.apk` from the repo's **Releases** page.
+1. On each device, download `BackSeeTV-<version>.apk` from the repo's **Releases** page.
 2. Open the file. Android will ask to allow installs from your browser or file manager — allow it
    for that app only.
 3. If Play Protect warns about an unknown app, choose **Install anyway**. It warns because the app
@@ -36,10 +36,10 @@ unsupervised, Part B is the strongest lock.**
 
 ### A2. Set up the TV
 
-1. Open **BackSeat TV** and choose **This is the TV (player)**.
+1. Open **BackSeeTV** and choose **This is the TV (player)**.
 2. Allow **Nearby devices** (Bluetooth) when asked. This is how the remotes reach it.
-3. **All files access**: the TV shows *"BackSeat TV can't read your storage"*. Tap **Open set-up
-   check**, then **All files access**, and turn it on for BackSeat TV.
+3. **All files access**: the TV shows *"BackSeeTV can't read your storage"*. Tap **Open set-up
+   check**, then **All files access**, and turn it on for BackSeeTV.
 4. **Add your shows.** Use a USB cable to a computer, a file manager, or an SD card. Put
    **one folder per show** inside a top-level folder called `Anancy`:
 
@@ -79,21 +79,21 @@ screen ignores taps apart from the four-finger unlock. Three limits come from An
 owner to remove:
 
 - Android asks you to confirm each pin with one tap.
-- Android keeps its own way out: touch and hold Back and Recents. If that's used, BackSeat TV asks to
+- Android keeps its own way out: touch and hold Back and Recents. If that's used, BackSeeTV asks to
   pin again straight away.
 - The power button still works, and pinning ends if the device restarts.
 
 Give the TV a screen lock too (PIN or pattern in Android Settings), so Android can ask for it when the
 pin ends. For no prompts and a lock that survives a restart, use **device owner (B2)**.
 
-**Coming back to the show after a restart (optional).** While the toddler lock is on, BackSeat TV can be
+**Coming back to the show after a restart (optional).** While the toddler lock is on, BackSeeTV can be
 the Home app: set it in Android Settings → Default apps → Home app, or tap **Always** if Android asks.
 **Exit to launcher** in the grown-up menu hands Home back to your normal launcher, so the device works
 as usual for you afterwards. Set it again next time you lock the tablet up.
 
 ### A4. Set up the phone remote
 
-1. Open **BackSeat TV** on the phone, choose **This is a Remote**, and allow **Nearby devices**.
+1. Open **BackSeeTV** on the phone, choose **This is a Remote**, and allow **Nearby devices**.
 2. The TV shows up by itself over Bluetooth within a few seconds. There's nothing to pair and no
    network needed, so it works in the car.
 3. Nothing found? Tap **Run the set-up check**. It names what's wrong (Bluetooth off, a denied
@@ -111,13 +111,23 @@ Android Auto only lists apps from the Play Store unless you tell it otherwise. O
 1. Open **Settings → Connected devices → Android Auto**.
 2. Scroll to the bottom and tap **Version** about 10 times. Accept the developer-settings prompt.
 3. Tap **⋮ → Developer settings → Unknown sources → on**.
-4. Plug into the car. **BackSeat TV** is in the media apps.
+4. Plug into the car. **BackSeeTV** is in the media apps.
 
 The dash shows what's playing on the TV and controls it. It plays no sound of its own.
 
-> **If BackSeat TV vanishes from the car after an Android Auto update:** the update turned
+> **If BackSeeTV vanishes from the car after an Android Auto update:** the update turned
 > Unknown sources back off. Tapping the old icon can crash Android Auto to a blank screen.
 > Repeat steps 1–3 (or use B5 so it never happens again).
+
+> **Wireless Android Auto takes the phone's Wi-Fi.** It connects the phone to the car over Wi-Fi,
+> and most phones can only join one Wi-Fi network at a time. So while the car is projecting, the
+> phone has left your home Wi-Fi, even parked in the driveway with the tablet still on it. Don't try
+> to run a synced group over the house Wi-Fi from the car. Many phones (the Galaxy S21 included)
+> can still run a hotspot alongside Android Auto, and BackSeeTV uses that: tick **Sync Playback**
+> and the phone hosts, and a device-owner TV joins it. **Connection…** on the phone says which of
+> these your phone can do. Phones that can't host alongside Android Auto keep the dash and drop the
+> TV link to Bluetooth, so syncing waits until the car disconnects. A wired Android Auto connection
+> leaves the phone's Wi-Fi free.
 
 ---
 
@@ -128,11 +138,11 @@ You need a computer with **adb** (Android platform-tools) and **USB debugging** 
 
 ### Windows: one-step tablet setup
 
-On Windows 10 or 11, `install/BackSeatTV-Tablet-Setup.bat` does B1 and B2 for you. It downloads
+On Windows 10 or 11, `install/BackSeeTV-Tablet-Setup.bat` does B1 and B2 for you. It downloads
 Google's adb tools, finds the tablet, checks it has no accounts, installs the app, makes it the
 device owner, and starts the locked show.
 
-1. Put `BackSeatTV-<version>.apk` in the same folder as the `.bat`. Optional: add an `Anancy` folder
+1. Put `BackSeeTV-<version>.apk` in the same folder as the `.bat`. Optional: add an `Anancy` folder
    with your shows, and it copies them across too.
 2. On the tablet: factory reset (skip every sign-in), then turn on **USB debugging**. Android doesn't
    let any script do this part.
@@ -144,7 +154,7 @@ if Windows can't see them. Running the script again on a finished tablet just up
 ### B1. Install
 
 ```bash
-adb install -r BackSeatTV-<version>.apk
+adb install -r BackSeeTV-<version>.apk
 ```
 
 Then pick the role and add media as in **A2**. Over adb you can also push media and pre-pick the
@@ -164,7 +174,7 @@ them first, or factory-reset and skip sign-in.
 adb shell dpm set-device-owner app.anancy/.admin.AdminReceiver
 ```
 
-Then open BackSeat TV, choose **This is the TV**, and turn on **Settings → Kiosk lock**, or:
+Then open BackSeeTV, choose **This is the TV**, and turn on **Settings → Kiosk lock**, or:
 
 ```bash
 adb shell settings put global anancy_kiosk 1
@@ -204,7 +214,7 @@ The first install needs adb on the watch:
 2. Install the watch app:
 
    ```bash
-   adb -s <watch-ip:port> install -r -i app.anancy BackSeatTV-wear-<version>.apk
+   adb -s <watch-ip:port> install -r -i app.anancy BackSeeTV-wear-<version>.apk
    ```
 
 After that the watch **updates itself** whenever the phone app is updated (over the
@@ -223,7 +233,7 @@ Install the **phone** with the Play Store recorded as the installer. Android Aut
 any Play app, and Android Auto updates can't hide it:
 
 ```bash
-adb install -r -i com.android.vending BackSeatTV-<version>.apk
+adb install -r -i com.android.vending BackSeeTV-<version>.apk
 ```
 
 Every later update to the phone app must use the same `-i com.android.vending` flag. Updating any
@@ -247,7 +257,7 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
 - **Switching a device's role:** open the **set-up check** and tap **Change role** on the Role line.
   On a phone remote it's at the bottom of **Settings** ("This phone: set-up check"). On a TV it's in
   the grown-up menu → Settings → Set-up check.
-- **Use the remote as a screen too.** On the phone remote, tap **BackSeat TV ⌄** at the top and tick
+- **Use the remote as a screen too.** On the phone remote, tap **BackSeeTV ⌄** at the top and tick
   **This phone as playback**. The show plays in a small card at the top of the screens list, marked
   **"<name> (this device)"**, and you keep the whole remote. Tap the card to include or leave out that
   screen. The corners button on the card makes it **large**: full-screen, with the same unlock gesture,
@@ -264,7 +274,11 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
 - **A TV can stream from another TV.** A TV with no shows of its own can play the library of a TV
   on the same network.
 - **More than one TV:** set each one up as a TV. The phone remote can drive them separately, all at
-  once, or **synced** so they play the same thing in step.
+  once, or **synced** so they play the same thing in step. Syncing needs Wi-Fi between the screens.
+  Away from home Wi-Fi the phone starts its own hotspot when you tick **Sync Playback** and sends the
+  details over Bluetooth. A device-owner TV joins it by itself. Android only offers the hotspot to
+  any other TV as a suggestion, so that TV may ask first or stay where it is. If it stays out of
+  the group, join it to the phone's hotspot by hand (the phone's Settings shows its name and password).
 
 ## Building from source
 

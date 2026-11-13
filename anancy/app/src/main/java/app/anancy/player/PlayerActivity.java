@@ -445,13 +445,13 @@ public class PlayerActivity extends Activity {
         catch (Exception ignored) {}
         emptyState.removeAllViews();
         TextView h = new TextView(this);
-        h.setText(perm ? "Nothing to play yet" : "BackSeat TV can't read your storage");
+        h.setText(perm ? "Nothing to play yet" : "BackSeeTV can't read your storage");
         h.setTextColor(Color.WHITE); h.setTextSize(26); h.setGravity(Gravity.CENTER);
         emptyState.addView(h);
         TextView d = new TextView(this);
         d.setText(perm
-                ? "No videos found. Point BackSeat TV at the folder your shows are in \u2014 one sub-folder per show."
-                : "BackSeat TV needs \"All files access\" before it can see your shows, wherever they are "
+                ? "No videos found. Point BackSeeTV at the folder your shows are in \u2014 one sub-folder per show."
+                : "BackSeeTV needs \"All files access\" before it can see your shows, wherever they are "
                   + "(SD card or this device's own storage). Grant that and the library appears straight away.");
         d.setTextColor(0xFF9AA4B2); d.setTextSize(15); d.setGravity(Gravity.CENTER);
         d.setPadding(0, dp(12), 0, dp(24));
@@ -631,7 +631,7 @@ public class PlayerActivity extends Activity {
                 Math.round(30 * k), Color.WHITE, false);
         what.setPadding(0, dp(Math.round(40 * k)), 0, 0);
         box.addView(what);
-        TextView owner = hintText("Setting up a dedicated kids' device? Install BackSeat TV as a device-owner "
+        TextView owner = hintText("Setting up a dedicated kids' device? Install BackSeeTV as a device-owner "
                 + "kiosk and it locks by itself, with no prompt.", Math.round(26 * k), YELLOW, true);
         owner.setPadding(0, dp(Math.round(24 * k)), 0, 0);
         box.addView(owner);
@@ -848,7 +848,7 @@ public class PlayerActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
         col.setPadding(dp(24), dp(16), dp(24), dp(16));
         TextView h = new TextView(this);
-        h.setText("BackSeat TV admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
+        h.setText("BackSeeTV admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
         h.setGravity(Gravity.CENTER); h.setPadding(0, dp(8), 0, dp(16));
         col.addView(h);
         final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)

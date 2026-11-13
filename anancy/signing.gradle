@@ -29,5 +29,5 @@ gradle.taskGraph.whenReady { graph ->
 
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == 'release')
-        variant.outputs.all { outputFileName = "BackSeatTV${project.name == 'wear' ? '-wear' : ''}-${anancyVersion}.apk" }
+        variant.outputs.all { outputFileName = "BackSeeTV${project.name == 'wear' ? '-wear' : ''}-${anancyVersion}.apk" }
 }

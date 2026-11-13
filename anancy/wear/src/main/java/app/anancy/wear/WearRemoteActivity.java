@@ -342,7 +342,7 @@ public class WearRemoteActivity extends Activity {
         show(cameraView);
         camWifiOn = false;
         camZoom = 1f; camCx = 0.5f; camCy = 0.5f; lastCamBmp = null;   // reset digital PTZ
-        camStatus.setText("BackSeat Glance · Bluetooth");
+        camStatus.setText("BackSee Glance · Bluetooth");
         send("camble:on");   // reduced-res stills over BLE — always available
         BleService svc = BleService.get();
         byte[] cached = svc != null ? svc.latestStill() : null;
@@ -359,7 +359,7 @@ public class WearRemoteActivity extends Activity {
     private void showStill(byte[] jpeg) {
         if (current != cameraView || camWifiOn || jpeg == null || camImg == null) return;
         android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
-        if (bmp != null) { paintFrame(bmp); camStatus.setText("BackSeat Glance · Bluetooth"); }
+        if (bmp != null) { paintFrame(bmp); camStatus.setText("BackSee Glance · Bluetooth"); }
     }
 
     /** Paint a frame through the digital pan/tilt/zoom viewport (crop to the zoomed sub-rect, centred). */
@@ -405,7 +405,7 @@ public class WearRemoteActivity extends Activity {
                     final android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
                     if (bmp != null) main.post(() -> {
                         camWifiOn = true;
-                        if (current == cameraView) { paintFrame(bmp); camStatus.setText("BackSeat Glance · Wi-Fi"); }
+                        if (current == cameraView) { paintFrame(bmp); camStatus.setText("BackSee Glance · Wi-Fi"); }
                     });
                 }
                 c.disconnect();

@@ -101,7 +101,7 @@ public class QrShareActivity extends Activity {
         if (p != null && (creds || gaveUp)) {   // an address alone only helps a phone already on this network
             Bitmap qr = QrCode.encode(p, side);
             if (qr != null) iv.setImageBitmap(qr);
-            cap.setText(creds ? "Scan this with the BackSeat TV remote:  Set-up check → Scan the TV's QR"
+            cap.setText(creds ? "Scan this with the BackSeeTV remote:  Set-up check → Scan the TV's QR"
                               : "Couldn't start the TV's hotspot. This code only works with the phone on the same Wi-Fi as the TV.");
             return;
         }

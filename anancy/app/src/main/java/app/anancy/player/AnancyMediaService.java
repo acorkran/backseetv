@@ -171,7 +171,7 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         int i = t.indexOf(".S");
         String show = (i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim();
         String ep = (i > 0 ? t.substring(i + 1) : "").replace('.', ' ').replace('⧸', '/').trim();
-        if (show.isEmpty()) show = "BackSeat TV";
+        if (show.isEmpty()) show = "BackSeeTV";
         long dur = o.optLong("duration_ms", 0), pos = o.optLong("position_ms", 0);
         boolean playing = o.optBoolean("playing", false) && !o.optBoolean("napped", false);
 
@@ -316,7 +316,7 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         p.setColor(0xFF8FD694); p.setTextSize(52);
         c.drawText(ellipsize(show, 16), S / 2f, S / 2f + 18, p);
         p.setColor(0xFF6B7075); p.setTextSize(30);
-        c.drawText("BackSeat TV", S / 2f, S - 44, p);
+        c.drawText("BackSeeTV", S / 2f, S - 44, p);
         return bmp;
     }
     private static String ellipsize(String s, int n) { return s.length() <= n ? s : s.substring(0, n - 1) + "…"; }

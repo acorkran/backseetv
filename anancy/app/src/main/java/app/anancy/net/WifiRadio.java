@@ -64,7 +64,8 @@ public final class WifiRadio {
         Cursor cur = null;
         try {
             Uri uri = new Uri.Builder().scheme("content").authority("androidx.car.app.connection").build();
-            cur = c.getApplicationContext().getContentResolver().query(uri, null, null, null, null);
+            // Name the column: Android Auto's provider throws on a null projection, which read as "no car".
+            cur = c.getApplicationContext().getContentResolver().query(uri, new String[]{"CarConnectionState"}, null, null, null);
             if (cur == null || !cur.moveToNext()) return false;
             int col = cur.getColumnIndex("CarConnectionState");
             if (col < 0) return false;
@@ -109,16 +110,13 @@ public final class WifiRadio {
     /** One line for the Connection screen, so the behaviour isn't a mystery. */
     public static String describe(Context c) {
         boolean host = canHostSpare(c), join = canJoinSpare(c);
-        if (carProjecting(c))
-            return (host || join) ? "Android Auto is projecting — spare radio, TV link can run alongside"
-                                  : "Android Auto is projecting — one radio, so the TV link stays off";
-        // Be precise about WHICH way round is free. Saying "two links at once" while the phone is
-        // about to drop its Wi-Fi to JOIN the TV is worse than saying nothing: STA+AP and STA+STA
-        // are different capabilities, and this phone has only the first.
-        if (host && join) return "two Wi-Fi links at once — hosting or joining is free";
-        if (host) return "can host for the TV and keep your Wi-Fi; joining the TV's own hotspot would cost it";
-        if (join) return "can join the TV and keep your Wi-Fi; hosting would cost it";
-        if (!onOtherWifi(c)) return "one Wi-Fi radio, nothing else using it";
-        return "one Wi-Fi radio — the TV link costs you your current Wi-Fi, so it's raised only when needed";
+        // Be precise about WHICH way round is free: STA+AP and STA+STA are different capabilities,
+        // and a phone that has only the first must not be told it can do "two links at once".
+        if (carProjecting(c) && !host && !join) return "busy with Android Auto, so the TV uses Bluetooth";
+        if (host && join) return "can host or join and keep its Wi-Fi";
+        if (host) return "can host and keep its Wi-Fi";
+        if (join) return "can join the TV and keep its Wi-Fi";
+        if (!onOtherWifi(c)) return "one Wi-Fi link, free";
+        return "one Wi-Fi link; the TV link would take it";
     }
 }

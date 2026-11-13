@@ -56,7 +56,7 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final RemoteUi ui = new RemoteUi(this);   // stateless view builders (extracted; see RemoteUi)
-    private TextView titleDot;   // the "BackSeat TV" wordmark (menu button + popup anchor)
+    private TextView titleDot;   // the "BackSeeTV" wordmark (menu button + popup anchor)
     private View dot;            // the connection light (top-right corner); tap = ephemeral status text
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
     private LinearLayout deviceCards;   // per-screen cards with checkboxes on the Remote tab
@@ -121,7 +121,7 @@ public class RemoteActivity extends Activity {
         titleRow.setClickable(true); titleRow.setPadding(0, dp(2), dp(10), dp(2));
         titleRow.setOnClickListener(v -> showTargetMenu());
         titleDot = new TextView(this);
-        titleDot.setText("BackSeat TV"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
+        titleDot.setText("BackSeeTV"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
         titleDot.setTypeface(titleDot.getTypeface(), android.graphics.Typeface.BOLD);
         titleRow.addView(titleDot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView chev = new TextView(this); chev.setText(" ⌄"); chev.setTextColor(TXT); chev.setTextSize(20);
@@ -144,8 +144,8 @@ public class RemoteActivity extends Activity {
         content.addView(remoteTab); content.addView(playlistsTab); content.addView(queueTab);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // --- tab bar pinned at the BOTTOM: Remote | Playlists | Queue ---
-        root.addView(spacer(dp(8)));
+        // --- tab bar pinned at the BOTTOM: Remote | Playlists | Queue (in the header row in landscape) ---
+        tabSpacer = spacer(dp(8)); root.addView(tabSpacer);
         tabBar = new LinearLayout(this); tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBtns[0] = ui.pillChip("Remote", v -> showTab(0));
         tabBtns[1] = ui.pillChip("Playlists", v -> showTab(1));
@@ -156,6 +156,8 @@ public class RemoteActivity extends Activity {
             tabBar.addView(tabBtns[k], tp);
         }
         root.addView(tabBar);
+        rootCol = root; headerRow = header; headerDot = dot;
+        layoutChrome(getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE);
 
         frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(frame);
@@ -163,6 +165,12 @@ public class RemoteActivity extends Activity {
         showTab(0);
 
         local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote
+        if (local && cardsPanel != null) {
+            // The TV's own remote drives only itself, and the show is right behind it: a "No screens
+            // connected yet" panel there contradicted that. Drop the panel and centre now-playing.
+            cardsPanel.setVisibility(View.GONE);
+            remoteLeft.setGravity(Gravity.CENTER_VERTICAL);
+        }
         if (local) { tabletIp = "127.0.0.1"; RemoteService.ensureLocal(this); }
         else RemoteService.ensure(this);
         attach();
@@ -186,6 +194,12 @@ public class RemoteActivity extends Activity {
     // --- TAB 1: Remote — now-playing card + transport + volume + Light/Sleep/Power + Check-in ---
     private View buildRemoteTab() {
         LinearLayout tabRoot = new LinearLayout(this); tabRoot.setOrientation(LinearLayout.VERTICAL); tabRoot.setBackgroundColor(BG);
+        // Two columns: the screens + now playing, then the controls. Portrait stacks them; landscape puts
+        // them side by side (layoutRemoteTab) so nothing falls off the bottom of a short, wide screen.
+        remoteRoot = tabRoot;
+        LinearLayout leftCol = new LinearLayout(this); leftCol.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout rightCol = new LinearLayout(this); rightCol.setOrientation(LinearLayout.VERTICAL); rightCol.setGravity(Gravity.CENTER_VERTICAL);
+        remoteLeft = leftCol; remoteRight = rightCol;
         // off-screen holders so showState (representative path) keeps working without NPEs
         title = new TextView(this); subtitle = new TextView(this);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000);
@@ -208,7 +222,8 @@ public class RemoteActivity extends Activity {
         deviceCards = new LinearLayout(this); deviceCards.setOrientation(LinearLayout.VERTICAL);
         cardsScroll.addView(deviceCards);
         refreshDeviceCards();
-        tabRoot.addView(cardsScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        leftCol.addView(cardsScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        cardsPanel = cardsScroll;
 
         // Now playing. These views existed but were never added to the layout, so over BLE (where the
         // per-device cards have no HTTP data) the remote showed NO title, position or progress at all.
@@ -222,7 +237,7 @@ public class RemoteActivity extends Activity {
         np.addView(title); np.addView(subtitle);
         np.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
         np.addView(timeText);
-        tabRoot.addView(np, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        leftCol.addView(np, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // Slim transport above the grid: back / play-pause / forward.
         LinearLayout tr = new LinearLayout(this); tr.setOrientation(LinearLayout.HORIZONTAL); tr.setGravity(Gravity.CENTER);
@@ -232,10 +247,10 @@ public class RemoteActivity extends Activity {
         tr.addView(playPause, lp(dp(62), dp(56), dp(12)));
         tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(54), dp(48), dp(12)));
         LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(10);
-        tabRoot.addView(tr, trp);
+        rightCol.addView(tr, trp);
 
         sleepText = new TextView(this); sleepText.setText(""); sleepText.setTextColor(WARN); sleepText.setTextSize(12);
-        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); tabRoot.addView(sleepText);
+        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); rightCol.addView(sleepText);
 
         // 4x2 function grid: Light Sleep Mute Vol+ / Toddler Power Check-in Vol-  (volume cells 10% wider)
         LinearLayout g1 = new LinearLayout(this); g1.setOrientation(LinearLayout.HORIZONTAL);
@@ -243,7 +258,7 @@ public class RemoteActivity extends Activity {
         g1.addView(ui.gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15"), false), gcLp(1f));
         g1.addView(ui.gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute"), false), gcLp(1f));
         g1.addView(ui.gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
-        LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); tabRoot.addView(g1, g1p);
+        LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); rightCol.addView(g1, g1p);
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
         // Toddler was send("playmode:on") with no way back: the front seat could start the playground
         // and then had no way to stop it (the escape gesture is on the tablet, in the back seat).
@@ -253,9 +268,47 @@ public class RemoteActivity extends Activity {
         g2.addView(ui.gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
-        LinearLayout.LayoutParams g2p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g2p.topMargin = dp(6); tabRoot.addView(g2, g2p);
+        LinearLayout.LayoutParams g2p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g2p.topMargin = dp(6); rightCol.addView(g2, g2p);
 
+        layoutRemoteTab(getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE);
         return tabRoot;
+    }
+    private LinearLayout remoteRoot, remoteLeft, remoteRight, rootCol, headerRow;
+    private View cardsPanel;
+    private View tabSpacer, headerDot;
+    /** A short wide screen can't spare a whole row for the tabs: they move up beside the title. */
+    private void layoutChrome(boolean land) {
+        if (rootCol == null || tabBar == null) return;
+        ((ViewGroup) tabBar.getParent()).removeView(tabBar);
+        tabSpacer.setVisibility(land ? View.GONE : View.VISIBLE);
+        if (land) {
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f);
+            tp.setMargins(dp(12), 0, dp(14), 0);
+            headerRow.addView(tabBar, headerRow.indexOfChild(headerDot), tp);
+            rootCol.setPadding(dp(16), dp(8), dp(16), dp(8));
+        } else {
+            rootCol.addView(tabBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            rootCol.setPadding(dp(16), dp(20), dp(16), dp(8));
+        }
+    }
+    /** Portrait: screens above, controls below. Landscape: side by side, both fully on screen. */
+    private void layoutRemoteTab(boolean land) {
+        if (remoteRoot == null) return;
+        remoteRoot.removeAllViews();
+        remoteRoot.setOrientation(land ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        if (land) {
+            LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f); l.rightMargin = dp(10);
+            LinearLayout.LayoutParams r = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f); r.leftMargin = dp(10);
+            remoteRoot.addView(remoteLeft, l); remoteRoot.addView(remoteRight, r);
+        } else {
+            remoteRoot.addView(remoteLeft, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+            remoteRoot.addView(remoteRight, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+    }
+    @Override public void onConfigurationChanged(android.content.res.Configuration c) {
+        super.onConfigurationChanged(c);
+        boolean land = c.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        layoutChrome(land); layoutRemoteTab(land);
     }
     private LinearLayout.LayoutParams gcLp(float weight) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(62), weight); p.setMargins(dp(3), 0, dp(3), 0); return p; }
     private void refreshAll() { refreshDeviceCards(); }
@@ -788,7 +841,7 @@ public class RemoteActivity extends Activity {
         sv.addView(col); frame.addView(sv);
         return sv;
     }
-    /** Make an overlay's title a dropdown, the same control as the main page's "BackSeat TV ⌄". A title
+    /** Make an overlay's title a dropdown, the same control as the main page's "BackSeeTV ⌄". A title
         plus an "applying to" line plus a row to get at your own settings is three things saying what
         one dropdown says; this returns the title view so a popup can hang off it. */
     private TextView overlayTitleMenu(View ov, String text, final Runnable onTap) {
@@ -930,6 +983,7 @@ public class RemoteActivity extends Activity {
     private String targetLabel(RemoteService svc, boolean ready) {
         if (svc == null) return "connect";
         if (svc.isSyncGroup()) return "Synced";
+        if (svc.isSyncPending()) return "Linking…";
         java.util.Set<String> sel = svc.targets();
         if (sel.isEmpty()) return "All";
         if (sel.size() == 1) { String n = svc.tablets().get(sel.iterator().next()); return n != null ? n : (ready ? svc.transport() : "connect"); }
@@ -953,7 +1007,7 @@ public class RemoteActivity extends Activity {
         targetPopup = new android.widget.PopupWindow(sv, dp(300), ViewGroup.LayoutParams.WRAP_CONTENT, true);
         targetPopup.setElevation(dp(12));
         buildTargetRows(col, svc);
-        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "BackSeat TV" wordmark
+        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "BackSeeTV" wordmark
     }
     /** A ScrollView that never grows past maxH — the popup menu scrolls instead of running off-screen. */
     private static class MaxScroll extends android.widget.ScrollView {
@@ -985,11 +1039,20 @@ public class RemoteActivity extends Activity {
         row1.addView(menuCell("Connection…", ACCENT, this::openConnection), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         col.addView(row1);
         ui.hSep(col);
-        // Ticked: this device is also one of the screens, listed below as "(this device)".
+        // Ticked: this device is also one of the screens, listed below as "(this device)". The cards are
+        // redrawn here too: with no other screen sending state, nothing else would take the card away.
         if (!local) {
             final boolean self = svc.selfPlay();
-            col.addView(ui.checkRow("This phone as playback", self, () -> { svc.setSelfPlay(!self); refreshTargets(col, svc); }));
+            col.addView(ui.checkRow("This phone as playback", self, () -> { svc.setSelfPlay(!self); refreshTargets(col, svc); refreshDeviceCards(); }));
             ui.hSep(col);
+        } else {
+            // The TV's own remote only ever drives this TV, so the screen list and Sync aren't here.
+            // Without a word about it the menu looked broken.
+            TextView note = new TextView(this);
+            note.setText("This remote controls this TV only. To choose screens or sync several, use a phone set up as the remote.");
+            note.setTextColor(SUB); note.setTextSize(13); note.setPadding(dp(14), dp(10), dp(14), dp(12));
+            col.addView(note);
+            return;   // no screen list or Sync on the TV's own remote
         }
 
         final boolean anyScreens = !svc.tablets().isEmpty();
@@ -999,9 +1062,9 @@ public class RemoteActivity extends Activity {
             View allRow = ui.checkRow("All screens", all, () -> { applySelection(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); });
             allRow.setPadding(dp(14), dp(11), dp(4), dp(11));
             both.addView(allRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            final boolean sg = svc.isSyncGroup();
+            final boolean sg = svc.isSyncGroup() || svc.isSyncPending();   // ticked while it links, so a tap cancels
             View syncRow = ui.checkRow("Sync Playback", sg, () -> {
-                if (!svc.setSyncGroup(!sg)) toast("Sync needs two or more screens on the same Wi-Fi");
+                if (!svc.setSyncGroup(!sg)) toast("Pick two or more screens to sync");
                 refreshAll(); refreshTargets(col, svc);
             });
             syncRow.setPadding(dp(12), dp(11), dp(4), dp(11));
@@ -1036,11 +1099,11 @@ public class RemoteActivity extends Activity {
         buildTargetRows(col, svc);
     }
     static final String[][] CONN_MODES = {
-            {"auto", "Automatic", "Bluetooth for the controls, Wi-Fi raised only for what needs it: a faster BackSeat Glance, file imports, the car dash. This phone hosts, so the TV joins silently with no prompts."},
-            {"ble", "Bluetooth only", "Controls + a still image every second or so. Works anywhere, no Wi-Fi needed."},
-            {"tv_hotspot", "TV hotspot", "The TV hosts a Wi-Fi hotspot and remotes join it. Adds a faster BackSeat Glance + fast library browsing."},
-            {"remote_hotspot", "Remote hotspot", "This remote hosts the hotspot and the TV joins it. Adds a faster BackSeat Glance + fast library browsing."},
-            {"shared", "Shared Wi-Fi", "TV and remotes on the same network (home Wi-Fi). Adds a faster BackSeat Glance + fast library browsing."}};
+            {"auto", "Automatic (recommended)", "Bluetooth, plus Wi-Fi when something needs it."},
+            {"ble", "Bluetooth only", "Remote control only, works anywhere. Synced playback needs Wi-Fi."},
+            {"tv_hotspot", "TV hotspot", "The TV makes a Wi-Fi network; remotes join it."},
+            {"remote_hotspot", "Remote hotspot", "This phone makes a Wi-Fi network; the TV joins it."},
+            {"shared", "Shared Wi-Fi", "Everything on the same Wi-Fi, e.g. at home."}};
     private volatile String tvReach = "checking…";
     private void openConnection() {
         if (connView != null) return;
@@ -1074,14 +1137,17 @@ public class RemoteActivity extends Activity {
         if (connStatus == null) return;
         RemoteService svc = RemoteService.get();
         StringBuilder sb = new StringBuilder();
-        if (local) sb.append("This is the TV's own remote (loopback).\n");
-        else sb.append("Bluetooth:  ").append(svc != null && svc.bleConnected() ? "connected" : "not connected").append('\n');
-        sb.append("TV over Wi-Fi:  ").append(local ? "yes (this is the TV)" : tvReach).append('\n');
-        sb.append("TV hotspot:  ").append(hsSsid != null ? hsSsid : "off").append('\n');
-        if (!local) sb.append("This remote's hotspot:  ").append(HotspotService.running() && HotspotService.currentSsid() != null ? HotspotService.currentSsid() : "off").append('\n');
-        // Whether escalating costs you your current Wi-Fi is a property of the phone, not a setting,
-        // so say which one you have rather than letting the behaviour look arbitrary.
-        if (!local) sb.append("Wi-Fi radio:  ").append(app.anancy.net.WifiRadio.describe(this));
+        if (local) {
+            sb.append("Hotspot:  ").append(hsSsid != null ? hsSsid : "off");
+            connStatus.setText(sb.toString()); return;
+        }
+        sb.append("Bluetooth:  ").append(svc != null && svc.bleConnected() ? "connected" : "not connected").append('\n');
+        sb.append("Wi-Fi to TV:  ").append(tvReach).append('\n');
+        String mine = HotspotService.running() ? HotspotService.currentSsid() : null;
+        sb.append("Hotspot:  ").append(mine != null ? mine + " (this phone)" : hsSsid != null ? hsSsid + " (TV)" : "off").append('\n');
+        if (app.anancy.net.WifiRadio.carProjecting(this)) sb.append("Android Auto:  connected\n");
+        // A property of the phone, not a setting: say it, so the behaviour doesn't look arbitrary.
+        sb.append("This phone:  ").append(app.anancy.net.WifiRadio.describe(this));
         connStatus.setText(sb.toString().trim());
     }
     /** Screen selection now lives in the header dropdown (checkbox multi-select), not here. */
@@ -1111,11 +1177,9 @@ public class RemoteActivity extends Activity {
     private void renderConnActions() {
         if (connActions == null) return;
         connActions.removeAllViews();
-        TextView hdr = ui.noteText("— " + lastConn.replace('_', ' ') + " —"); hdr.setGravity(Gravity.CENTER); connActions.addView(hdr);
         switch (lastConn) {
             case "tv_hotspot":
                 if (local) {
-                    connActions.addView(ui.noteText("The TV hosts the hotspot at this level (it turns on automatically). Remotes get the details over Bluetooth, or scan this QR."));
                     Button qr = ui.rowBtn("Show hotspot QR for a remote to scan", ACCENT);
                     qr.setOnClickListener(v -> showWifiQr(HotspotService.currentSsid(), HotspotService.currentPass(), "Scan with the phone remote to join the TV"));
                     connActions.addView(qr);
@@ -1140,7 +1204,6 @@ public class RemoteActivity extends Activity {
                 break;
             case "remote_hotspot":
                 if (local) {
-                    connActions.addView(ui.noteText("A remote hosts the hotspot and sends the details over Bluetooth; the TV joins by itself. Or scan the remote's QR here."));
                     Button scan = ui.rowBtn("Scan the remote's hotspot QR", ACCENT);
                     scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
                     connActions.addView(scan);
@@ -1159,17 +1222,15 @@ public class RemoteActivity extends Activity {
                         Button stop = ui.rowBtn("Stop hotspot", TXT);
                         stop.setOnClickListener(v -> { HotspotService.stop(this); main.postDelayed(() -> { renderConnActions(); renderConnStatus(); }, 800); });
                         connActions.addView(stop);
-                    } else connActions.addView(ui.noteText("Once it's up, the details go to the TV over Bluetooth automatically."));
+                    }
                 }
                 break;
             case "shared":
                 if (local) {
-                    connActions.addView(ui.noteText("Join the TV to your home Wi-Fi: scan a Wi-Fi QR (the phone remote can show one), or let the remote send the details over Bluetooth."));
                     Button scan = ui.rowBtn("Scan a Wi-Fi QR", ACCENT);
                     scan.setOnClickListener(v -> { try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) {} });
                     connActions.addView(scan);
                 } else {
-                    connActions.addView(ui.noteText("Put the TV on the same Wi-Fi as this phone. Enter the network below."));
                     final EditText ssid = ui.field("Wi-Fi name (SSID)", false), pass = ui.field("Password", true);
                     connActions.addView(ssid); connActions.addView(pass);
                     Button sendBtn = ui.rowBtn("Send to TV over Bluetooth", ACCENT);
@@ -1179,7 +1240,7 @@ public class RemoteActivity extends Activity {
                         send("wifi:" + s + "\t" + p); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000);
                     });
                     connActions.addView(sendBtn);
-                    connActions.addView(ui.noteText("Note: this sends the password over Bluetooth unencrypted. Prefer the QR if strangers are in range."));
+                    connActions.addView(ui.noteText("Bluetooth sends the password unencrypted; the QR doesn't."));
                     Button qr = ui.rowBtn("Show as QR for the TV to scan instead", TXT);
                     qr.setOnClickListener(v -> { String s = ssid.getText().toString().trim(); if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; } showWifiQr(s, pass.getText().toString(), "On the TV: Settings → Connection → Scan"); });
                     connActions.addView(qr);
@@ -1191,7 +1252,6 @@ public class RemoteActivity extends Activity {
                 boolean btOn = ad != null && ad.isEnabled();
                 RemoteService svc = RemoteService.get();
                 boolean linked = svc != null && svc.bleConnected();
-                connActions.addView(ui.noteText("Bluetooth: " + (btOn ? "on" : "OFF") + "     ·     tablet link: " + (linked ? "connected" : "not connected")));
                 Button bt = ui.rowBtn(btOn ? "Open Bluetooth settings" : "Turn Bluetooth on (system settings)", btOn ? TXT : ACCENT);
                 bt.setOnClickListener(v -> { try { startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)); } catch (Exception e) { toast("Couldn't open Bluetooth settings"); } });
                 connActions.addView(bt);
@@ -1200,7 +1260,6 @@ public class RemoteActivity extends Activity {
                     chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
                     connActions.addView(chk);
                 }
-                connActions.addView(ui.noteText("Pure Bluetooth: play/pause, playlists, queue, volume, light, sleep, power, and a still image every second or so. A faster BackSeat Glance + fast library browsing need a Wi-Fi level."));
             }
         }
     }
@@ -1265,7 +1324,7 @@ public class RemoteActivity extends Activity {
         conn.setOnClickListener(v -> { closeSettings(); openConnection(); }); col.addView(conn);
         Button chk = ui.rowBtn("This phone: set-up check", TXT);
         chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class))); col.addView(chk);
-        Button about = ui.rowBtn("About BackSeat TV & feature levels", TXT);
+        Button about = ui.rowBtn("About BackSeeTV & feature levels", TXT);
         about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
         Button b = ui.rowBtn("Back", TXT); b.setOnClickListener(v -> closeSettings()); col.addView(b);
     }
@@ -1398,7 +1457,7 @@ public class RemoteActivity extends Activity {
 
         Button setup = ui.rowBtn("This phone: set-up check", TXT);   // includes Change role
         setup.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class))); col.addView(setup);
-        Button about = ui.rowBtn("About BackSeat TV & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
+        Button about = ui.rowBtn("About BackSeeTV & feature levels", ACCENT); about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class))); col.addView(about);
         Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeSettings()); col.addView(back);
     }
     private void closeSettings() { if (settingsView != null) { frame.removeView(settingsView); settingsView = null; } }
@@ -1470,7 +1529,7 @@ public class RemoteActivity extends Activity {
 
         TextView h = new TextView(this);
         final TextView head = h;
-        h.setText(wifi ? "BackSeat Glance" : "BackSeat Glance — still image, refreshes about once a second");
+        h.setText(wifi ? "BackSee Glance" : "BackSee Glance — still image, refreshes about once a second");
         h.setTextColor(SUB); h.setTextSize(13); h.setGravity(Gravity.CENTER);
         h.setPadding(0, 0, 0, dp(12));
         col.addView(h);
@@ -1511,7 +1570,7 @@ public class RemoteActivity extends Activity {
                 if (!ip.isEmpty() && reachable(ip)) {
                     liveUp = true;                       // ends the Bluetooth still loop
                     send("camble:off"); send("snap:on");   // drop the BLE push, keep the camera running
-                    main.post(() -> { head.setText("BackSeat Glance"); status.setText("switching to Wi-Fi…"); });
+                    main.post(() -> { head.setText("BackSee Glance"); status.setText("switching to Wi-Fi…"); });
                     startLive(ip + ":8090", img, status);
                     return;
                 }

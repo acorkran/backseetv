@@ -1,5 +1,6 @@
 package app.anancy.remote;
 
+import app.anancy.Diag;
 import app.anancy.Cfg;
 import app.anancy.net.BleClient;
 import app.anancy.net.HotspotService;
@@ -229,7 +230,7 @@ public class RemoteService extends Service {
             if (!key.equals(joinedKey)) {   // join the TV's hotspot once per creds (non-owner phone: a system prompt)
                 WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
                 boolean ok = false;
-                try { ok = WifiJoiner.join(this, c); } catch (Exception e) { Log.w(TAG, "join tv hotspot: " + e); }
+                try { ok = WifiJoiner.join(this, c); } catch (Exception e) { Diag.warn(TAG, "join tv hotspot: " + e); }
                 // Only remember it as attempted if the request was accepted. Marking the key BEFORE the
                 // attempt meant one refusal (the usual case) stopped it ever trying that network again.
                 joinedKey = ok ? key : null;
@@ -241,7 +242,7 @@ public class RemoteService extends Service {
         if ("tv_hotspot".equals(mode)) { if (!rejoinArmed) { rejoinArmed = true; main.postDelayed(rejoin, 15000); } }
         else { rejoinArmed = false; main.removeCallbacks(rejoin); }
         if ("remote_hotspot".equals(mode)) {
-            if (!HotspotService.running()) { try { HotspotService.start(this); } catch (Exception e) { Log.w(TAG, "hotspot: " + e); } }
+            if (!HotspotService.running()) { try { HotspotService.start(this); } catch (Exception e) { Diag.warn(TAG, "hotspot: " + e); } }
             String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
             if (s != null && p != null) {
                 String key = s + "|" + p;
@@ -285,7 +286,7 @@ public class RemoteService extends Service {
         // is projecting and this phone can only hold one Wi-Fi link, rescind to Bluetooth outright --
         // even with the live view open. This overrides the demand below on purpose.
         if (WifiRadio.carVetoesWifi(this)) {
-            if (escalated) Log.i(TAG, "auto: Android Auto projecting on a single-radio phone - rescinding Wi-Fi, back to Bluetooth");
+            if (escalated) Diag.log(TAG, "auto: Android Auto projecting on a single-radio phone - rescinding Wi-Fi, back to Bluetooth");
             autoSince = 0; dropEscalation(); return;
         }
         // RAISE only on demand -- never spin up a hotspot nobody asked for. KEEP it afterwards when
@@ -308,14 +309,14 @@ public class RemoteService extends Service {
         // re-randomises on every tablet reboot, which is exactly what made it useless in the car.
         if (bleUp() && WifiRadio.freeToHost(this)) {
             if (!HotspotService.running()) {
-                try { HotspotService.start(this, false); } catch (Exception e) { Log.w(TAG, "auto host: " + e); }
+                try { HotspotService.start(this, false); } catch (Exception e) { Diag.warn(TAG, "auto host: " + e); }
             }
             String s = HotspotService.currentSsid(), p = HotspotService.currentPass();
             if (s != null && p != null) {
                 String key = s + "|" + p;
                 if (!key.equals(pushedKey)) {
                     pushedKey = key; send("wifi:" + s + "\t" + p);
-                    Log.i(TAG, "auto: hosting for the TV, creds pushed over BLE (" + s + ")");
+                    Diag.log(TAG, "auto: hosting for the TV, creds pushed over BLE (" + s + ")");
                 }
                 escalated = true;
             } else poke(2000);   // the creds only exist once the hotspot is actually up
@@ -328,9 +329,9 @@ public class RemoteService extends Service {
             if (!key.equals(joinedKey)) {
                 WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = hsSsid; c.type = "WPA"; c.pass = hsPass;
                 boolean ok = false;
-                try { ok = WifiJoiner.joinDirect(this, c, null, null); } catch (Exception e) { Log.w(TAG, "auto join: " + e); }
+                try { ok = WifiJoiner.joinDirect(this, c, null, null); } catch (Exception e) { Diag.warn(TAG, "auto join: " + e); }
                 joinedKey = ok ? key : null;
-                if (ok) { escalated = true; Log.i(TAG, "auto: joining the TV hotspot " + hsSsid); }
+                if (ok) { escalated = true; Diag.log(TAG, "auto: joining the TV hotspot " + hsSsid); }
             }
         }
     }
@@ -338,10 +339,12 @@ public class RemoteService extends Service {
     /** Nothing needs Wi-Fi any more and it is not free to hold -- give the phone its network back. */
     private void dropEscalation() {
         if (!escalated) return;
+        Diag.log(TAG, "auto: dropping Wi-Fi (needs " + wifiNeeds + ", carProjecting=" + WifiRadio.carProjecting(this)
+                + ", vetoed=" + WifiRadio.carVetoesWifi(this) + ", tvLink=" + (wifi != null && wifi.isConnected()) + ")");
         escalated = false; joinedKey = null;
         if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
         try { WifiJoiner.releaseDirect(this); } catch (Exception ignored) {}
-        Log.i(TAG, "auto: Wi-Fi released, Bluetooth only");
+        Diag.log(TAG, "auto: Wi-Fi released, Bluetooth only");
     }
 
     // A TV hotspot restarts with the SAME creds but a NEW subnet whenever the tablet reboots, which
@@ -359,9 +362,9 @@ public class RemoteService extends Service {
             if (s != null && pw != null && !s.equals(WifiJoiner.boundSsid())) {
                 if (WifiJoiner.directJoinKnown(RemoteService.this) && rejoinTries < 5) {
                     rejoinTries++;
-                    Log.i(TAG, "tv hotspot not bound - auto-rejoin " + s + " (try " + rejoinTries + ")");
+                    Diag.log(TAG, "tv hotspot not bound - auto-rejoin " + s + " (try " + rejoinTries + ")");
                     WifiJoiner.Creds c = new WifiJoiner.Creds(); c.ssid = s; c.type = "WPA"; c.pass = pw;
-                    try { WifiJoiner.joinDirect(RemoteService.this, c, null, null); } catch (Exception e) { Log.w(TAG, "auto-rejoin: " + e); }
+                    try { WifiJoiner.joinDirect(RemoteService.this, c, null, null); } catch (Exception e) { Diag.warn(TAG, "auto-rejoin: " + e); }
                 }
             } else rejoinTries = 0;   // bound: forget the failures, so a later restart gets a fresh budget
             main.postDelayed(this, 30000);
@@ -376,6 +379,7 @@ public class RemoteService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         INSTANCE = this;
+        Diag.init(this);
         startForeground(72, note());
         // One-time move to the "auto" default. The old default was a bare "ble" that never escalated,
         // so every existing install would sit on Bluetooth forever and never see the Wi-Fi tier even
@@ -388,6 +392,7 @@ public class RemoteService extends Service {
             if (was == null || "ble".equals(was) || "tv_hotspot".equals(was)) Cfg.put(this, "anancy_conn", "auto");
         }
         connMode = Cfg.getStr(this, "anancy_conn", "auto");
+        if ("1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, ""))) wifiNeeds.add("sync");   // a group survives a restart, so does its link
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -411,7 +416,7 @@ public class RemoteService extends Service {
     private void scheduleIdle() { main.removeCallbacks(idle); main.postDelayed(idle, LINGER_MS); }
     private final Runnable idle = () -> {
         if (!uses.isEmpty()) return;
-        Log.i(TAG, "remote link idle -> stopping");
+        Diag.log(TAG, "remote link idle -> stopping");
         try { if (ble != null) ble.stop(); } catch (Exception ignored) {} ble = null;
         try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {} wifi = null;
         stopForeground(true);
@@ -464,8 +469,82 @@ public class RemoteService extends Service {
         if (isSyncGroup()) armGroup();   // push the new audio mode to the current followers
     }
     /** Arm/disarm a synced group over the CURRENT selection. */
+    // Sync is HTTP between the screens, so they need a shared network. At home that's the house Wi-Fi.
+    // Anywhere else (the car, a waiting room) there is none, so the group used to refuse with "needs the
+    // same Wi-Fi" even though the phone can make one: ask for the Wi-Fi tier (this phone hosts, the
+    // device-owner TV joins silently) and arm once at least two members are reachable.
+    private boolean syncPending = false;
+    private long syncPendingSince = 0;
+    private static final long SYNC_LINK_TIMEOUT_MS = 45000;
+    /** True while a group is waiting for its screens to come up on a shared network. */
+    public boolean isSyncPending() { return syncPending && groupOrder().size() >= 2; }
+    // A screen's reported address is not proof we can reach it: a tablet on the house Wi-Fi still
+    // reports its house address over Bluetooth while this phone is out on mobile data. So count only
+    // screens that actually answered an HTTP probe at their CURRENT address.
+    private final java.util.Map<String, String> probedOk = new java.util.concurrent.ConcurrentHashMap<>();   // id -> ip that answered
+    private volatile boolean probing = false;
+    private void probeMembers() {
+        if (probing) return;
+        final java.util.Map<String, String> ips = new java.util.HashMap<>();
+        for (String id : groupOrder()) { String ip = deviceIp(id); if (ip != null && !ip.isEmpty()) ips.put(id, ip); }
+        final String self = selfPlay() ? selfId() : null;
+        probing = true;
+        new Thread(() -> { try {
+            for (java.util.Map.Entry<String, String> e : ips.entrySet()) {
+                if (e.getKey().equals(self)) { probedOk.put(e.getKey(), e.getValue()); continue; }   // this phone: local
+                boolean ok = false;
+                try {
+                    java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + e.getValue() + ":8090/clock").openConnection();
+                    cn.setConnectTimeout(1500); cn.setReadTimeout(1500);
+                    ok = cn.getResponseCode() == 200; cn.disconnect();
+                } catch (Exception ignored) {}
+                if (ok) probedOk.put(e.getKey(), e.getValue());
+                else { if (probedOk.remove(e.getKey()) != null || !syncLinkToasted) Diag.log(TAG, "sync probe: " + e.getKey() + " @ " + e.getValue() + " not answering"); }
+            }
+        } finally { probing = false; } }, "sync-probe").start();
+    }
+    private int reachableMembers() {
+        int n = 0;
+        for (String id : groupOrder()) { String ip = deviceIp(id); if (ip != null && ip.equals(probedOk.get(id))) n++; }
+        return n;
+    }
+    private final Runnable syncWait = new Runnable() { public void run() {
+        if (!syncPending) return;
+        if (groupOrder().size() < 2) { syncPending = false; releaseWifi("sync"); return; }
+        if (reachableMembers() >= 2) {
+            syncPending = false;
+            Diag.log(TAG, "sync group: screens linked after " + (android.os.SystemClock.elapsedRealtime() - syncPendingSince) + " ms, arming");
+            Cfg.p(RemoteService.this).edit().putString(PREF_SYNCGROUP, "1").apply();
+            java.util.Map<String, String> ips = new java.util.LinkedHashMap<>();
+            for (String id : groupOrder()) ips.put(id, deviceIp(id));
+            Diag.log(TAG, "sync group: leader " + syncLeaderId() + ", ips " + ips + ", hosts " + hostIds + ", self " + (selfPlay() ? selfId() : "-"));
+            armGroup(); aimLinks();
+            if (android.os.SystemClock.elapsedRealtime() - syncPendingSince > 2500) toastMain("Screens synced");
+            return;
+        }
+        if (android.os.SystemClock.elapsedRealtime() - syncPendingSince > SYNC_LINK_TIMEOUT_MS) {
+            syncPending = false; releaseWifi("sync");
+            Diag.warn(TAG, "sync group: screens never became reachable over Wi-Fi");
+            toastMain("Couldn't link the screens over Wi-Fi. Put them on the same Wi-Fi and try again.");
+            return;
+        }
+        if (!syncLinkToasted && android.os.SystemClock.elapsedRealtime() - syncPendingSince > 2500) {
+            syncLinkToasted = true;
+            Diag.log(TAG, "sync group: only " + reachableMembers() + " screen(s) answer over HTTP, raising Wi-Fi");
+            toastMain("Linking the screens over Wi-Fi…");
+        }
+        probeMembers();
+        main.postDelayed(this, 1000);
+    }};
+    private boolean syncLinkToasted = false;
+    private void toastMain(final String msg) {
+        main.post(() -> { try { android.widget.Toast.makeText(RemoteService.this, msg, android.widget.Toast.LENGTH_LONG).show(); } catch (Exception ignored) {} });
+    }
     public boolean setSyncGroup(boolean on) {
+        Diag.log(TAG, "sync group: " + (on ? "ON" : "OFF") + " requested, members " + groupOrder() + ", carProjecting=" + WifiRadio.carProjecting(this));
         if (!on) {
+            syncPending = false; main.removeCallbacks(syncWait);
+            releaseWifi("sync");
             if (selfPlay()) Cfg.put(this, "anancy_host", "");   // leaving the group: this device goes back to its own library
             java.util.HashSet<String> known = new java.util.HashSet<>(seenTablets.keySet()); known.addAll(deviceIps.keySet());
             for (String id : known) httpArm(deviceIp(id), "/sync?on=0");   // everyone stops following
@@ -474,14 +553,13 @@ public class RemoteService extends Service {
             return true;
         }
         if (groupOrder().size() < 2) return false;                         // need a leader + at least one follower
-        // Arming is HTTP-only (there is no "sync" verb over BLE), so on a Bluetooth-only link the group
-        // silently did nothing while send() still routed playback away from the followers. Refuse instead.
-        boolean anyReachable = false;
-        for (String id : groupOrder()) if (deviceIp(id) != null) { anyReachable = true; break; }
-        if (!anyReachable) { Log.w(TAG, "sync group refused: no screen is reachable over Wi-Fi"); return false; }
-        Cfg.p(this).edit().putString(PREF_SYNCGROUP, "1").apply();         // set first so syncLeaderId() derives
-        armGroup();
-        aimLinks();
+        acquireWifi("sync");   // hold the link for as long as the group lasts (a no-op on house Wi-Fi)
+        // Arming is HTTP-only (there is no "sync" verb over BLE). Wait until the leader AND a follower
+        // answer over HTTP (usually under a second at home); this phone's own address alone used to
+        // pass, and the group then did nothing.
+        probedOk.clear(); probeMembers();
+        syncPending = true; syncLinkToasted = false; syncPendingSince = android.os.SystemClock.elapsedRealtime();
+        main.removeCallbacks(syncWait); main.postDelayed(syncWait, 800);
         return true;
     }
     /** (Re)arm the current group: leader plays, non-member screens stop, follower members mirror the leader. */
@@ -634,6 +712,9 @@ public class RemoteService extends Service {
     // through send(), so starting here played the library out loud over the car's music with the app closed.
     // Only ticking the box or the card coming on screen starts it.
     private void sendToSelf(final String cmd) {
+        // Network commands are for OTHER screens: this phone's own player was being told to join the
+        // hotspot this phone is hosting, which raised Android's "Allow suggested Wi-Fi networks?" prompt.
+        if (cmd == null || cmd.startsWith("wifi:") || cmd.startsWith("conn:")) return;
         main.post(() -> {
             if (app.anancy.player.SelfPlayer.running() && selfLink != null) selfLink.send(cmd);
         });
@@ -767,9 +848,9 @@ public class RemoteService extends Service {
         String ch = "anancy_remote";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null && nm.getNotificationChannel(ch) == null)
-            nm.createNotificationChannel(new NotificationChannel(ch, "BackSeat TV remote", NotificationManager.IMPORTANCE_MIN));
+            nm.createNotificationChannel(new NotificationChannel(ch, "BackSeeTV remote", NotificationManager.IMPORTANCE_MIN));
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ch) : new Notification.Builder(this);
-        return b.setContentTitle("BackSeat TV remote").setContentText("linked to the TV")
+        return b.setContentTitle("BackSeeTV remote").setContentText("linked to the TV")
                 .setSmallIcon(android.R.drawable.ic_media_play).setOngoing(true).build();
     }
 }

@@ -143,7 +143,7 @@ public class SetupActivity extends Activity {
         app.anancy.remote.RemoteService svc = app.anancy.remote.RemoteService.get();
         int n = svc != null ? svc.tablets().size() : 0;
         row(n > 0, "TV found", n > 0 ? (n == 1 ? "Found 1 screen." : "Found " + n + " screens.")
-                        : "No screen found yet. Open BackSeat TV on the tablet and make sure it is set as the TV.",
+                        : "No screen found yet. Open BackSeeTV on the tablet and make sure it is set as the TV.",
                 null, null);
         return n > 0;
     }
@@ -166,7 +166,7 @@ public class SetupActivity extends Activity {
         boolean ok = false;
         try { ok = android.os.Environment.isExternalStorageManager(); } catch (Exception ignored) {}
         row(ok, "All files access", ok
-                        ? "Granted \u2014 BackSeat TV can read the SD card."
+                        ? "Granted \u2014 BackSeeTV can read the SD card."
                         : "Not granted, so the SD card is invisible and the library looks empty however "
                           + "many shows are on it. This is a manual grant even for the kiosk.",
                 ok ? null : "Grant all files access", () -> {
@@ -196,7 +196,7 @@ public class SetupActivity extends Activity {
             return false;
         }
         row(ok, "Media", ok ? shows + " shows, " + files + " videos — from " + where + "."
-                        : "No videos found in " + where + ". Point BackSeat TV at the folder your shows are in "
+                        : "No videos found in " + where + ". Point BackSeeTV at the folder your shows are in "
                           + "— one sub-folder per show.",
                 ok ? null : "Choose the media folder",
                 () -> startActivity(new Intent(this, FolderPickerActivity.class)));
@@ -232,7 +232,7 @@ public class SetupActivity extends Activity {
         String ip = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_ANANCY_IP);
         String nm = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_TV_NAME);
         String ssid = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_JOINED_SSID);
-        if (ip == null && ssid == null) { toast("That wasn't an BackSeat TV pairing code"); return; }
+        if (ip == null && ssid == null) { toast("That wasn't an BackSeeTV pairing code"); return; }
         if (ip != null) Cfg.put(this, "anancy_paired_ip", ip);
         if (nm != null) Cfg.put(this, "anancy_paired_name", nm);
         toast(ssid != null ? "Joining " + ssid + "…" : "Paired with " + (nm == null ? ip : nm));
@@ -248,10 +248,10 @@ public class SetupActivity extends Activity {
             owner = dpm != null && dpm.isDeviceOwnerApp(getPackageName());
         } catch (Exception ignored) {}
         if (owner) { row(true, "Kiosk mode", "Set up as device owner: pinned as home, inescapable lock, silent Wi-Fi joins.", null, null); return; }
-        info("Kiosk mode (optional)", "BackSeat TV works fine as a normal player, and its toddler lock blocks Home, Back and Recents. The fully "
+        info("Kiosk mode (optional)", "BackSeeTV works fine as a normal player, and its toddler lock blocks Home, Back and Recents. The fully "
                 + "locked-down appliance, with no prompts and surviving a restart, is a one-time "
                 + "setup from a computer with adb, on a tablet with no Google or Samsung account:\n\n"
-                + SettingsCmd() + "\n\nThen reopen BackSeat TV and turn on Kiosk lock in Settings.",
+                + SettingsCmd() + "\n\nThen reopen BackSeeTV and turn on Kiosk lock in Settings.",
                 "Copy command", () -> {
                     try { ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
                             .setPrimaryClip(ClipData.newPlainText("anancy", SettingsCmd())); toast("Copied"); }

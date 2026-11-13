@@ -1,5 +1,6 @@
 package app.anancy.net;
 
+import app.anancy.Diag;
 import app.anancy.Cfg;
 import app.anancy.admin.AdminReceiver;
 
@@ -70,10 +71,10 @@ public class HotspotService extends Service {
         String ch = "anancy_remote";
         android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null && nm.getNotificationChannel(ch) == null)
-            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "BackSeat TV", android.app.NotificationManager.IMPORTANCE_LOW));
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "BackSeeTV", android.app.NotificationManager.IMPORTANCE_LOW));
         android.app.Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new android.app.Notification.Builder(this, ch) : new android.app.Notification.Builder(this);
-        return b.setContentTitle("BackSeat TV hotspot").setContentText("Sharing Wi-Fi with the screens")
+        return b.setContentTitle("BackSeeTV hotspot").setContentText("Sharing Wi-Fi with the screens")
                 .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).build();
     }
 
@@ -82,7 +83,7 @@ public class HotspotService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         // RemoteService starts this from the background, where a plain startService throws on API 26+.
         // That exception was swallowed, so picking "Remote hotspot" silently did nothing.
-        try { startForeground(74, note()); } catch (Exception e) { Log.w(TAG, "startForeground: " + e); }
+        try { startForeground(74, note()); } catch (Exception e) { Diag.warn(TAG, "startForeground: " + e); }
         showQr = intent == null || intent.getBooleanExtra("qr", true);
         if (reservation == null) startHotspot();
         return START_STICKY;
@@ -97,10 +98,10 @@ public class HotspotService extends Service {
                 @Override public void onStarted(WifiManager.LocalOnlyHotspotReservation res) {
                     reservation = res;
                     readCreds(res);
-                    Log.i(TAG, "hotspot up: '" + ssid + "'");
+                    Diag.log(TAG, "hotspot up: '" + ssid + "'");
                     if (ssid != null && showQr) showQr();
                 }
-                @Override public void onStopped() { Log.i(TAG, "hotspot stopped"); ssid = pass = null; }
+                @Override public void onStopped() { Diag.log(TAG, "hotspot stopped"); ssid = pass = null; }
                 @Override public void onFailed(int reason) { Log.e(TAG, "hotspot failed: " + reason); stopSelf(); }
             }, new Handler(Looper.getMainLooper()));
         } catch (Exception e) { Log.e(TAG, "startLocalOnlyHotspot: " + e); stopSelf(); }
@@ -117,7 +118,7 @@ public class HotspotService extends Service {
                 ssid = cfg.SSID != null ? cfg.SSID.replaceAll("^\"|\"$", "") : null;
                 pass = cfg.preSharedKey != null ? cfg.preSharedKey.replaceAll("^\"|\"$", "") : null;
             }
-        } catch (Exception e) { Log.w(TAG, "readCreds: " + e); }
+        } catch (Exception e) { Diag.warn(TAG, "readCreds: " + e); }
     }
 
     /** Show the random creds as a standard WIFI: QR for a remote to scan + join. */
@@ -129,7 +130,7 @@ public class HotspotService extends Service {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra(QrShareActivity.EXTRA_PAYLOAD, payload)
                     .putExtra(QrShareActivity.EXTRA_CAPTION, "Scan on your phone/watch to join\n" + ssid));
-        } catch (Exception e) { Log.w(TAG, "showQr: " + e); }
+        } catch (Exception e) { Diag.warn(TAG, "showQr: " + e); }
     }
     private static String esc(String s) { return s == null ? "" : s.replaceAll("([\\\\;,:\"])", "\\\\$1"); }
 
@@ -149,7 +150,7 @@ public class HotspotService extends Service {
                 else dpm.setSecureSetting(admin, android.provider.Settings.Secure.LOCATION_MODE,
                         String.valueOf(android.provider.Settings.Secure.LOCATION_MODE_HIGH_ACCURACY));
             }
-        } catch (Exception e) { Log.w(TAG, "grantNearbyWifi: " + e); }
+        } catch (Exception e) { Diag.warn(TAG, "grantNearbyWifi: " + e); }
     }
 
     @Override public void onDestroy() {

@@ -947,6 +947,7 @@ public class PlayerController {
         appliance never boots stuck silent (system volume 0 -> 50%). */
     public void setAudio(Context ctx) {
         appCtx = ctx.getApplicationContext();
+        app.anancy.Diag.init(appCtx);
         am = (AudioManager) ctx.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
         prefs = ctx.getApplicationContext().getSharedPreferences("anancy", Context.MODE_PRIVATE);
         muted = prefs.getBoolean("muted", true);   // first run = MUTED (nap-safe default); volume-up unmutes
@@ -1096,19 +1097,34 @@ public class PlayerController {
     /** This device's site-local IPv4 (e.g. 192.168.x) so a remote can reach the control server
         without relying on mDNS resolution (which proved flaky). "" if not on a LAN. */
     public static String wifiIp() {
+        // Prefer the Wi-Fi / hotspot interfaces. A phone on mobile data can hold a site-local carrier
+        // address (10.x on rmnet) that the other screens can't reach, and it may enumerate first.
+        String fallback = "", wifi = "";
+        boolean hosting = app.anancy.net.HotspotService.running();
         try {
             java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
             while (ifs.hasMoreElements()) {
                 java.net.NetworkInterface ni = ifs.nextElement();
                 if (!ni.isUp() || ni.isLoopback()) continue;
+                String n = ni.getName() == null ? "" : ni.getName();
+                if (n.startsWith("rmnet") || n.startsWith("ccmni") || n.startsWith("v4-") || n.startsWith("tun") || n.startsWith("dummy")) continue;
+                boolean apLike = n.startsWith("swlan") || n.startsWith("ap") || n.startsWith("softap");
+                boolean wifiLike = apLike || n.startsWith("wlan") || n.startsWith("eth");
                 java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
                 while (addrs.hasMoreElements()) {
                     java.net.InetAddress a = addrs.nextElement();
-                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) {
+                        // While this phone hosts, the screens are on ITS hotspot, so that's the address
+                        // they can reach. In the car the phone also holds Android Auto's Wi-Fi link
+                        // (another wlan address) that the screens can never see.
+                        if (apLike && hosting) return a.getHostAddress();
+                        if (wifiLike && wifi.isEmpty()) wifi = a.getHostAddress();
+                        if (fallback.isEmpty()) fallback = a.getHostAddress();
+                    }
                 }
             }
         } catch (Exception ignored) {}
-        return "";
+        return !wifi.isEmpty() ? wifi : fallback;
     }
 
     private void on(Runnable r) { if (Looper.myLooper() == Looper.getMainLooper()) r.run(); else main.post(r); }

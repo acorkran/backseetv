@@ -94,7 +94,7 @@ def releaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contai
 tasks.register('embedWearApk', Copy) {
     dependsOn(releaseBuild ? ':wear:assembleRelease' : ':wear:assembleDebug', ':wear:writeWearBuildId')
     from(project(':wear').layout.buildDirectory.file(releaseBuild
-            ? "outputs/apk/release/BackSeatTV-wear-${anancyVersion}.apk" : 'outputs/apk/debug/wear-debug.apk')) { rename { 'wear.apk' } }
+            ? "outputs/apk/release/BackSeeTV-wear-${anancyVersion}.apk" : 'outputs/apk/debug/wear-debug.apk')) { rename { 'wear.apk' } }
     from(project(':wear').layout.buildDirectory.file('wear-build-id.txt')) { rename { 'wear.id' } }
     into embeddedWear
     doLast {

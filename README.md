@@ -1,4 +1,4 @@
-# BackSeat TV
+# BackSeeTV
 
 [![Android CI](../../actions/workflows/android-ci.yml/badge.svg)](../../actions/workflows/android-ci.yml)
 
@@ -12,19 +12,21 @@ Built as a real appliance for real drives, then hardened into a portfolio piece:
 Android app, unit-tested core logic, CI, and no cloud anywhere. It's a personal project that my family
 uses every day, not a commercial product. You bring your own videos.
 
-> **Name:** the code and package still say *Anancy*, the project's codename: the
-> **storyteller spider** of West African and Caribbean folklore, who owns all the world's stories.
+> **BackSeeTV:** Back Seat Media Player.
 
 ## Demo
 
-![BackSeat TV: the phone switches the tablet's show, then joins in as a synced second screen](docs/demo.gif)
+![BackSeeTV: the phone switches the tablet's show, then joins in as a synced second screen](docs/demo.gif)
 
 ## What makes it interesting
 
 - **Clock-aligned multi-device playback.** Followers estimate the leader's monotonic clock
   with an NTP-lite offset (lowest-RTT filtered, slow-drift tracked), extrapolate where the
-  leader is *now*, and converge with a seek-ahead scheduled start plus an inaudible ±1.5%
-  speed nudge. Measured to ~20–50 ms apart on real hardware. The math is pure and
+  leader is *now*, and converge in two steps: a seek-ahead start (jump slightly past the leader,
+  hold, release on the beat), then a pitch-preserving speed nudge of up to ±4% outside a 35 ms
+  deadband. A follower that stalls can ask the leader to hold the whole group for a few seconds,
+  and every player buffers more before it starts. Measured 6–9 ms apart (median, worst 26 ms) on
+  real hardware, settling within seconds of a skip. The math is pure and
   unit-tested: [`player/SyncMath.java`](anancy/app/src/main/java/app/anancy/player/SyncMath.java).
 - **Its own EOF-proof player.** A Media3 (ExoPlayer) engine with native shuffle-all +
   deterministic auto-advance, so the "stuck at end-of-file" wedge that plagued the old
@@ -112,7 +114,7 @@ _(The archived `legacy/` apps use a no-Gradle `./build.sh`; they're kept only fo
 
 ## Status & Android compatibility
 
-**v1.0.0.** Tested on a Samsung SM-T575 and a Lenovo TB-X606F tablet, a Galaxy S21, a Galaxy Watch
+**v1.0.0.** Tested on a Samsung SM-T575 and a Lenovo TB-X606F tablet, a Galaxy S21 (Android 15), a Galaxy Watch
 and a real Android Auto car. Other hardware may need adjusting. Android-TV-as-a-follower is
 exploratory, and a Play Store version of the phone app is planned for v1.1.
 
@@ -126,7 +128,7 @@ The kiosk ships via GitHub / EMM (device-owner can't come from the Play Store), 
   API-35 stopgap); a full `WindowInsets` pass is the proper follow-up.
 
 Still on the list: promoting `HotspotService` to a typed foreground service (works today
-via the device-owner exemption), and on-device verification on a physical Android 15 unit.
+via the device-owner exemption).
 
 ## Contributing
 

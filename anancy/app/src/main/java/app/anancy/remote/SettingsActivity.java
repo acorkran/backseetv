@@ -42,10 +42,10 @@ public class SettingsActivity extends Activity {
     private static final int BG = 0xFF101418, CARD = 0xFF1B2128, TXT = 0xFFF2F4F7, SUB = 0xFF9AA4B2, OK = 0xFF8FD694;
     static final String DO_CMD = "adb shell dpm set-device-owner app.anancy/.admin.AdminReceiver";
     static final String[][] CONN_MODES = {
-            {"ble", "Bluetooth only", "Remotes control the TV over Bluetooth: play, playlists, queue, volume, light, sleep, power, and a still image every second or so."},
-            {"tv_hotspot", "TV hotspot", "The TV hosts its own Wi-Fi hotspot (on automatically at this level) and remotes join it. Adds a faster BackSeat Glance + fast library browsing. Works in the car."},
-            {"remote_hotspot", "Remote hotspot", "A phone hosts the hotspot and hands the details to the TV over Bluetooth (or you scan its QR here). Adds a faster BackSeat Glance + fast library browsing."},
-            {"shared", "Shared Wi-Fi", "TV and remotes on the same network, e.g. home Wi-Fi. Join the TV by scanning a Wi-Fi QR, or a remote sends the details."}};
+            {"ble", "Bluetooth only", "Remote control only, works anywhere. Synced playback needs Wi-Fi."},
+            {"tv_hotspot", "TV hotspot", "This TV makes a Wi-Fi network; remotes join it."},
+            {"remote_hotspot", "Remote hotspot", "A phone makes a Wi-Fi network; this TV joins it."},
+            {"shared", "Shared Wi-Fi", "Everything on the same Wi-Fi, e.g. at home."}};
     private LinearLayout col;
     private TextView status;
 
@@ -62,7 +62,7 @@ public class SettingsActivity extends Activity {
 
     private void build() {
         col.removeAllViews();
-        TextView h = new TextView(this); h.setText("BackSeat TV settings"); h.setTextColor(TXT); h.setTextSize(24);
+        TextView h = new TextView(this); h.setText("BackSeeTV settings"); h.setTextColor(TXT); h.setTextSize(24);
         h.setPadding(0, 0, 0, dp(12)); col.addView(h);
         status = new TextView(this); status.setTextColor(SUB); status.setTextSize(13); status.setPadding(0, 0, 0, dp(16));
         col.addView(status);
@@ -103,11 +103,11 @@ public class SettingsActivity extends Activity {
                 + "below (nothing to remember; a toddler can't read it in time). Preset PIN = type your own Admin PIN "
                 + "(not shown). Pattern = draw a swipe pattern (experimental; our own, not the phone's system pattern — "
                 + "set it below, falls back to the PIN pad until you do)."
-                + (owner ? " Kiosk lock pins BackSeat TV as home + blocks Home/Back/Recents (next launch)." : "")
+                + (owner ? " Kiosk lock pins BackSeeTV as home + blocks Home/Back/Recents (next launch)." : "")
                 + (owner ? "" : "\n\nToddler lock (no device owner needed): pins the show with Android's own screen pinning, after one tap to confirm. Home, Recents and "
                 + "the notification shade stop working while the show is on; the unlock gesture above gets you out. Android "
                 + "shows an \"App is pinned\" note the first time. Android keeps its own way out, holding Back + Recents. If "
-                + "that's used, BackSeat TV asks to pin again. Device owner, set up from a computer, needs no prompts and "
+                + "that's used, BackSeeTV asks to pin again. Device owner, set up from a computer, needs no prompts and "
                 + "survives a restart. Give the phone a screen lock too, so Android can ask for its PIN when the pin ends."));
 
         // --- Playback --------------------------------------------------------------------------
@@ -174,15 +174,15 @@ public class SettingsActivity extends Activity {
         // --- Device owner ----------------------------------------------------------------------
         section("Kiosk mode (device owner)");
         TextView os = new TextView(this);
-        os.setText(owner ? "✓  This tablet is set up as a BackSeat TV kiosk (the app is the device owner)."
-                : "○  Not set up as a kiosk — BackSeat TV runs as a normal player. The optional setup below gives the locked-down TV.");
+        os.setText(owner ? "✓  This tablet is set up as a BackSeeTV kiosk (the app is the device owner)."
+                : "○  Not set up as a kiosk — BackSeeTV runs as a normal player. The optional setup below gives the locked-down TV.");
         os.setTextColor(owner ? OK : TXT); os.setTextSize(14); os.setPadding(dp(4), dp(4), dp(4), dp(8)); col.addView(os);
         note("The optional full setup is one-time and needs a computer with adb:\n"
                 + "1.  Use a tablet with NO Google or Samsung account added (remove them, or set the tablet up fresh and skip sign-in).\n"
                 + "2.  Developer options → USB debugging on, plug it in.\n"
                 + "3.  Run:   " + DO_CMD + "\n"
-                + "4.  Open BackSeat TV, choose \"This is the TV\", then turn on Kiosk lock above.\n"
-                + "What it enables: BackSeat TV pinned as the home screen, an inescapable lock (Home / Back / Recents blocked), permissions granted silently, "
+                + "4.  Open BackSeeTV, choose \"This is the TV\", then turn on Kiosk lock above.\n"
+                + "What it enables: BackSeeTV pinned as the home screen, an inescapable lock (Home / Back / Recents blocked), permissions granted silently, "
                 + "screen on/off from the remotes, joining Wi-Fi without prompts. Undo it here any time.");
         actionRow("Setup command", "copy", () -> {
             try { ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("anancy", DO_CMD)); toast("Copied"); }
@@ -202,7 +202,7 @@ public class SettingsActivity extends Activity {
           }); }
 
         actionRow("Set-up check", "run", () -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
-        actionRow("About BackSeat TV & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
+        actionRow("About BackSeeTV & feature levels", "open", () -> startActivity(new Intent(this, AboutActivity.class)));
 
         // --- Exit ------------------------------------------------------------------------------
         Button back = new Button(this); back.setText("Back to the show"); back.setAllCaps(false); back.setTextSize(18);
@@ -216,7 +216,7 @@ public class SettingsActivity extends Activity {
 
     private void confirmRemoveOwner() {
         new AlertDialog.Builder(this).setTitle("Remove device owner?")
-                .setMessage("BackSeat TV stops being the kiosk on this tablet:\n\n• no home-screen pinning or lock (Home/Back/Recents work again)\n"
+                .setMessage("BackSeeTV stops being the kiosk on this tablet:\n\n• no home-screen pinning or lock (Home/Back/Recents work again)\n"
                         + "• permissions and Wi-Fi joins will prompt\n• remotes can't turn the screen off\n\n"
                         + "The app keeps working as a normal player. Setting it up again needs adb and a tablet with no accounts.")
                 .setPositiveButton("Remove", (d, w) -> {
