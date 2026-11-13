@@ -2,7 +2,6 @@ package app.anancy.net;
 
 import app.anancy.Cfg;
 import app.anancy.Identity;
-import app.anancy.admin.AdminReceiver;
 import app.anancy.player.Library;
 import app.anancy.player.PlayModeActivity;
 import app.anancy.player.PlayerActivity;
@@ -50,22 +49,58 @@ public class ControlServer {
             server.bind(new InetSocketAddress("0.0.0.0", PORT));
             Log.i(TAG, "control server on :" + PORT);
             registerNsd();
-            while (run) { final Socket s = server.accept(); new Thread(() -> handle(s)).start(); }
+            while (run) {
+                final Socket s = server.accept();
+                // Bounded: a flood of half-open connections from anyone on the network used to start a
+                // thread each, forever. A full pool turns the newcomer away instead.
+                try { s.setSoTimeout(5_000); pool.execute(() -> handle(s)); }   // 5 s to send the headers
+                catch (java.util.concurrent.RejectedExecutionException busy) {
+                    Log.w(TAG, "HTTP busy (" + pool.getActiveCount() + " running): turned away " + s.getInetAddress().getHostAddress());
+                    try { s.close(); } catch (Exception ignored) {}
+                }
+            }
         } catch (Exception e) { if (run) Log.e(TAG, "serve died", e); }
     }
 
+    /** Up to 48 requests at once. Some are long-lived: /live, and /media streams to followers, which
+        sit blocked in a write while the follower's player has a full buffer. */
+    private final java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
+            4, 48, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>());
+    static final int MAX_HEADERS = 8 * 1024;
+    /** The nonce of the request being answered on this thread, so the answer can be tied to it. */
+    private static final ThreadLocal<String> REQ_NONCE = new ThreadLocal<>();
+
     private void handle(Socket c) {
+        REQ_NONCE.remove();
         try {
             InputStream in = c.getInputStream();
             StringBuilder h = new StringBuilder(); int b, nl = 0;
-            while ((b = in.read()) != -1) { h.append((char) b); if (b == '\n') { if (++nl == 2) break; } else if (b != '\r') nl = 0; }
+            while ((b = in.read()) != -1) {
+                h.append((char) b);
+                if (h.length() > MAX_HEADERS) return;   // nobody legitimate sends 8 KB of headers
+                if (b == '\n') { if (++nl == 2) break; } else if (b != '\r') nl = 0;
+            }
             String line = h.length() > 0 ? h.toString().split("\r\n", 2)[0] : "";
             String[] parts = line.split(" ");
             String target = parts.length >= 2 ? parts[1] : "/";
             String path = target, q = "";
             int i = target.indexOf('?'); if (i >= 0) { path = target.substring(0, i); q = target.substring(i + 1); }
 
-            if (path.equals("/upload")) { handleUpload(param(q, "name"), h.toString(), in, c); return; }   // wifi file import
+            // Nothing is served to anyone who hasn't paired: every request must be signed with this
+            // TV's key (net/PairCrypto). Before this, anything on the same Wi-Fi could drive the TV,
+            // read its camera, change its Wi-Fi or even hand away device owner.
+            String method = parts.length >= 1 ? parts[0] : "GET";
+            String auth = header(h.toString(), app.anancy.net.PairCrypto.HEADER);
+            REQ_NONCE.set(app.anancy.net.PairCrypto.nonceOf(auth));
+            if (!app.anancy.Pairing.verifyRequest(ctx, auth, method, target)) {
+                Log.w(TAG, "HTTP " + path + " refused: not paired (" + c.getInetAddress().getHostAddress() + ")");
+                write(c, 401, "{\"ok\":false,\"error\":\"not paired\"}");
+                return;
+            }
+            if (!c.getInetAddress().isLoopbackAddress()) app.anancy.Pairing.markPaired(ctx);
+
+            c.setSoTimeout(30_000);   // a paired client's body (an upload) may pause longer between chunks
+            if (path.equals("/upload")) { handleUpload(param(q, "name"), param(q, "sha"), h.toString(), in, c); return; }   // wifi file import
             if (path.equals("/snapshot.jpg")) { writeJpeg(c, SnapshotService.latestSnapshot()); return; }   // latest still image
             if (path.equals("/live")) { handleLive(c); return; }   // MJPEG live feed (Wi-Fi tier)
             if (path.equals("/media")) { handleMedia(c, param(q, "id"), h.toString()); return; }   // stream a library file by id (Range-capable) for a client tablet
@@ -100,11 +135,17 @@ public class ControlServer {
                     if (m > 0) ctrl.startSleep(m); else ctrl.cancelSleep();
                     body = ok(); break;
                 }
-                case "/playurl": { String u = param(q, "url"); if (u != null) { ctrl.playUrl(urlDecode(u)); PlayerActivity.wakeScreen(); body = ok(); } else body = "{\"ok\":false,\"error\":\"no url\"}"; break; }   // client: stream+play a host media URL
+                case "/playurl": {   // client: stream+play a host media URL -- another TV's /media, nothing else
+                    String u = param(q, "url"); u = u == null ? null : urlDecode(u);
+                    if (u != null && u.matches("http://[0-9.]+:8090/media\\?id=\\d+")) { ctrl.playUrl(u); PlayerActivity.wakeScreen(); body = ok(); }
+                    else body = "{\"ok\":false,\"error\":\"not a TV's media address\"}";
+                    break;
+                }
                 case "/sync": {   // follower: mirror the host. &host=<ip> joins a group (point at the leader + reload as a client)
                     String on = param(q, "on");
                     boolean want = on == null ? !ctrl.isSync() : ("1".equals(on) || "true".equals(on));
                     String host = param(q, "host");
+                    grantHost(host, param(q, "hostid"), param(q, "hostkey"));   // the leader's key, sealed for us
                     if (want && host != null && !host.isEmpty()) {
                         Cfg.applyConfig(ctx, "anancy_host", urlDecode(host));
                         ctrl.reloadForSync(ctx);   // enter client mode so itemFor(cur) resolves the leader's library
@@ -149,12 +190,15 @@ public class ControlServer {
                     if (m != null) HotspotService.applyMode(ctx, urlDecode(m));
                     body = ctrl.connJson(); break;
                 }
-                case "/wifi": {   // the TV joins a network (device owner = silent)
-                    String ssid = param(q, "ssid"), pass = param(q, "pass");
+                case "/wifi": {   // the TV joins a network (device owner = silent). s = "SSID<TAB>PASS" sealed with our key:
+                    // a URL is logged and visible on the network, a password must not be.
+                    String sealed = param(q, "s");
+                    String plain = sealed == null ? null : app.anancy.Pairing.openMine(ctx, urlDecode(sealed));
                     boolean joined = false;
-                    if (ssid != null) {
+                    if (plain != null) {
+                        String[] sp = plain.split("\t", 2);
                         WifiJoiner.Creds cr = new WifiJoiner.Creds();
-                        cr.ssid = urlDecode(ssid); cr.pass = pass == null ? "" : urlDecode(pass); cr.type = cr.pass.isEmpty() ? "nopass" : "WPA";
+                        cr.ssid = sp[0].trim(); cr.pass = sp.length > 1 ? sp[1] : ""; cr.type = cr.pass.isEmpty() ? "nopass" : "WPA";
                         joined = WifiJoiner.join(ctx, cr);
                     }
                     body = "{\"type\":\"wifi\",\"ok\":" + joined + "}"; break;
@@ -185,8 +229,9 @@ public class ControlServer {
                     break;
                 }
                 case "/hold": ctrl.groupHold(param(q, "id"), "1".equals(param(q, "on"))); body = ok(); break;   // a synced follower is buffering
-                case "/transferowner": body = transferOwner(param(q, "pkg"), param(q, "cls")); break;  // hand device-owner back to v1 (reversible)
                 case "/playlists": body = ctrl.playlistsJson(); break;
+                // A remote hands this TV another TV's key (sealed with OUR key), so it can stream from it.
+                case "/grant": body = grantHost(param(q, "ip"), param(q, "id"), param(q, "key")) ? ok() : "{\"ok\":false}"; break;
                 case "/playlist": { String n = param(q, "name"); if (n != null) { PlayerActivity.wakeScreen(); ctrl.selectPlaylist(urlDecode(n)); } body = ok(); break; }
                 default: body = "{\"ok\":false,\"error\":\"unknown path\"}";
             }
@@ -195,42 +240,50 @@ public class ControlServer {
         finally { try { c.close(); } catch (Exception ignored) {} }
     }
 
-    // Phone -> tablet file import (Wi-Fi): POST /upload?name=<file> with the raw bytes as the body.
-    private void handleUpload(String name, String headers, InputStream in, Socket c) {
+    // Phone -> tablet file import (Wi-Fi): POST /upload?name=<file>&sha=<sha256 of the body> with the raw
+    // bytes as the body. The sha is inside the signed query, so the body can't be swapped in transit.
+    // Videos only, never over an existing file, never into the last 1 GB of space.
+    static final long KEEP_FREE = 1024L * 1024 * 1024;
+    private void handleUpload(String name, String sha, String headers, InputStream in, Socket c) {
+        java.io.File tmp = null;
         try {
             if (name == null || name.isEmpty()) name = "upload_" + System.currentTimeMillis() + ".mp4";
-            name = urlDecode(name).replaceAll("[\\\\/]", "_");
-            int len = 0;
+            name = urlDecode(name).replaceAll("[\\\\/:*?\"<>|\\x00-\\x1f]", "_");
+            if (name.startsWith(".")) name = "_" + name;
+            if (!name.toLowerCase().matches(".*\\.(mp4|mkv|m4v)$")) { write(c, 400, "{\"ok\":false,\"error\":\"only .mp4, .mkv or .m4v\"}"); return; }
+            if (sha == null || !sha.matches("[0-9a-f]{64}")) { write(c, 400, "{\"ok\":false,\"error\":\"no checksum\"}"); return; }
+            long len = -1;
             for (String line : headers.split("\r\n"))
-                if (line.toLowerCase().startsWith("content-length:")) { try { len = Integer.parseInt(line.substring(15).trim()); } catch (Exception ignored) {} }
+                if (line.toLowerCase().startsWith("content-length:")) { try { len = Long.parseLong(line.substring(15).trim()); } catch (Exception ignored) {} }
             java.io.File dir = Library.importDir(ctx);
             if (dir == null) { write(c, "{\"ok\":false,\"error\":\"no library dir\"}"); return; }
+            if (len <= 0 || len > dir.getUsableSpace() - KEEP_FREE) { write(c, 400, "{\"ok\":false,\"error\":\"not enough room on the TV\"}"); return; }
             java.io.File out = new java.io.File(dir, name);
-            java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-            byte[] buf = new byte[8192]; int remaining = len, n;
-            while (remaining > 0 && (n = in.read(buf, 0, Math.min(buf.length, remaining))) != -1) { fos.write(buf, 0, n); remaining -= n; }
-            fos.close();
-            Log.i(TAG, "imported " + out.getName() + " (" + (len - remaining) + " bytes)");
-            PlayerController.get().rescan(ctx);   // new file shows up in the Imports playlist
-            write(c, "{\"ok\":true,\"saved\":\"" + out.getName() + "\",\"bytes\":" + (len - remaining) + "}");
-        } catch (Exception e) { Log.e(TAG, "upload err", e); try { write(c, "{\"ok\":false}"); } catch (Exception ignored) {} }
-    }
-
-    /** Hand device-owner to another app (default: back to v1 kiosk). Only works while WE are owner. */
-    private String transferOwner(String pkg, String cls) {
-        try {
-            if (pkg == null || pkg.isEmpty()) pkg = "com.kidstv.kiosk";
-            if (cls == null || cls.isEmpty()) cls = "com.kidstv.kiosk.AdminReceiver";
-            android.app.admin.DevicePolicyManager dpm =
-                    (android.app.admin.DevicePolicyManager) ctx.getSystemService(Context.DEVICE_POLICY_SERVICE);
-            android.content.ComponentName me = new android.content.ComponentName(ctx, AdminReceiver.class);
-            android.content.ComponentName target = new android.content.ComponentName(pkg, cls);
-            if (dpm != null && dpm.isDeviceOwnerApp(ctx.getPackageName())) {
-                dpm.transferOwnership(me, target, null);
-                return "{\"ok\":true,\"transferred\":\"" + pkg + "\"}";
+            for (int n = 2; out.exists(); n++) {   // never overwrite: "name (2).mp4"
+                int dot = name.lastIndexOf('.');
+                out = new java.io.File(dir, name.substring(0, dot) + " (" + n + ")" + name.substring(dot));
             }
-            return "{\"ok\":false,\"error\":\"not device owner\"}";
-        } catch (Exception e) { return "{\"ok\":false,\"error\":\"" + String.valueOf(e).replace("\"", "'") + "\"}"; }
+            tmp = new java.io.File(dir, ".incoming-" + System.nanoTime());
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            long remaining = len;
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024]; int n;
+                while (remaining > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, remaining))) != -1) { fos.write(buf, 0, n); md.update(buf, 0, n); remaining -= n; }
+            }
+            StringBuilder got = new StringBuilder();
+            for (byte x : md.digest()) got.append(String.format("%02x", x));
+            if (remaining > 0 || !PairCrypto.same(got.toString(), sha)) {
+                Log.w(TAG, "upload refused: " + (remaining > 0 ? "cut short" : "checksum mismatch"));
+                write(c, 400, "{\"ok\":false,\"error\":\"the file arrived damaged\"}");
+                return;
+            }
+            if (!tmp.renameTo(out)) { write(c, "{\"ok\":false,\"error\":\"couldn't save\"}"); return; }
+            tmp = null;
+            Log.i(TAG, "imported " + out.getName() + " (" + len + " bytes)");
+            PlayerController.get().rescan(ctx);   // new file shows up in the Imports playlist
+            write(c, "{\"ok\":true,\"saved\":\"" + out.getName().replace("\"", "") + "\",\"bytes\":" + len + "}");
+        } catch (Exception e) { Log.e(TAG, "upload err", e); try { write(c, "{\"ok\":false}"); } catch (Exception ignored) {} }
+        finally { if (tmp != null) tmp.delete(); }
     }
 
     // --- camera-monitor plugin: periodically-updated still images (off by default) ---
@@ -242,7 +295,7 @@ public class ControlServer {
         try {
             OutputStream os = c.getOutputStream();
             os.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=anancyframe\r\n"
-                    + "Cache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n").getBytes("UTF-8"));
+                    + "Cache-Control: no-cache\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
             os.flush();
             while (run) {
                 byte[] jpeg = SnapshotService.latestSnapshot();
@@ -296,7 +349,7 @@ public class ControlServer {
         hdr.append("Content-Type: ").append(mediaType(f.getName())).append("\r\n")
            .append("Accept-Ranges: bytes\r\n")
            .append("Content-Length: ").append(clen).append("\r\n")
-           .append("Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+           .append("Connection: close\r\n\r\n");
         os.write(hdr.toString().getBytes("UTF-8"));
         java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
         try {
@@ -323,9 +376,28 @@ public class ControlServer {
             os.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("UTF-8"));
             os.flush(); return;
         }
-        os.write(("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
+        os.write(("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: "
                 + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
         os.write(data); os.flush();
+    }
+
+    /** Store another TV's key that a paired remote sealed for us; true when it opened cleanly. */
+    private boolean grantHost(String ip, String id, String sealed) {
+        if (id == null || sealed == null) return false;
+        String key = app.anancy.Pairing.openMine(ctx, urlDecode(sealed));
+        if (key == null) { Log.w(TAG, "grant: couldn't open the key for " + id); return false; }
+        id = urlDecode(id);
+        app.anancy.Pairing.remember(ctx, id, "", key);
+        if (ip != null) app.anancy.Pairing.noteHost(ctx, urlDecode(ip), id);
+        return true;
+    }
+
+    /** One request header's value (case-insensitive name), or null. */
+    private static String header(String headers, String name) {
+        String want = name.toLowerCase() + ":";
+        for (String line : headers.split("\r\n"))
+            if (line.toLowerCase().startsWith(want)) return line.substring(want.length()).trim();
+        return null;
     }
 
     private static String ok() { return "{\"ok\":true}"; }
@@ -340,7 +412,14 @@ public class ControlServer {
     private void write(Socket c, int status, String body) throws Exception {
         byte[] data = body.getBytes("UTF-8");
         OutputStream os = c.getOutputStream();
-        os.write(("HTTP/1.1 " + status + (status == 200 ? " OK" : " Bad Request") + "\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
+        String reason = status == 200 ? " OK" : status == 401 ? " Unauthorized" : " Bad Request";
+        long now = System.currentTimeMillis();
+        // The answer is MACed against the request's nonce: a client believes a body, an address or a
+        // clock offset only from the TV it is paired with (status + time ride in the MAC too).
+        String n = REQ_NONCE.get(), mac = "";
+        if (n != null) mac = "\r\n" + PairCrypto.RESP_HEADER + ": " + PairCrypto.responseMac(app.anancy.Pairing.myKey(ctx), n,
+                status + "|" + now + "|" + PairCrypto.sha256Hex(data));
+        os.write(("HTTP/1.1 " + status + reason + "\r\nContent-Type: application/json\r\n" + PairCrypto.TIME_HEADER + ": " + now + mac + "\r\nContent-Length: "
                 + data.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
         os.write(data); os.flush();
     }

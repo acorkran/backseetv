@@ -165,12 +165,7 @@ public class RemoteActivity extends Activity {
         showTab(0);
 
         local = getIntent().getBooleanExtra("local", false);   // the TV's own admin Remote
-        if (local && cardsPanel != null) {
-            // The TV's own remote drives only itself, and the show is right behind it: a "No screens
-            // connected yet" panel there contradicted that. Drop the panel and centre now-playing.
-            cardsPanel.setVisibility(View.GONE);
-            remoteLeft.setGravity(Gravity.CENTER_VERTICAL);
-        }
+        if (local) refreshDeviceCards();   // the TV's own remote: its card holds the show itself
         if (local) { tabletIp = "127.0.0.1"; RemoteService.ensureLocal(this); }
         else RemoteService.ensure(this);
         attach();
@@ -336,6 +331,7 @@ public class RemoteActivity extends Activity {
 
     private void refreshDeviceCards() {
         if (deviceCards == null) return;
+        if (local) { showTvCard(); return; }
         RemoteService svc = RemoteService.get();
         syncSelfCard(svc);   // this device's card holds live video, so it's kept, never rebuilt
         while (deviceCards.getChildCount() > (selfCard != null ? 1 : 0)) deviceCards.removeViewAt(deviceCards.getChildCount() - 1);
@@ -345,8 +341,13 @@ public class RemoteActivity extends Activity {
             // "Not connected" with nothing to act on is the single most useless state in the app:
             // every real cause (Bluetooth off, a denied permission, the tablet not set as the TV)
             // is invisible from here. Send them somewhere that names it and offers the fix.
-            deviceCards.addView(ui.noteText("No screens connected yet."));
-            Button chk = ui.rowBtn("Run the set-up check", ACCENT);
+            deviceCards.addView(ui.noteText(app.anancy.Pairing.paired(this).isEmpty()
+                    ? "No screens paired yet. This phone only controls screens it has paired with."
+                    : "No screens connected yet."));
+            Button pairB = ui.rowBtn("Pair a screen", ACCENT);
+            pairB.setOnClickListener(v -> scanPairingCode());
+            deviceCards.addView(pairB);
+            Button chk = ui.rowBtn("Run the set-up check", TXT);
             chk.setOnClickListener(v -> startActivity(new Intent(this, app.anancy.SetupActivity.class)));
             deviceCards.addView(chk);
             return;
@@ -359,6 +360,51 @@ public class RemoteActivity extends Activity {
             if (deviceCards.getChildCount() > 0) cp.topMargin = dp(8);
             deviceCards.addView(deviceCard(e.getKey(), e.getValue(), sel), cp);
         }
+    }
+
+    // --- The TV's own remote page: the show keeps playing in a card; expand goes back to it --------------
+    private View tvCard;
+    private android.view.TextureView tvVideo;
+    private void showTvCard() {
+        if (tvCard != null) return;
+        deviceCards.removeAllViews();
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14)); bg.setStroke(dp(2), ACCENT);
+        c.setBackground(bg);
+        Frame169 art = new Frame169(this); art.setBackgroundColor(0xFF000000);
+        tvVideo = new android.view.TextureView(this);
+        art.addView(tvVideo, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LargeIcon large = new LargeIcon(this);
+        GradientDrawable lb = new GradientDrawable(); lb.setShape(GradientDrawable.OVAL); lb.setColor(0xAA000000); large.setBackground(lb);
+        large.setContentDescription("Back to the show");
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.TOP); lp.setMargins(0, dp(6), dp(6), 0);
+        art.addView(large, lp);
+        art.setOnClickListener(v -> finish());   // the show is right underneath: back to it, locked again
+        large.setOnClickListener(v -> finish());
+        c.addView(art);
+        TextView nm = new TextView(this); nm.setText(app.anancy.Identity.name(this) + " (this TV)  ·  tap to go back to the show");
+        nm.setTextColor(TXT); nm.setTextSize(13); nm.setPadding(dp(2), dp(7), 0, 0); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        c.addView(nm);
+        deviceCards.addView(c, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        tvCard = c;
+    }
+    /** Draw the TV's show in the card while this page is up, at its real shape. */
+    private void attachTvVideo(boolean on) {
+        androidx.media3.exoplayer.ExoPlayer p = app.anancy.player.PlayerActivity.tvPlayer();
+        if (p == null || tvVideo == null) return;
+        if (!on) { p.clearVideoTextureView(tvVideo); return; }
+        p.setVideoTextureView(tvVideo);
+        androidx.media3.common.VideoSize vs = p.getVideoSize();
+        View art = (View) tvVideo.getParent();
+        art.post(() -> {
+            int W = art.getWidth(), H = art.getHeight();
+            if (vs.width <= 0 || vs.height <= 0 || W <= 0 || H <= 0) return;
+            float r = vs.width * vs.pixelWidthHeightRatio / vs.height;
+            int w = W, h = Math.round(W / r);
+            if (h > H) { h = H; w = Math.round(H * r); }
+            FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) tvVideo.getLayoutParams();
+            flp.width = w; flp.height = h; flp.gravity = Gravity.CENTER; tvVideo.setLayoutParams(flp);
+        });
     }
 
     // --- "This phone as playback": this device's own card, with the video playing in it -------------------
@@ -1075,8 +1121,9 @@ public class RemoteActivity extends Activity {
         TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
         hdr.setPadding(dp(16), dp(8), dp(16), dp(8)); col.addView(hdr);
         if (!anyScreens) {
-            TextView none = new TextView(this); none.setText("No screens found — open Connection.");
-            none.setTextColor(SUB); none.setTextSize(13); none.setPadding(dp(16), dp(2), dp(16), dp(10)); col.addView(none);
+            TextView none = new TextView(this); none.setText("No paired screens yet.");
+            none.setTextColor(SUB); none.setTextSize(13); none.setPadding(dp(16), dp(2), dp(16), dp(6)); col.addView(none);
+            addPairRows(col, svc);
             return;
         }
         for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
@@ -1094,6 +1141,27 @@ public class RemoteActivity extends Activity {
             ui.hSep(col);
             col.addView(ui.checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); }));
         }
+        ui.hSep(col);
+        addPairRows(col, svc);
+    }
+    /** Nearby screens this phone may not control yet, and the way to pair one: scan its code. */
+    private void addPairRows(LinearLayout col, RemoteService svc) {
+        for (java.util.Map.Entry<String, String> e : svc.unpairedNearby().entrySet()) {
+            TextView t = new TextView(this);
+            t.setText(e.getValue() + "  ·  not paired");
+            t.setTextColor(SUB); t.setTextSize(14); t.setPadding(dp(16), dp(9), dp(16), dp(9));
+            t.setOnClickListener(v -> scanPairingCode());
+            col.addView(t);
+        }
+        TextView pair = new TextView(this);
+        pair.setText("＋  Pair a screen");
+        pair.setTextColor(ACCENT); pair.setTextSize(15); pair.setPadding(dp(16), dp(11), dp(16), dp(13));
+        pair.setOnClickListener(v -> scanPairingCode());
+        col.addView(pair);
+    }
+    private void scanPairingCode() {
+        toast("Scan the code on the TV: grown-up unlock, Settings, Pair a remote");
+        try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) { toast("Couldn't open the scanner"); }
     }
     private void refreshTargets(LinearLayout col, RemoteService svc) {
         buildTargetRows(col, svc);
@@ -1113,12 +1181,33 @@ public class RemoteActivity extends Activity {
         connStatus = ui.noteText(""); connStatus.setTextColor(TXT); connStatus.setTextSize(13); col.addView(connStatus);
         connModes = new LinearLayout(this); connModes.setOrientation(LinearLayout.VERTICAL); col.addView(connModes);
         connActions = new LinearLayout(this); connActions.setOrientation(LinearLayout.VERTICAL); col.addView(connActions);
+        if (!local) { connPaired = new LinearLayout(this); connPaired.setOrientation(LinearLayout.VERTICAL); col.addView(connPaired); renderPaired(); }
         Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
         RemoteService svc = RemoteService.get();
         if (svc != null) lastConn = svc.connMode();
         renderConnStatus(); renderConnModes(); renderConnActions();
         if (svc != null) svc.requestConn();
         probeTv();
+    }
+    private LinearLayout connPaired;
+    /** The screens this phone may control, each with Forget. */
+    private void renderPaired() {
+        if (connPaired == null) return;
+        connPaired.removeAllViews();
+        java.util.Map<String, String> paired = app.anancy.Pairing.paired(this);
+        TextView hdr = ui.noteText(paired.isEmpty() ? "Paired screens: none yet." : "Paired screens");
+        connPaired.addView(hdr);
+        for (final java.util.Map.Entry<String, String> e : paired.entrySet()) {
+            Button b = ui.rowBtn(e.getValue() + "   ·   Forget", TXT);
+            b.setOnClickListener(v -> new android.app.AlertDialog.Builder(this).setTitle("Forget " + e.getValue() + "?")
+                    .setMessage("This phone stops controlling it until you scan its pairing code again.")
+                    .setPositiveButton("Forget", (d, w) -> { app.anancy.Pairing.forget(this, e.getKey()); renderPaired(); })
+                    .setNegativeButton("Cancel", null).show());
+            connPaired.addView(b);
+        }
+        Button add = ui.rowBtn("Pair a screen", ACCENT);
+        add.setOnClickListener(v -> scanPairingCode());
+        connPaired.addView(add);
     }
     private void probeTv() {   // is the TV actually reachable over Wi-Fi from here?
         new Thread(() -> {
@@ -1240,7 +1329,6 @@ public class RemoteActivity extends Activity {
                         send("wifi:" + s + "\t" + p); toast("Sent — the TV joins in a few seconds"); main.postDelayed(this::probeTv, 8000);
                     });
                     connActions.addView(sendBtn);
-                    connActions.addView(ui.noteText("Bluetooth sends the password unencrypted; the QR doesn't."));
                     Button qr = ui.rowBtn("Show as QR for the TV to scan instead", TXT);
                     qr.setOnClickListener(v -> { String s = ssid.getText().toString().trim(); if (s.isEmpty()) { toast("Enter the Wi-Fi name"); return; } showWifiQr(s, pass.getText().toString(), "On the TV: Settings → Connection → Scan"); });
                     connActions.addView(qr);
@@ -1284,7 +1372,7 @@ public class RemoteActivity extends Activity {
         if (res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) startOwnHotspot();
         else toast("The hotspot needs the Nearby devices permission");
     }
-    private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; } }
+    private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; connPaired = null; } }
 
     // =====================================================================================
     //  Settings — every TV option, mirrored from the phone (reads the TV's /config, writes cfg:K=V).
@@ -1718,7 +1806,11 @@ public class RemoteActivity extends Activity {
     }
     /** Open the URL bound to the Wi-Fi network — the TV is on the LAN, but with mobile data up the
         app's default network is cellular, which can't reach a 192.168.x host. Falls back to default. */
+    /** Every request to a TV is signed with that TV's pairing key; unsigned ones get a 401. */
     private java.net.HttpURLConnection openOnWifi(String urlStr) throws Exception {
+        return app.anancy.Pairing.sign(this, openOnWifiRaw(urlStr));
+    }
+    private java.net.HttpURLConnection openOnWifiRaw(String urlStr) throws Exception {
         java.net.URL url = new java.net.URL(urlStr);
         if (local) return (java.net.HttpURLConnection) url.openConnection();   // loopback: never bind to the Wi-Fi network
         try {
@@ -1778,6 +1870,12 @@ public class RemoteActivity extends Activity {
             }).start();
         }
         if (req == 43 && res == RESULT_OK && data != null) {   // QR scan result
+            if (data.getBooleanExtra(QrScanActivity.RESULT_PAIRED, false)) {
+                String nm = data.getStringExtra(QrScanActivity.RESULT_TV_NAME);
+                Toast.makeText(this, "Paired with " + (nm == null || nm.isEmpty() ? "the screen" : nm) + ". Connecting…", Toast.LENGTH_LONG).show();
+                main.postDelayed(this::refreshAll, 3000);
+                return;
+            }
             String ip = data.getStringExtra(QrScanActivity.RESULT_ANANCY_IP);
             String ssid = data.getStringExtra(QrScanActivity.RESULT_JOINED_SSID);
             if (ip != null && !ip.isEmpty()) { tabletIp = ip; Toast.makeText(this, "TV at " + ip, Toast.LENGTH_SHORT).show(); }
@@ -1797,16 +1895,25 @@ public class RemoteActivity extends Activity {
                 byte[] b = new byte[8192]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n); in.close();
                 data = bo.toByteArray(); size = data.length;
             }
-            java.net.URL url = new java.net.URL("http://" + host + "/upload?name=" + java.net.URLEncoder.encode(name, "UTF-8"));
+            // The checksum rides in the signed query, so the TV can tell the file wasn't swapped on the way.
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            if (data != null) md.update(data);
+            else { java.io.InputStream in = getContentResolver().openInputStream(uri); byte[] b = new byte[65536]; int n; while ((n = in.read(b)) != -1) md.update(b, 0, n); in.close(); }
+            StringBuilder sha = new StringBuilder(); for (byte x : md.digest()) sha.append(String.format("%02x", x));
+            java.net.URL url = new java.net.URL("http://" + host + "/upload?name=" + java.net.URLEncoder.encode(name, "UTF-8") + "&sha=" + sha);
             c = (java.net.HttpURLConnection) url.openConnection();
             c.setDoOutput(true); c.setRequestMethod("POST"); c.setConnectTimeout(5000);
+            app.anancy.Pairing.sign(this, c);
             c.setFixedLengthStreamingMode(size);
             java.io.OutputStream out = c.getOutputStream();
             if (data != null) out.write(data);
             else { java.io.InputStream in = getContentResolver().openInputStream(uri); byte[] b = new byte[8192]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); in.close(); }
             out.flush();
             final int code = c.getResponseCode(); final String nm = name;
-            main.post(() -> Toast.makeText(this, code == 200 ? "Imported " + nm : "Import failed (" + code + ")", Toast.LENGTH_LONG).show());
+            String why = null;
+            if (code != 200) try { java.io.InputStream es = c.getErrorStream(); if (es != null) { why = new JSONObject(new java.util.Scanner(es).useDelimiter("\\A").next()).optString("error", null); } } catch (Exception ignored) {}
+            final String reason = why;
+            main.post(() -> Toast.makeText(this, code == 200 ? "Imported " + nm : "Import failed" + (reason != null ? ": " + reason : " (" + code + ")"), Toast.LENGTH_LONG).show());
         } catch (Exception e) { main.post(() -> Toast.makeText(this, "Import failed", Toast.LENGTH_LONG).show()); }
         finally { if (c != null) c.disconnect(); }
     }
@@ -1831,9 +1938,11 @@ public class RemoteActivity extends Activity {
         attach();
         showTab(0);   // always land on the Remote tab
         refreshAll(); startCardPolling();   // per-screen cards + their live state
+        if (local) attachTvVideo(true);
         main.removeCallbacks(uiTick); main.post(uiTick);
     }
     @Override protected void onPause() {
+        if (local) attachTvVideo(false);
         main.removeCallbacks(uiTick);
         stopCardPolling();
         if (still != null) closeStill();   // never keep polling the camera still in the background

@@ -8,8 +8,25 @@ rem  as a locked kiosk (device owner).
 rem
 rem  Put next to this file:
 rem    BackSeeTV-VERSION.apk     the app (or set APK_URL below)
-rem    Anancy\                    optional: your shows, one folder per show
+rem    BackSeeTV-Media\           optional: your shows, one folder per show.
+rem                               Without it, the script asks for a folder.
+rem
+rem  Every run writes BackSeeTV-setup-log.txt next to this file. Attach it to
+rem  any bug report.
 rem ============================================================================
+
+rem Double-clicking runs this in a window that closes the moment the script ends,
+rem including when it dies unexpectedly. Re-run inside a shell that stays open,
+rem so a failure is always left on screen. (No parenthesised block here: a folder
+rem name with a bracket in it, like "Program Files (x86)", would break it.)
+if /i "%~1"=="--run" goto main
+cmd /k ""%~f0" --run"
+rem Back here once that shell is closed with "exit", e.g. after a Ctrl+C.
+set "ADB=%LOCALAPPDATA%\BackSeeTV\platform-tools\adb.exe"
+call :stop_adb
+exit /b
+:main
+
 setlocal EnableExtensions EnableDelayedExpansion
 title BackSeeTV - tablet setup
 
@@ -19,8 +36,17 @@ set "APK_URL="
 set "HERE=%~dp0"
 set "BST_HOME=%LOCALAPPDATA%\BackSeeTV"
 set "ADB=%BST_HOME%\platform-tools\adb.exe"
-set "OUT=%TEMP%\backseat-setup-%RANDOM%.txt"
+set "OUT=%TEMP%\backseetv-setup-%RANDOM%.txt"
 set "ADMIN=app.anancy/.admin.AdminReceiver"
+if not exist "%BST_HOME%" mkdir "%BST_HOME%" >nul 2>&1
+
+rem The log goes next to this file; if that folder is read-only, into BST_HOME.
+set "LOG=%HERE%BackSeeTV-setup-log.txt"
+(echo.>>"%LOG%") 2>nul || set "LOG=%BST_HOME%\BackSeeTV-setup-log.txt"
+>>"%LOG%" echo ============================================================
+call :log "BackSeeTV tablet setup started"
+>>"%LOG%" ver
+>>"%LOG%" echo Script folder: %HERE%
 
 echo.
 echo  BackSeeTV - tablet setup
@@ -30,26 +56,34 @@ echo    1. Factory reset it, or use one with NO Google or Samsung account on it.
 echo       During setup, skip every sign-in.
 echo    2. Settings - About tablet - Software information - tap Build number 7 times.
 echo    3. Settings - Developer options - turn on USB debugging.
-echo    4. Plug it into this PC with a data USB cable.
+echo    4. Turn its volume down. It starts playing as soon as setup finishes.
+echo    5. Plug it into this PC with a data USB cable and unlock its screen.
+echo    6. The tablet asks "Allow USB debugging?".
+echo       Tick "Always allow from this computer" and tap Allow.
+echo       Without that, this PC can't set anything up.
 echo.
 pause
 
 rem --- 1. adb --------------------------------------------------------------
 echo.
 echo [1/6] Getting the Android tools...
+call :log "Step 1: adb"
 if exist "%ADB%" goto have_adb
-if not exist "%BST_HOME%" mkdir "%BST_HOME%"
 set "BST_ZIP=%BST_HOME%\platform-tools.zip"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip' -OutFile $env:BST_ZIP; Expand-Archive -Force -Path $env:BST_ZIP -DestinationPath $env:BST_HOME"
-if errorlevel 1 goto no_adb
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip' -OutFile $env:BST_ZIP; Expand-Archive -Force -Path $env:BST_ZIP -DestinationPath $env:BST_HOME" >"%OUT%" 2>&1
+set "RC=!errorlevel!"
+type "%OUT%" >>"%LOG%"
+if not "%RC%"=="0" goto no_adb
 del "%BST_ZIP%" >nul 2>&1
 if not exist "%ADB%" goto no_adb
 :have_adb
+"%ADB%" version >>"%LOG%" 2>&1
 echo       Ready.
 
 rem --- 2. the app ----------------------------------------------------------
 echo.
-echo [2/6] Finding the app...
+echo [2/6] Finding the app and your shows...
+call :log "Step 2: app"
 set "APK="
 for %%F in ("%HERE%BackSeeTV*.apk") do (
     set "NAME=%%~nF"
@@ -60,16 +94,50 @@ if not defined APK_URL goto no_apk
 set "APK=%BST_HOME%\BackSeeTV.apk"
 set "BST_APK=%APK%"
 set "BST_URL=%APK_URL%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri $env:BST_URL -OutFile $env:BST_APK"
-if errorlevel 1 goto no_apk
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri $env:BST_URL -OutFile $env:BST_APK" >"%OUT%" 2>&1
+set "RC=!errorlevel!"
+type "%OUT%" >>"%LOG%"
+if not "%RC%"=="0" goto no_apk
 :have_apk
+>>"%LOG%" echo APK: %APK%
 echo       Using %APK%
+
+rem Shows: a BackSeeTV-Media folder next to this file, or one the user drags in. Asked now,
+rem not at the end, so the long install can run without anyone watching.
+set "SRC="
+if exist "%HERE%BackSeeTV-Media\" set "SRC=%HERE%BackSeeTV-Media"
+if defined SRC goto have_src
+echo.
+echo  Your shows: BackSeeTV plays videos (.mp4, .mkv or .m4v) from a folder called
+echo  BackSeeTV-Media on the tablet or its SD card. Each folder inside it is one
+echo  show, and each show becomes a playlist.
+echo.
+echo  To copy shows from this PC, drag their folder onto this window and press Enter.
+echo  Press Enter on its own to skip. You can add shows later.
+:ask_src
+set "SRC="
+set /p "SRC=Shows folder: "
+if not defined SRC goto no_src
+set "SRC=!SRC:"=!"
+if "!SRC:~-1!"=="\" set "SRC=!SRC:~0,-1!"
+if exist "!SRC!\" goto have_src
+echo       Can't find that folder. Try again, or press Enter to skip.
+goto ask_src
+:no_src
+call :log "No shows folder given"
+goto src_done
+:have_src
+>>"%LOG%" echo Shows folder: !SRC!
+echo       Shows from: !SRC!
+:src_done
 
 rem --- 3. find exactly one tablet -------------------------------------------
 echo.
 echo [3/6] Looking for the tablet...
-"%ADB%" start-server >nul 2>&1
+call :log "Step 3: find the tablet"
+"%ADB%" start-server >>"%LOG%" 2>&1
 set /a WAITED=0
+set "TOLD="
 :wait_device
 set /a READY=0, LOCKED=0
 set "S="
@@ -81,7 +149,12 @@ for /f "usebackq skip=1 tokens=1,2" %%a in ("%OUT%") do (
 if !READY! GTR 1 goto many_devices
 if !READY! EQU 1 goto found_device
 if !LOCKED! GTR 0 if not defined TOLD (
-    echo       Look at the tablet and tap Allow on the USB debugging prompt.
+    call :log "Tablet found but not authorised yet"
+    echo.
+    echo       The tablet is plugged in but hasn't allowed this PC yet.
+    echo       Unlock its screen. On "Allow USB debugging?",
+    echo       tick "Always allow from this computer" and tap Allow.
+    echo       No prompt? Unplug it and plug it back in.
     set "TOLD=1"
 )
 set /a WAITED+=1
@@ -94,21 +167,30 @@ set "A="%ADB%" -s %S%"
 set "MODEL="
 %A% shell getprop ro.product.model > "%OUT%" 2>nul
 for /f "usebackq delims=" %%m in ("%OUT%") do if not defined MODEL set "MODEL=%%m"
+set "REL="
+%A% shell getprop ro.build.version.release > "%OUT%" 2>nul
+for /f "usebackq delims=" %%m in ("%OUT%") do if not defined REL set "REL=%%m"
+>>"%LOG%" echo Tablet: %MODEL%, Android %REL%, serial %S%
 echo       Found: %MODEL%  (%S%)
 
 rem --- 4. is it safe to make this tablet a kiosk? ----------------------------
 echo.
 echo [4/6] Checking the tablet...
+call :log "Step 4: check the tablet"
+call :need_device
 set "ALREADY="
 %A% shell dumpsys device_policy > "%OUT%" 2>&1
 findstr /c:"admin=ComponentInfo{app.anancy" "%OUT%" >nul && set "ALREADY=1"
 if defined ALREADY (
+    call :log "Already device owner: updating"
     echo       Already set up as a BackSeeTV kiosk. Updating it.
     goto confirmed
 )
+call :need_device
 set "ACCTS="
 %A% shell dumpsys account > "%OUT%" 2>&1
 for /f "tokens=2" %%n in ('findstr /c:"Accounts:" "%OUT%"') do if not defined ACCTS set "ACCTS=%%n"
+>>"%LOG%" echo Accounts on the tablet: %ACCTS%
 if defined ACCTS if not "%ACCTS%"=="0" goto has_accounts
 echo.
 echo  This will turn %MODEL% into a locked BackSeeTV kiosk.
@@ -122,78 +204,252 @@ if /i not "%OK%"=="Y" goto cancelled
 rem --- 5. install and take ownership -----------------------------------------
 echo.
 echo [5/6] Installing BackSeeTV (this can take a minute)...
+call :log "Step 5: install"
+call :need_device
 %A% install -r "%APK%" > "%OUT%" 2>&1
+type "%OUT%" >>"%LOG%"
 findstr /c:"Success" "%OUT%" >nul || goto install_failed
 if defined ALREADY goto owned
+call :need_device
 %A% shell dpm set-device-owner %ADMIN% > "%OUT%" 2>&1
+type "%OUT%" >>"%LOG%"
 findstr /c:"Success" "%OUT%" >nul || goto owner_failed
 :owned
-%A% shell appops set app.anancy MANAGE_EXTERNAL_STORAGE allow >nul 2>&1
-rem Granted up front so nothing waits for a tap on the tablet. Permissions an older Android lacks just fail.
-for %%P in (BLUETOOTH_SCAN BLUETOOTH_CONNECT BLUETOOTH_ADVERTISE ACCESS_FINE_LOCATION POST_NOTIFICATIONS) do (
-    %A% shell pm grant app.anancy android.permission.%%P >nul 2>&1
-)
-%A% shell cmd bluetooth_manager enable >nul 2>&1
+call :need_device
+%A% shell appops set app.anancy MANAGE_EXTERNAL_STORAGE allow >>"%LOG%" 2>&1
+rem Granted up front so nothing waits for a tap on the tablet. Each Android version
+rem uses a different set; the ones this version doesn't use are noted, not errors.
+for %%P in (BLUETOOTH_SCAN BLUETOOTH_CONNECT BLUETOOTH_ADVERTISE ACCESS_FINE_LOCATION POST_NOTIFICATIONS) do call :grant %%P
+%A% shell cmd bluetooth_manager enable >>"%LOG%" 2>&1
 echo       Done.
 
 rem --- 6. shows, lock, start -------------------------------------------------
 echo.
-echo [6/6] Finishing up...
-if exist "%HERE%Anancy\" (
-    echo       Copying your shows to the tablet. Big libraries take a while...
-    %A% push "%HERE%Anancy" /sdcard/ || echo       Some files did not copy. Run this again to retry.
-)
-%A% shell settings put global anancy_kiosk 1 >nul 2>&1
-%A% shell am start -n app.anancy/.AdbSetRole --es role player >nul 2>&1
+echo [6/6] Copying shows and finishing up...
+call :log "Step 6: shows and start"
+call :copy_shows
+call :count_shows
+call :need_device
+%A% shell settings put global anancy_kiosk 1 >>"%LOG%" 2>&1
+%A% shell am start -n app.anancy/.AdbSetRole --es role player >>"%LOG%" 2>&1
+rem A tablet that was already set up is running, so it won't notice new shows on
+rem its own: ask it to look again through its local control port.
+if defined ALREADY if defined SRC call :rescan
 
+call :log "Finished OK"
+call :stop_adb
 del "%OUT%" >nul 2>&1
 echo.
 echo  All done. The tablet is now a BackSeeTV.
-echo    - Grown-up menu: tap with four fingers, four times, within 3 seconds.
+echo    - Grown-up unlock: tap with four fingers, four times, within 3 seconds.
 echo    - On your phone, install the app and choose "This is a Remote".
 echo    - You can unplug the tablet.
 echo.
+if "%SHOWS%"=="0" (
+    echo  The tablet has no shows yet. To add some, either:
+    echo    - run this again and drag in a folder of shows, or
+    echo    - on a computer, make a folder called BackSeeTV-Media on a microSD card,
+    echo      put one folder per show inside it, and put the card in the tablet.
+) else (
+    echo  The tablet has %SHOWS% show folders. Add more any time: run this again, or put
+    echo  them in the BackSeeTV-Media folder on the tablet or its microSD card.
+)
+echo.
+echo  Optional, once it's unplugged: BackSeeTV doesn't need developer mode to run.
+echo    - To stop this PC having access: Settings - Developer options -
+echo      Revoke USB debugging authorizations.
+echo    - To hide developer mode again: turn off the Developer options switch at the
+echo      top of that screen.
+echo    To update the app later with this script, turn them back on first.
+echo.
+echo  A log of this run is in: %LOG%
+echo.
 pause
+exit
+
+rem --- helpers ---------------------------------------------------------------
+
+rem Write one timestamped line to the log.
+:log
+if not defined LOG exit /b 0
+>>"%LOG%" echo [%date% %time%] %~1
 exit /b 0
 
-rem --- problems --------------------------------------------------------------
+rem adb leaves a server running in the background after it's used. Stop it when
+rem we're done, but only if it's OUR copy: an adb server from Android Studio or
+rem another tool belongs to someone else.
+:stop_adb
+if not exist "%ADB%" exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Process adb -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:ADB }) { exit 0 } else { exit 1 }" >nul 2>&1
+if errorlevel 1 exit /b 0
+"%ADB%" kill-server >nul 2>&1
+call :log "Stopped the adb server"
+exit /b 0
+
+rem Grant one runtime permission; log "not used here" instead of a stack trace.
+:grant
+%A% shell pm grant app.anancy android.permission.%1 > "%OUT%" 2>&1
+findstr /c:"has not requested permission" "%OUT%" >nul && (
+    >>"%LOG%" echo %1: not used on this Android version
+    exit /b 0
+)
+type "%OUT%" >>"%LOG%"
+exit /b 0
+
+rem Copy the shows folder into BackSeeTV-Media on the tablet, if it fits. --sync skips files
+rem already there, so a re-run only copies what's new.
+:copy_shows
+if not defined SRC exit /b 0
+echo       Checking there's room on the tablet...
+call :need_device
+set "NEEDMB=0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[math]::Ceiling(((Get-ChildItem -LiteralPath $env:SRC -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)/1MB)" > "%OUT%" 2>nul
+set /p NEEDMB=<"%OUT%"
+set "FREEKB=0"
+%A% shell df -k /sdcard > "%OUT%" 2>&1
+for /f "usebackq skip=1 tokens=4" %%k in ("%OUT%") do set "FREEKB=%%k"
+set "HAVEKB=0"
+%A% shell du -sk /sdcard/BackSeeTV-Media > "%OUT%" 2>nul
+for /f "usebackq tokens=1" %%k in ("%OUT%") do set "HAVEKB=%%k"
+set /a FREEMB=FREEKB/1024, HAVEMB=HAVEKB/1024
+set /a ADDMB=NEEDMB-HAVEMB
+if %ADDMB% LSS 0 set /a ADDMB=0
+>>"%LOG%" echo Shows: %NEEDMB% MB on this PC, %HAVEMB% MB already on the tablet, %FREEMB% MB free there
+rem Keep 1 GB spare: a full tablet stops recording, updating and even booting cleanly.
+set /a SPARE=FREEMB-ADDMB-1024
+if %SPARE% GEQ 0 goto copy_go
+set /a NEEDGB=(ADDMB+1023)/1024, FREEGB=FREEMB/1024
+echo.
+echo       Not enough room: the shows need about %NEEDGB% GB, and the tablet has
+echo       %FREEGB% GB free (keeping 1 GB spare). Nothing was copied.
+echo       Pick fewer shows, or put them on a microSD card in a folder called BackSeeTV-Media.
+call :log "Shows not copied: not enough room"
+exit /b 0
+:copy_go
+%A% shell mkdir -p /sdcard/BackSeeTV-Media >>"%LOG%" 2>&1
+set /a SUBS=0
+for /d %%D in ("%SRC%\*") do set /a SUBS+=1
+set "PUSHFAIL="
+rem No ( ) blocks around %SRC%: a bracket in the folder name would break them.
+if %SUBS% GTR 0 goto copy_each
+rem A folder of videos with no sub-folders is one show, named after the folder.
+call :push_one "%SRC%"
+goto copy_check
+:copy_each
+for /d %%D in ("%SRC%\*") do call :push_one "%%~fD"
+for %%F in ("%SRC%\*.mp4" "%SRC%\*.mkv" "%SRC%\*.m4v") do call :push_one "%%~fF"
+:copy_check
+if not defined PUSHFAIL exit /b 0
+echo       Some files did not copy. Run this again to retry; it skips what's done.
+call :log "Some shows failed to copy"
+exit /b 0
+
+:push_one
+echo       Copying %~nx1...
+call :need_device
+%A% push --sync "%~1" /sdcard/BackSeeTV-Media/ >>"%LOG%" 2>&1
+if errorlevel 1 set "PUSHFAIL=1"
+exit /b 0
+
+rem Ask the running app to re-read its media folders.
+:rescan
+%A% forward tcp:28090 tcp:8090 >>"%LOG%" 2>&1
+curl.exe -s -m 5 http://127.0.0.1:28090/rescan >>"%LOG%" 2>&1
+>>"%LOG%" echo.
+%A% forward --remove tcp:28090 >nul 2>&1
+call :log "Asked the app to rescan its shows"
+exit /b 0
+
+rem How many show folders the app will find: internal storage and any SD card.
+:count_shows
+set "SHOWS=0"
+call :need_device
+%A% shell "ls -d /sdcard/BackSeeTV-Media/*/ /sdcard/Anancy/*/ /sdcard/KidsTV/*/ /sdcard/Kidodi/*/ /storage/*/BackSeeTV-Media/*/ /storage/*/Anancy/*/ /storage/*/KidsTV/*/ /storage/*/Kidodi/*/ 2>/dev/null" > "%OUT%" 2>nul
+for /f "usebackq delims=" %%l in ("%OUT%") do set /a SHOWS+=1
+>>"%LOG%" echo Show folders on the tablet: %SHOWS%
+type "%OUT%" >>"%LOG%"
+exit /b 0
+
+rem Before each step: make sure the tablet is still connected AND still allows
+rem this PC. Android can drop the USB link and ask "Allow USB debugging?" again;
+rem without this every later step fails in silence.
+:need_device
+set "NTOLD="
+:need_loop
+set "ST=missing"
+"%ADB%" devices > "%OUT%" 2>nul
+for /f "usebackq skip=1 tokens=1,2" %%a in ("%OUT%") do if "%%a"=="%S%" set "ST=%%b"
+if "%ST%"=="device" (
+    if defined NTOLD (
+        echo       Connected again. Carrying on.
+        call :log "Tablet back"
+    )
+    exit /b 0
+)
+if not defined NTOLD (
+    call :log "Tablet not ready: !ST!"
+    echo.
+    if "!ST!"=="unauthorized" (
+        echo       The tablet is asking again whether to allow this PC.
+        echo       Unlock it. On "Allow USB debugging?",
+        echo       tick "Always allow from this computer" and tap Allow.
+    ) else (
+        echo       Lost the tablet. Check the cable is still plugged in and the
+        echo       tablet's screen is unlocked.
+    )
+    echo       Waiting for it. Press Ctrl+C to give up.
+    set "NTOLD=1"
+)
+timeout /t 2 /nobreak >nul
+goto need_loop
+
 :driver_hint
+call :log "No tablet after 30 s"
 echo.
 echo       Still can't see a tablet. Check that:
 echo         - USB debugging is on and the cable carries data, not just charge.
+echo         - The tablet's screen is unlocked, and you tapped Allow on it.
 echo         - Samsung tablets may need the Samsung USB driver:
 echo           https://developer.samsung.com/android-usb-driver
 echo       Still looking. Press Ctrl+C to give up.
 echo.
 exit /b 0
 
+rem --- problems --------------------------------------------------------------
 :no_adb
 echo.
 echo  Couldn't download the Android tools. Check the internet connection and try again.
+call :log "FAILED: adb download"
 goto fail
 :no_apk
 echo.
 echo  Couldn't find the app. Put BackSeeTV-^<version^>.apk in the same folder as this file.
+call :log "FAILED: no APK"
 goto fail
 :many_devices
 echo.
 echo  More than one Android device is plugged in. Unplug everything except the tablet
 echo  you want to set up, then run this again.
+call :log "FAILED: more than one device"
+"%ADB%" devices >>"%LOG%" 2>&1
 goto fail
 :has_accounts
 echo.
 echo  This tablet still has an account on it [%ACCTS%], and Android won't allow a kiosk
 echo  while one exists. Remove every account in Settings - Accounts, or factory reset
 echo  and skip sign-in, then run this again.
+call :log "FAILED: accounts on the tablet"
 goto fail
 :cancelled
 echo.
 echo  Cancelled. Nothing was changed.
+call :log "Cancelled by the user"
 goto fail
 :install_failed
 echo.
 echo  The app didn't install. Android said:
 type "%OUT%"
+call :log "FAILED: install"
 goto fail
 :owner_failed
 echo.
@@ -202,9 +458,14 @@ type "%OUT%"
 echo.
 echo  This usually means an account is still on the tablet. Remove it or factory reset,
 echo  then run this again.
+call :log "FAILED: set-device-owner"
 goto fail
 :fail
+call :stop_adb
+echo.
+echo  A log of this run is in: %LOG%
+echo  If you report a problem, attach that file.
 echo.
 del "%OUT%" >nul 2>&1
 pause
-exit /b 1
+exit

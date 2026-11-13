@@ -95,6 +95,8 @@ public class Cfg {
                     String pin = getStr(c, name, def);
                     pinSet = pin != null && !pin.isEmpty();
                     vals.put(name, "");   // never expose the real PIN
+                } else if ("anancy_pattern".equals(name)) {
+                    vals.put(name, "");   // nor the unlock pattern: it opens the kiosk just the same
                 } else if ("int".equals(type)) {
                     vals.put(name, getInt(c, name, Integer.parseInt(def)));
                 } else {

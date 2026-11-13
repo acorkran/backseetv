@@ -80,7 +80,7 @@ public class PlayerActivity extends Activity {
         PlayerActivity prior = sRef.get();   // a HOME launch can start a SECOND player in its own task
         if (prior != null && prior != this) try { prior.finish(); } catch (Exception ignored) {}
         sRef = new WeakReference<>(this);
-        if (!remoteRole()) app.anancy.net.WatchLink.publishPlayer(this);   // a watch paired to this phone drives this phone only
+        if (!remoteRole()) { app.anancy.net.WatchLink.publishPlayer(this); app.anancy.net.WatchLink.publishKeys(this); }   // a watch paired to this phone drives this phone only, with its key
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
 
@@ -121,7 +121,7 @@ public class PlayerActivity extends Activity {
         boolean shared = remoteRole();   // "this phone as playback": the running engine is handed over (SelfPlayer)
         if (shared) SelfPlayer.start(this);
         adopted = shared;
-        player = shared ? SelfPlayer.player() : new ExoPlayer.Builder(this).setLoadControl(PlayerController.loadControl()).build();
+        player = shared ? SelfPlayer.player() : new ExoPlayer.Builder(this).setLoadControl(PlayerController.loadControl()).setMediaSourceFactory(PlayerController.mediaSources(this)).build();
         player.setVideoSurfaceView(surface);
         adoptedSurface = shared ? surface : null;
         videoSurface = surface;
@@ -212,6 +212,8 @@ public class PlayerActivity extends Activity {
     @SuppressWarnings("SetJavaScriptEnabled")
     private void doStartPlayMode() {
         if (playWeb != null || root == null) return;
+        // Turned on from the TV's own remote page: the show is underneath it, so bring it up.
+        if (!visible) try { startActivity(new Intent(this, PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)); } catch (Exception ignored) {}
         if (napped) { setNapScreen(false); PlayerController.get().play(); }   // can't play over a black nap screen
         // Opt-in, debug builds only: exposes the playground on a WebView devtools socket so it
         // can be driven over CDP from a dev box, which is the only way to test real multi-finger
@@ -404,6 +406,7 @@ public class PlayerActivity extends Activity {
     @Override protected void onStop() {
         super.onStop();
         visible = false;
+        if (showOnRemote) return;   // gone to the TV's own remote page: the show carries on in its card
         if (isFinishing() || isChangingConfigurations() || napped || player == null || !player.getPlayWhenReady()) return;
         if (lockTaskState() == android.app.ActivityManager.LOCK_TASK_MODE_LOCKED) return;
         pausedByLeaving = true;
@@ -413,6 +416,10 @@ public class PlayerActivity extends Activity {
     @Override protected void onStart() {
         super.onStart();
         visible = true;
+        if (showOnRemote) {   // back from the remote page: take the picture back from its card
+            showOnRemote = false;
+            if (!adopted && player != null && videoSurface != null) player.setVideoSurfaceView(videoSurface);
+        }
         if (!pausedByLeaving) return;
         pausedByLeaving = false;
         Log.i(TAG, "back in the player -> resume" + (napped ? " (no: napped)" : ""));
@@ -432,7 +439,21 @@ public class PlayerActivity extends Activity {
         // Coming back from granting the permission (or picking a folder) is exactly the moment the
         // library can suddenly exist, and nothing else would notice until the next cold start.
         if (PlayerController.get().libraryEmpty()) PlayerController.get().rescan(this);
+        // A TV no remote has paired with yet shows its pairing code, once per start, until one does.
+        // That's the moment of setting it up, with an adult in front of it.
+        if (!remoteRole() && !pairPromptShown && !app.anancy.Pairing.everPaired(this)) {
+            pairPromptShown = true;
+            main.postDelayed(() -> {
+                if (isFinishing() || isPlayModeActive() || app.anancy.Pairing.everPaired(this)) return;
+                try {
+                    startActivity(new Intent(this, app.anancy.net.QrShareActivity.class)
+                            .putExtra(app.anancy.net.QrShareActivity.EXTRA_PAIR_KEY, true)
+                            .putExtra(app.anancy.net.QrShareActivity.EXTRA_FIRST_RUN, true));
+                } catch (Exception e) { android.util.Log.w("Anancy", "pairing code: " + e); }
+            }, 2500);
+        }
     }
+    private static boolean pairPromptShown = false;
 
     /** Shown when a scan finds nothing. WHY it found nothing matters: a missing permission is a
         different problem from an empty folder, and offering the folder picker for the first one
@@ -842,56 +863,31 @@ public class PlayerActivity extends Activity {
 
     /** After the PIN: the TV's own admin menu. The kiosk has to be fully usable with no phone or
         watch around, so "Remote" is the complete remote UI running locally against this player. */
+    /** After the grown-up unlock: straight to the remote page. It already has everything the old
+        in-between menu offered (Settings in its menu, the Toddler button, Back to return to the show),
+        and Exit to the tablet's own home screen now lives in Settings. On a phone that is also a
+        screen, the remote page is its own. */
     private void showAdminMenu(final float restoreBrightness) {
+        setBrightness(napped ? 0.02f : restoreBrightness);
+        if (remoteRole()) { backToRemote(); return; }
         releasePinForAdmin();
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL); col.setBackgroundColor(0xFF101418);
-        col.setPadding(dp(24), dp(16), dp(24), dp(16));
-        TextView h = new TextView(this);
-        h.setText("BackSeeTV admin"); h.setTextColor(Color.WHITE); h.setTextSize(22);
-        h.setGravity(Gravity.CENTER); h.setPadding(0, dp(8), 0, dp(16));
-        col.addView(h);
-        final AlertDialog dlg = new AlertDialog.Builder(this).setView(col).setCancelable(true)
-                .setOnCancelListener(d -> { setBrightness(napped ? 0.02f : restoreBrightness); repinAfterAdmin(); }).create();
-        String[][] items = {
-                {"Remote  ·  playlist, up next, controls", "remote"},
-                {"Settings  ·  unlock gesture, PIN, Wi-Fi, camera", "settings"},
-                {"Toddler play mode", "playmode"},
-                {"Exit to launcher", "exit"},
-                {"Back to the show", "back"}};
-        // On a phone on its side the five stacked buttons ran off the bottom ("Exit to launcher"
-        // was unreachable), so a short screen gets them two to a row.
-        final boolean shortScreen = getResources().getConfiguration().screenHeightDp < 560;
-        LinearLayout pair = null;
-        for (final String[] it : items) {
-            Button b = new Button(this);
-            b.setText(it[0]); b.setTextSize(shortScreen ? 16 : 18); b.setAllCaps(false);
-            LinearLayout.LayoutParams lp = shortScreen
-                    ? new LinearLayout.LayoutParams(0, dp(60), 1f)
-                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
-            lp.setMargins(shortScreen ? dp(4) : 0, dp(4), shortScreen ? dp(4) : 0, dp(4));
-            b.setLayoutParams(lp);
-            b.setOnClickListener(v -> {
-                dlg.dismiss();
-                switch (it[1]) {
-                    case "remote":
-                        if (remoteRole()) { backToRemote(); return; }
-                        else startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true));
-                        break;
-                    case "settings": startActivity(new Intent(this, SettingsActivity.class)); break;
-                    case "playmode": startPlayMode(); return;
-                    case "exit":     unlock(); return;
-                    default: repinAfterAdmin(); break;   // "Back to the show"
-                }
-                setBrightness(napped ? 0.02f : restoreBrightness);
-            });
-            if (!shortScreen) { col.addView(b); continue; }
-            if (pair == null) { pair = new LinearLayout(this); pair.setOrientation(LinearLayout.HORIZONTAL); pair.setBaselineAligned(false); col.addView(pair); }
-            pair.addView(b);
-            if (pair.getChildCount() == 2) pair = null;
-        }
-        if (shortScreen) h.setPadding(0, 0, 0, dp(8));
-        dlg.show(); widenIfShort(dlg);
+        showOnRemote = true;   // the show keeps playing, in the remote page's card
+        startActivity(new Intent(this, RemoteActivity.class).putExtra("local", true));
+    }
+    /** True while the TV's own remote page is showing the show in its card (don't pause on leaving). */
+    private static volatile boolean showOnRemote = false;
+    /** The TV's running engine, for its own remote page to draw in a card. Null on a phone remote
+        (that one uses SelfPlayer) or when no show is up. */
+    public static ExoPlayer tvPlayer() {
+        PlayerActivity a = sRef.get();
+        return a != null && !a.adopted && !a.isFinishing() ? a.player : null;
+    }
+    /** Settings' "Exit to the home screen": leave the kiosk for the tablet's own launcher. */
+    public static boolean exitToLauncher() {
+        PlayerActivity a = sRef.get();
+        if (a == null) return false;
+        a.main.post(a::unlock);
+        return true;
     }
 
     private String currentPin() { return Cfg.getStr(this, "anancy_pin", "1234"); }

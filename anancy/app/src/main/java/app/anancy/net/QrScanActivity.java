@@ -44,6 +44,7 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
     public static final String RESULT_ANANCY_IP = "ip";        // parsed from a ANANCY:ip= QR
     public static final String RESULT_JOINED_SSID = "ssid";    // the ssid we tried to join
     public static final String RESULT_TV_NAME = "tvname";      // friendly name from an ANANCY: pairing QR
+    public static final String RESULT_PAIRED = "paired";        // true when the QR carried a pairing key and it was stored
     public static final String RESULT_TV_ID = "tvid";
 
     private final LifecycleRegistry lifecycle = new LifecycleRegistry(this);
@@ -108,6 +109,15 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
                     if (p.ip != null && !p.ip.isEmpty()) result.putExtra(RESULT_ANANCY_IP, p.ip);
                     if (p.name != null) result.putExtra(RESULT_TV_NAME, p.name);
                     if (p.id != null) result.putExtra(RESULT_TV_ID, p.id);
+                    // Seeing the TV's screen is what authorises this phone: its QR holds the key.
+                    if (p.id != null && p.key != null) {
+                        String had = app.anancy.Pairing.keyFor(this, p.id);
+                        if (had != null && !had.equals(p.key)) {   // a code claiming to be a TV we already know
+                            confirmReplace(p, result);
+                            return;
+                        }
+                        if (app.anancy.Pairing.remember(this, p.id, p.name, p.key)) result.putExtra(RESULT_PAIRED, true);
+                    }
                     // One scan does the whole job: join the TV's network, then we know where it is.
                     // joinDirect (not join) because the TV's hotspot has no internet, so a plain
                     // suggestion is ignored by the system -- the same trap the car tier fell into.
@@ -122,6 +132,21 @@ public class QrScanActivity extends Activity implements LifecycleOwner {
         } catch (Exception e) { Log.w(TAG, "qr dispatch: " + e); }
         setResult(RESULT_OK, result);
         runOnUiThread(this::finish);
+    }
+
+    /** A new code for a screen we're already paired with. Legitimate after "Unpair all remotes" on
+        the TV; otherwise it could be a fake code standing in for that TV, so ask first. */
+    private void confirmReplace(final QrParse.Pair p, final Intent result) {
+        runOnUiThread(() -> new android.app.AlertDialog.Builder(this)
+                .setTitle("Already paired with " + (p.name == null || p.name.isEmpty() ? "this screen" : p.name))
+                .setMessage("This code has a different key from the one this phone has. That's expected if the "
+                        + "TV was reset or used Unpair all remotes. If you didn't do that, cancel: it may not be your TV.")
+                .setPositiveButton("Replace", (d, w) -> {
+                    if (app.anancy.Pairing.remember(this, p.id, p.name, p.key)) result.putExtra(RESULT_PAIRED, true);
+                    setResult(RESULT_OK, result); finish();
+                })
+                .setNegativeButton("Cancel", (d, w) -> { setResult(RESULT_CANCELED); finish(); })
+                .setCancelable(false).show());
     }
 
     private void requestCameraPerm() {

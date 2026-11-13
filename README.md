@@ -38,6 +38,13 @@ uses every day, not a commercial product. You bring your own videos.
   Wi-Fi/mDNS runs alongside for higher bandwidth and for screens that don't advertise BLE.
   A **pull model** (the phone is a passive bulletin the tablet polls) sidesteps the
   Wi-Fi Direct single-radio + directional-firewall problem.
+- **Only paired devices get in.** Each TV has its own key, and the only way to get it is to scan the
+  code on that TV's screen. Bluetooth sessions start with a challenge-response both ways, then every
+  message is encrypted with a key for that session. Every HTTP request is signed and can't be replayed,
+  and every answer is signed back. Keys handed between TVs in a synced group are sealed for the one
+  TV that needs them. Another family's BackSeeTV in the same car park can't see or drive yours. The
+  crypto is pure and unit-tested:
+  [`net/PairCrypto.java`](anancy/app/src/main/java/app/anancy/net/PairCrypto.java).
 - **Correct command routing.** In a synced group, playback drives the leader alone
   (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —
   the split is pure and unit-tested:
@@ -103,7 +110,7 @@ The app is a standard Gradle project (Java 17, Android SDK build-tools 35 / plat
 
 ```bash
 cd anancy
-gradle :app:testDebugUnitTest     # run the unit tests (SyncMath, CommandRouter)
+gradle :app:testDebugUnitTest     # run the unit tests (SyncMath, CommandRouter, PairCrypto)
 gradle :app:assembleDebug         # build the APK (also builds + embeds the watch app)
 gradle assembleRelease            # signed release APKs (needs a key: see anancy/signing.gradle)
 ```

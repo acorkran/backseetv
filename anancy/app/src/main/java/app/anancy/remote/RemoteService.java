@@ -112,7 +112,25 @@ public class RemoteService extends Service {
     public void requestConfig() { cfgAccum = null; cfgNext = 0; requestTyped("cfg", "config"); }
     public String configJson() { return typed.get("config"); }
     /** Write one tablet setting from a remote (mirrors the on-tablet Settings screen). */
-    public void setConfig(String key, String val) { send("cfg:" + key + "=" + val); }
+    public void setConfig(String key, String val) {
+        if ("anancy_host".equals(key) && val != null && !val.isEmpty()) grantHostTo(val);
+        send("cfg:" + key + "=" + val);
+    }
+    /** A TV told to stream from the TV at `hostIp` needs that TV's key: send it, sealed per TV. */
+    private void grantHostTo(String hostIp) {
+        String hostId = null;
+        for (Map.Entry<String, String> e : deviceIps.entrySet()) if (hostIp.equals(e.getValue())) hostId = e.getKey();
+        String hostKey = hostId == null ? null : app.anancy.Pairing.keyFor(this, hostId);
+        if (hostKey == null) { toastMain("This phone isn't paired with the screen at " + hostIp + ", so it can't share its library."); return; }
+        for (String id : effectiveTargets().isEmpty() ? seenTablets.keySet() : effectiveTargets()) {
+            if (id.equals(hostId)) continue;
+            String sealed = app.anancy.Pairing.sealFor(this, id, hostKey);
+            if (sealed == null) continue;
+            String cmd = "grant:" + hostId + ":" + hostIp + ":" + sealed;
+            if (ble != null && ble.connectedIds().contains(id)) ble.sendToIds(java.util.Collections.singleton(id), cmd);
+            else httpArm(deviceIp(id), "/grant?id=" + hostId + "&ip=" + hostIp + "&key=" + sealed);
+        }
+    }
     public String libraryJson() { return typed.get("library"); }
     public String episodesJson() { return typed.get("episodes"); }
     public String connJson() { return typed.get("conn"); }
@@ -178,7 +196,7 @@ public class RemoteService extends Service {
             if (o.has("conn")) noteConn(o.optString("conn", ""), o.optJSONObject("hotspot"));
             String id = o.optString("id", ""), ip = o.optString("ip", "");   // learn the shown device's ip + host-ness (for sync-group arming)
             if (!id.isEmpty()) {
-                if (!ip.isEmpty()) deviceIps.put(id, ip);
+                if (!ip.isEmpty()) { deviceIps.put(id, ip); app.anancy.Pairing.noteHost(this, ip, id); }
                 if (o.has("client")) { if (o.optBoolean("client")) hostIds.remove(id); else hostIds.add(id); }
             }
         } catch (Exception ignored) {}
@@ -295,11 +313,17 @@ public class RemoteService extends Service {
         // ...and keep it only while it is actually CARRYING. Holding on "escalated" alone would leave
         // a hotspot up forever on any drive where the TV never managed to join it.
         boolean want = !wifiNeeds.isEmpty()
-                || (escalated && WifiRadio.freeToHost(this) && wifi != null && wifi.isConnected());
+                || (escalated && WifiRadio.freeToHost(this) && wifi != null && wifi.isConnected() && !selfId().equals(wifi.connectedId()));
         if (!want) { autoSince = 0; dropEscalation(); return; }
         if (autoSince == 0) autoSince = android.os.SystemClock.elapsedRealtime();
 
-        if (wifi != null && wifi.isConnected()) { escalated = true; return; }   // already reachable: home Wi-Fi, nothing to do
+        // Already reachable over Wi-Fi: nothing to raise. But "reachable" means a TV we need, not this
+        // phone's own player: with "this phone as playback" ticked the Wi-Fi client could be happily
+        // polling ourselves on the home network while the tablet sat on no network at all, and the
+        // hotspot that would have joined them never came up. A pending sync needs its members answering.
+        String polled = wifi != null && wifi.isConnected() ? wifi.connectedId() : null;
+        boolean reachesTv = polled != null && !polled.equals(selfId());
+        if (reachesTv && !(syncPending && reachableMembers() < 2)) { escalated = true; return; }
         // Don't start raising radios until mDNS has had a fair go at finding the TV on this network.
         if (android.os.SystemClock.elapsedRealtime() - autoSince < 5000) { poke(1500); return; }
 
@@ -392,6 +416,7 @@ public class RemoteService extends Service {
             if (was == null || "ble".equals(was) || "tv_hotspot".equals(was)) Cfg.put(this, "anancy_conn", "auto");
         }
         connMode = Cfg.getStr(this, "anancy_conn", "auto");
+        app.anancy.Pairing.onPeersChanged = this::onPairingChanged;
         if ("1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, ""))) wifiNeeds.add("sync");   // a group survives a restart, so does its link
     }
 
@@ -437,7 +462,7 @@ public class RemoteService extends Service {
     /** A device's LAN ip so we can HTTP its ControlServer directly (arm/disarm a sync group). */
     public String deviceIp(String id) {
         if (id == null) return null;
-        if (selfPlay() && id.equals(selfId())) return selfIp();
+        if (selfPlay() && id.equals(selfId())) { String me = selfIp(); app.anancy.Pairing.noteHost(this, me, id); return me; }
         String ip = deviceIps.get(id);
         if (ip != null && !ip.isEmpty()) return ip;
         if (wifi != null) { String hp = wifi.hosts().get(id); if (hp != null) { int c = hp.indexOf(':'); return c > 0 ? hp.substring(0, c) : hp; } }
@@ -496,7 +521,9 @@ public class RemoteService extends Service {
                 try {
                     java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + e.getValue() + ":8090/clock").openConnection();
                     cn.setConnectTimeout(1500); cn.setReadTimeout(1500);
-                    ok = cn.getResponseCode() == 200; cn.disconnect();
+                    app.anancy.Pairing.noteHost(this, e.getValue(), e.getKey());
+                    app.anancy.Pairing.sign(this, cn);
+                    ok = app.anancy.Pairing.fetch(this, cn) != null; cn.disconnect();
                 } catch (Exception ignored) {}
                 if (ok) probedOk.put(e.getKey(), e.getValue());
                 else { if (probedOk.remove(e.getKey()) != null || !syncLinkToasted) Diag.log(TAG, "sync probe: " + e.getKey() + " @ " + e.getValue() + " not answering"); }
@@ -571,10 +598,16 @@ public class RemoteService extends Service {
         for (String id : known) if (!members.contains(id)) httpArm(deviceIp(id), "/sync?on=0");   // dropped screens leave the group
         httpArm(leaderIp, "/sync?on=0");                                   // the leader plays normally (audio source)
         int mute = groupLeaderOnly() ? 1 : 0;
+        String leaderKey = app.anancy.Pairing.keyFor(this, leader);
         for (String id : groupOrder()) {
             if (id.equals(leader)) continue;
             String fip = deviceIp(id);
-            if (fip != null && !fip.isEmpty()) httpArm(fip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute);
+            if (fip == null || fip.isEmpty()) continue;
+            // A follower streams from the leader, so it needs the leader's key: sealed with the
+            // follower's OWN key, so it is only ever readable by that follower.
+            String sealed = leaderKey == null ? null : app.anancy.Pairing.sealFor(this, id, leaderKey);
+            String grant = sealed == null ? "" : "&hostid=" + leader + "&hostkey=" + sealed;
+            httpArm(fip, "/sync?on=1&host=" + leaderIp + "&mute=" + mute + grant);
         }
     }
     /** Fire-and-forget GET to a tablet's ControlServer (used to arm/disarm sync). */
@@ -582,7 +615,10 @@ public class RemoteService extends Service {
         if (ip == null || ip.isEmpty()) return;
         new Thread(() -> { try {
             java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + ip + ":8090" + path).openConnection();
-            cn.setConnectTimeout(2500); cn.setReadTimeout(2500); cn.getInputStream().close();
+            cn.setConnectTimeout(2500); cn.setReadTimeout(2500);
+            app.anancy.Pairing.sign(this, cn);
+            if (app.anancy.Pairing.fetch(this, cn) == null)
+                Diag.warn(TAG, "arm " + path.replaceAll("(hostkey|key)=[^&]*", "$1=…") + " @ " + ip + " -> no genuine answer");
         } catch (Exception ignored) {} }).start();
     }
     /** Who commands actually go to: the leader alone when a group is armed, else the raw selection. */
@@ -639,6 +675,39 @@ public class RemoteService extends Service {
         String n = seenTablets.get(id);
         return n != null && !n.isEmpty() ? n : id;
     }
+    // --- pairing --------------------------------------------------------------------------------------
+    private final Map<String, String> unpaired = new ConcurrentHashMap<>();   // nearby TVs we may NOT talk to
+    private final Map<String, String> rejectedIds = new ConcurrentHashMap<>();   // id -> the key that TV refused
+    /** Screens nearby that this phone hasn't paired with (id -> name), for the "Pair" offer. */
+    public Map<String, String> unpairedNearby() {
+        Map<String, String> m = new java.util.LinkedHashMap<>(unpaired);
+        for (String id : rejectedIds.keySet()) { String n = seenTablets.get(id); m.put(id, n != null ? n : id); }
+        return m;
+    }
+    private void noteUnpaired(String id, String name) {
+        if (id == null || id.isEmpty() || app.anancy.Pairing.isPaired(this, id)) return;
+        unpaired.put(id, name == null || name.isEmpty() ? id : name);
+    }
+    /** A TV was just paired or forgotten: reconnect accordingly and give the watch the keys. */
+    private void onPairingChanged() {
+        main.post(() -> {
+            for (String id : new java.util.ArrayList<>(unpaired.keySet())) if (app.anancy.Pairing.isPaired(this, id)) unpaired.remove(id);
+            for (String id : new java.util.ArrayList<>(rejectedIds.keySet()))   // re-scanned: a new key, try again
+                if (!String.valueOf(app.anancy.Pairing.keyFor(this, id)).equals(rejectedIds.get(id))) rejectedIds.remove(id);
+            for (String id : new java.util.ArrayList<>(seenTablets.keySet()))
+                if (!id.equals(selfId()) && !app.anancy.Pairing.isPaired(this, id)) seenTablets.remove(id);
+            if (!local) {
+                // Bluetooth keeps its links: the running scan connects a newly paired TV by itself, and
+                // a forgotten one is dropped here. (Restarting it all made every live link re-pair.)
+                if (ble != null) { ble.dropUnpaired(); ble.start(); }
+                try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {}   // re-discover with the new keys
+                wifi = null;
+                startWifi(null, 0);
+            }
+            app.anancy.net.WatchLink.publishKeys(this);
+        });
+    }
+
     private void noteSeen(String id, String name) {
         if (id == null || id.isEmpty()) return;
         if (!local && id.equals(selfId()) && !selfPlay()) return;   // our own player only counts when the box is ticked
@@ -728,8 +797,14 @@ public class RemoteService extends Service {
             public void onSeen(String id, String name) { noteSeen(id, name); }
             public void onDeviceState(String id, String ip, boolean isHost) {
                 if (id == null) return;
-                if (ip != null && !ip.isEmpty()) deviceIps.put(id, ip);
+                if (ip != null && !ip.isEmpty()) { deviceIps.put(id, ip); app.anancy.Pairing.noteHost(RemoteService.this, ip, id); }
                 if (isHost) hostIds.add(id); else hostIds.remove(id);
+            }
+            public void onUnpaired(String id, String name) { noteUnpaired(id, name); }
+            public void onPairingRejected(String id) {
+                String k = app.anancy.Pairing.keyFor(RemoteService.this, id);
+                if (k != null) rejectedIds.put(id, k);
+                toastMain("A screen no longer accepts this phone. Scan its pairing QR again.");
             }
         });
         java.util.Set<String> sel = targets();
@@ -739,6 +814,7 @@ public class RemoteService extends Service {
         if (!"ble".equals(connMode)) applyConnMode();   // hotspot coordination for the chosen tier
         if (wifi == null) startWifi(null, 0);            // Wi-Fi always up: Wi-Fi-only screens (a TV) + representative state
         WearPusher.push(this);   // phone only: offer the embedded watch build (no-op if unchanged)
+        app.anancy.net.WatchLink.publishKeys(this);   // the watch pairs through this phone
         applySelfPlay();
         publishWatchTarget();
         // Wi-Fi/mDNS fallback if BLE hasn't connected shortly — only at a Wi-Fi connection level
@@ -754,6 +830,7 @@ public class RemoteService extends Service {
                 if (!bleUp()) onIncoming(json, local ? "local" : "Wi-Fi");
             }
             public void onSeen(String id, String name) { noteSeen(id, name); }
+            public void onUnpaired(String id, String name) { noteUnpaired(id, name); }
         });
         if (fixedHost != null) wifi.setFixedHost(fixedHost, fixedPort);
         else { java.util.Set<String> sel = targets(); wifi.setTarget(sel.isEmpty() ? null : sel.iterator().next()); }   // poll the representative
@@ -841,6 +918,7 @@ public class RemoteService extends Service {
         try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {}
         try { if (selfLink != null) selfLink.stop(); } catch (Exception ignored) {}
         if (INSTANCE == this) INSTANCE = null;
+        if (app.anancy.Pairing.onPeersChanged != null) app.anancy.Pairing.onPeersChanged = null;
         super.onDestroy();
     }
 

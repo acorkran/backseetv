@@ -83,4 +83,14 @@ public class QrParseTest {
         assertNull(QrParse.anancyIp("ANANCY:"));        // no pairs at all
         assertNull(QrParse.anancyIp("ANANCY:garbage")); // no '=' -> no ip
     }
+
+    @Test public void pairingQrCarriesTheKey() {
+        String key = PairCrypto.newKey();
+        QrParse.Pair p = QrParse.anancyPair("ANANCY:name=" + QrParse.enc("Back seat") + ";id=1a2b3c4d;key=" + key);
+        assertEquals("1a2b3c4d", p.id);
+        assertEquals("Back seat", p.name);
+        assertEquals(key, p.key);
+        assertNull(p.ssid);
+        assertNull(QrParse.anancyPair("ANANCY:id=1a2b3c4d").key);   // an old TV's code: no key, no pairing
+    }
 }

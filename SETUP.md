@@ -41,15 +41,15 @@ unsupervised, Part B is the strongest lock.**
 3. **All files access**: the TV shows *"BackSeeTV can't read your storage"*. Tap **Open set-up
    check**, then **All files access**, and turn it on for BackSeeTV.
 4. **Add your shows.** Use a USB cable to a computer, a file manager, or an SD card. Put
-   **one folder per show** inside a top-level folder called `Anancy`:
+   **one folder per show** inside a top-level folder called `BackSeeTV-Media`:
 
    ```
-   Anancy/
+   BackSeeTV-Media/
      Bluey/         Bluey S01E01.mp4, Bluey S01E02.mp4 ...
      Ms Rachel/     ...
    ```
 
-   - It finds `Anancy` (or `KidsTV` / `Kidodi`) on internal storage **and** on any SD card.
+   - It finds `BackSeeTV-Media` on internal storage **and** on any SD card.
    - Your shows are somewhere else? The set-up check has **Media folder** to point it there.
    - Files play in name order. `.mp4`, `.mkv` and `.m4v` are supported.
 5. The library appears and starts playing, **muted**. You get a **Shuffle All** playlist plus one
@@ -62,14 +62,13 @@ with one tap (**Got it** or **OK**).
 
 To get out, or to turn pinning off:
 
-1. Get into the grown-up menu: **tap with four fingers, four times, within 3 seconds**, anywhere on
-   the show.
+1. **Tap with four fingers, four times, within 3 seconds**, anywhere on the show.
 2. Copy the code shown on screen (it changes every time; a toddler can't read it in time).
-3. **Exit to launcher**, or **Settings → Toddler lock → off**.
+3. You're on the **remote page**, with the pin off. Its **⌄** menu has **Settings**, where you'll
+   find **Toddler lock → off** and, at the bottom, **Exit to the tablet's home screen**.
 
-The code takes the pin off straight away, so Settings and the remote open normally. **Back to the
-show** asks to pin again. On a Samsung with a screen lock, taking the pin off also locks the phone:
-unlock it as usual and the grown-up menu is waiting.
+**Back** from the remote page returns to the show and asks to pin again. On a Samsung with a screen
+lock, taking the pin off also locks the phone: unlock it as usual and the remote page is waiting.
 
 While pinned, Home, Recents and the notification shade do nothing. The four-finger taps still get
 you out.
@@ -88,21 +87,30 @@ pin ends. For no prompts and a lock that survives a restart, use **device owner 
 
 **Coming back to the show after a restart (optional).** While the toddler lock is on, BackSeeTV can be
 the Home app: set it in Android Settings → Default apps → Home app, or tap **Always** if Android asks.
-**Exit to launcher** in the grown-up menu hands Home back to your normal launcher, so the device works
+**Exit to the tablet's home screen** (Settings) hands Home back to your normal launcher, so the device works
 as usual for you afterwards. Set it again next time you lock the tablet up.
 
 ### A4. Set up the phone remote
 
 1. Open **BackSeeTV** on the phone, choose **This is a Remote**, and allow **Nearby devices**.
-2. The TV shows up by itself over Bluetooth within a few seconds. There's nothing to pair and no
-   network needed, so it works in the car.
-3. Nothing found? Tap **Run the set-up check**. It names what's wrong (Bluetooth off, a denied
+2. **Pair it with the TV.** A TV no remote has paired with shows a pairing code when it starts. On the
+   phone, tap **Pair a screen** and scan that code. Later, or for another phone: grown-up unlock →
+   Settings → **Pair a remote**.
+3. That's the only step. From then on the phone finds the TV over Bluetooth by itself, with no network
+   needed, so it works in the car. The watch pairs through the phone.
+4. Nothing found? Tap **Run the set-up check**. It names what's wrong (Bluetooth off, a denied
    permission, the other device not set as the TV) and offers the fix.
-4. When both devices are on the same Wi-Fi, the remote also uses Wi-Fi automatically. That's
+5. When both devices are on the same Wi-Fi, the remote also uses Wi-Fi automatically. That's
    faster, and it's what the live camera and uploads use.
-5. If Bluetooth can't work at all, pair by QR. On the TV, open the set-up check (grown-up menu →
-   Settings → **Set-up check**) and tap **Show pairing QR**. On the phone, scan it from the
-   remote's set-up check with the rear camera.
+6. If Bluetooth can't work at all, use **Pair over Wi-Fi** in the TV's set-up check instead: the
+   same scan, plus the TV's hotspot details.
+
+**Only paired devices can control a TV or see its camera.** The pairing code is the only way in:
+whoever can see the TV's screen can pair. Another family's BackSeeTV nearby shows on your phone as
+"not paired" and is never connected to, and theirs can't reach yours. Everything between paired
+devices is encrypted or signed, over Bluetooth and Wi-Fi. Lost or sold a phone? On the TV: grown-up
+unlock → Settings → **Unpair all remotes**, then pair the phones you still have again. On a phone,
+**Connection…** lists the paired screens and can forget one.
 
 ### A5. Android Auto
 
@@ -142,14 +150,29 @@ On Windows 10 or 11, `install/BackSeeTV-Tablet-Setup.bat` does B1 and B2 for you
 Google's adb tools, finds the tablet, checks it has no accounts, installs the app, makes it the
 device owner, and starts the locked show.
 
-1. Put `BackSeeTV-<version>.apk` in the same folder as the `.bat`. Optional: add an `Anancy` folder
-   with your shows, and it copies them across too.
+1. Put `BackSeeTV-<version>.apk` in the same folder as the `.bat`.
 2. On the tablet: factory reset (skip every sign-in), then turn on **USB debugging**. Android doesn't
    let any script do this part.
-3. Plug it in, double-click the `.bat`, tap **Allow** on the tablet when asked, and type `Y` to confirm.
+3. Plug it in and double-click the `.bat`. When the tablet asks **Allow USB debugging?**, tick
+   **Always allow from this computer** and tap **Allow**. If Android asks again partway through, the
+   script waits and tells you. Type `Y` to confirm.
+4. When it asks for your shows, drag their folder onto the window and press Enter, or press Enter to
+   skip. Inside that folder, one sub-folder per show (`.mp4`, `.mkv` or `.m4v`); each show becomes a
+   playlist. A folder of videos with no sub-folders becomes one show. The script checks the shows
+   fit (keeping 1 GB free) before copying, and only copies what's new on a re-run. A
+   `BackSeeTV-Media` folder next to the `.bat` is used without asking.
+
+Shows on a microSD card work too, with no script: a folder called `BackSeeTV-Media` on the card, one folder
+per show inside it.
 
 Samsung tablets may also need the [Samsung USB driver](https://developer.samsung.com/android-usb-driver)
-if Windows can't see them. Running the script again on a finished tablet just updates the app.
+if Windows can't see them. Running the script again on a finished tablet updates the app and adds any
+new shows. Each
+run writes `BackSeeTV-setup-log.txt` next to the `.bat`; attach it if you report a problem.
+
+Afterwards the kiosk doesn't need developer mode. You can tap **Revoke USB debugging authorizations**
+in Developer options and then switch Developer options off. Turn them back on before updating with
+the script.
 
 ### B1. Install
 
@@ -161,7 +184,7 @@ Then pick the role and add media as in **A2**. Over adb you can also push media 
 role:
 
 ```bash
-adb push "Bluey" /sdcard/Anancy/Bluey
+adb push "Bluey" /sdcard/BackSeeTV-Media/Bluey
 adb shell am start -n app.anancy/.AdbSetRole --es role player      # or: --es role remote
 ```
 
@@ -188,7 +211,8 @@ What the kiosk gives you:
 - Wi-Fi joins happen with no prompts.
 - The remotes can turn the screen on and off.
 
-To get out, use the four-finger taps and the code, then **Exit to launcher**. To undo the kiosk
+To get out, use the four-finger taps and the code, then **Settings → Exit to the tablet's home
+screen**. To undo the kiosk
 completely: **Settings → Remove device owner** (no factory reset needed).
 
 Android 10 tablets: Bluetooth may be off after a reset. Run
@@ -196,7 +220,7 @@ Android 10 tablets: Bluetooth may be off after a reset. Run
 
 ### B3. Unlock options (optional)
 
-Grown-up menu → **Settings → Unlock method**:
+Grown-up unlock → **Settings → Unlock method**:
 
 - **Randomized code** (default): copy a random code shown on screen.
 - **Preset PIN**: type your own PIN. The default is `1234`; change it there or with
@@ -248,21 +272,22 @@ used B5). Settings and the library are kept. Never uninstall a device-owner TV �
 
 ## Optional extras
 
-- **Camera check-in (still snapshots):** grown-up menu → Settings → Camera. The front camera
+- **Camera check-in (still snapshots):** grown-up unlock → Settings → Camera. The front camera
   updates a still image about once a second for the phone and car dash; nothing is recorded. Over
   adb the permission is `adb shell pm grant app.anancy android.permission.CAMERA` (a kiosk grants
   it itself).
-- **Toddler play mode:** grown-up menu → Toddler play mode. A tap-the-letters screen over the show.
+- **Toddler play mode:** the **Toddler** button on any remote, including the TV's own (grown-up
+  unlock). A tap-the-letters screen over the show.
   Use it with the toddler lock or a device-owner kiosk (B2), or little hands can leave the app.
 - **Switching a device's role:** open the **set-up check** and tap **Change role** on the Role line.
   On a phone remote it's at the bottom of **Settings** ("This phone: set-up check"). On a TV it's in
-  the grown-up menu → Settings → Set-up check.
+  Settings → Set-up check (after the grown-up unlock).
 - **Use the remote as a screen too.** On the phone remote, tap **BackSeeTV ⌄** at the top and tick
   **This phone as playback**. The show plays in a small card at the top of the screens list, marked
   **"<name> (this device)"**, and you keep the whole remote. Tap the card to include or leave out that
   screen. The corners button on the card makes it **large**: full-screen, with the same unlock gesture,
-  toddler lock and volume-button lock as a TV. Back (or the grown-up menu → Remote) returns it to
-  the card. Tick **Sync Playback** in the same menu to keep the selected screens in step.
+  toddler lock and volume-button lock as a TV. Back (or the grown-up unlock) returns it to the
+  card and the remote. Tick **Sync Playback** in the same menu to keep the selected screens in step.
 
   **The watch is the best way to use a large show.** Once it's full-screen the phone's remote is
   hidden, but the watch (B4) keeps driving it. Select only "(this device)" to control just the phone,

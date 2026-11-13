@@ -187,7 +187,7 @@ public class SetupActivity extends Activity {
         } catch (Exception ignored) {}
         boolean ok = files > 0;
         String chosen = Cfg.getStr(this, "anancy_media_dir", "");
-        String where = chosen.isEmpty() ? "the default folders (Anancy, KidsTV, Kidodi)" : chosen;
+        String where = chosen.isEmpty() ? "the default BackSeeTV-Media folders" : chosen;
         // Never send them folder-hunting for a permission problem: the picker cannot read the card
         // either, so "choose the media folder" would only show them an empty tree.
         if (!ok && !allFiles) {
@@ -203,24 +203,36 @@ public class SetupActivity extends Activity {
         return ok;
     }
 
-    /** QR pairing. Bluetooth finds the TV on its own when it can, so this is the fallback for when
-        it can't: Bluetooth off or unavailable, a tablet that can't advertise, or a remote that
-        simply isn't being found. One scan carries BOTH the TV's network and its address, so it
-        works from a standing start with no prior link of any kind. */
+    /** Pairing. A remote may only control a TV it has paired with, and pairing means scanning the
+        code on the TV's own screen: that code carries the TV's key, so being able to see the screen
+        is the permission. Bluetooth then connects by itself; the Wi-Fi code is the fallback for a
+        TV or phone where Bluetooth can't work. */
     private void pairingRow() {
         if (isPlayer) {
-            info("Pair a remote by QR", "Puts a full-screen code on this TV carrying its Wi-Fi details "
-                    + "and address. Scan it from the remote's set-up check.",
-                    "Show pairing QR", () -> startActivity(new Intent(this, app.anancy.net.QrShareActivity.class)
+            info("Pair a remote", "Puts a code on this screen. On the phone: open BackSeeTV, tap Pair a screen, "
+                    + "and scan it. Only someone who can see this screen can pair.",
+                    "Show pairing code", () -> startActivity(new Intent(this, app.anancy.net.QrShareActivity.class)
+                            .putExtra(app.anancy.net.QrShareActivity.EXTRA_PAIR_KEY, true)));
+            info("Pair over Wi-Fi", "For when Bluetooth can't work: the code also starts this TV's hotspot "
+                    + "and carries its details.",
+                    "Show Wi-Fi pairing code", () -> startActivity(new Intent(this, app.anancy.net.QrShareActivity.class)
                             .putExtra(app.anancy.net.QrShareActivity.EXTRA_PAIR, true)));
+            info("Unpair all remotes", "Every phone and watch loses access until it scans this TV's code again. "
+                    + "Use it if a phone is lost or sold.", "Unpair all", () ->
+                    new android.app.AlertDialog.Builder(this).setTitle("Unpair all remotes?")
+                            .setMessage("Every phone and watch paired with this TV stops working with it until it scans the pairing code again.")
+                            .setPositiveButton("Unpair all", (d, w) -> { app.anancy.Pairing.resetMyKey(this); toast("All remotes unpaired"); render(); })
+                            .setNegativeButton("Cancel", null).show());
             return;
         }
-        String ip = Cfg.getStr(this, "anancy_paired_ip", "");
-        String nm = Cfg.getStr(this, "anancy_paired_name", "");
-        info("Pair with a TV by QR", ip.isEmpty()
-                        ? "Optional. On the TV: Set-up check → Show pairing QR, then scan it here."
-                        : "Paired with " + (nm.isEmpty() ? "a TV" : nm) + " at " + ip + ".",
-                "Scan the TV's QR", () -> {
+        java.util.Map<String, String> paired = app.anancy.Pairing.paired(this);
+        StringBuilder names = new StringBuilder();
+        for (String n : paired.values()) { if (names.length() > 0) names.append(", "); names.append(n); }
+        row(!paired.isEmpty(), "Paired screens", paired.isEmpty()
+                        ? "None yet. This phone only controls screens it has paired with. On the TV, open the "
+                          + "pairing code (it shows by itself on a new TV), then scan it here."
+                        : names + ". To add another, scan its pairing code.",
+                "Pair a screen", () -> {
                     try { startActivityForResult(new Intent(this, app.anancy.net.QrScanActivity.class), 9); }
                     catch (Exception e) { toast("Couldn't open the scanner"); }
                 });
@@ -232,10 +244,10 @@ public class SetupActivity extends Activity {
         String ip = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_ANANCY_IP);
         String nm = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_TV_NAME);
         String ssid = data.getStringExtra(app.anancy.net.QrScanActivity.RESULT_JOINED_SSID);
-        if (ip == null && ssid == null) { toast("That wasn't an BackSeeTV pairing code"); return; }
-        if (ip != null) Cfg.put(this, "anancy_paired_ip", ip);
-        if (nm != null) Cfg.put(this, "anancy_paired_name", nm);
-        toast(ssid != null ? "Joining " + ssid + "…" : "Paired with " + (nm == null ? ip : nm));
+        boolean paired = data.getBooleanExtra(app.anancy.net.QrScanActivity.RESULT_PAIRED, false);
+        if (!paired && ip == null && ssid == null) { toast("That isn't a BackSeeTV pairing code"); return; }
+        if (!paired) { toast("That code is from an older BackSeeTV. Update the TV, then scan its new code."); return; }
+        toast("Paired with " + (nm == null || nm.isEmpty() ? "the screen" : nm));
         render();
     }
 

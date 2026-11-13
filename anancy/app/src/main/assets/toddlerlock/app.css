@@ -86,8 +86,21 @@ body.locked { -webkit-user-select: none; user-select: none; -webkit-touch-callou
 .up-title { font-size: 1.5rem; font-weight: 800; margin-bottom: 12px; }
 .unlock-instr { color: var(--muted); margin-bottom: 14px; }
 .unlock-code { font-size: 2.2rem; font-weight: 800; letter-spacing: .3em; font-variant-numeric: tabular-nums; margin-bottom: 16px; color: var(--accent); }
-.unlock-input { font-size: 1.5rem; text-align: center; letter-spacing: .3em; padding: 10px 14px; width: 220px;
-  background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; }
+.unlock-body { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.unlock-body[hidden] { display: none; }
+.unlock-left { display: flex; flex-direction: column; align-items: center; }
+.unlock-typed { font-size: 1.5rem; letter-spacing: .3em; min-height: 1.6em; color: var(--fg); font-variant-numeric: tabular-nums; }
+.unlock-pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 10px; }
+.unlock-pad button { height: 56px; font-size: 1.4rem; font-weight: 700; border-radius: 10px; cursor: pointer;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line); touch-action: manipulation; }
+.unlock-pad button:active { border-color: var(--accent); }
+/* landscape on a phone: code on the left, keys on the right, nothing covering anything */
+@media (orientation: landscape) and (max-height: 560px) {
+  .unlock-body { flex-direction: row; gap: 36px; }
+  .unlock-pad { grid-template-columns: repeat(3, 70px); gap: 8px; }
+  .unlock-pad button { height: 46px; }
+  .up-title { margin-bottom: 6px; } .unlock-instr { margin-bottom: 8px; } .unlock-code { margin-bottom: 8px; }
+}
 .unlock-msg { color: #ff9b9b; margin-top: 12px; min-height: 1.2em; }
 
 /* ---- cog ---- */

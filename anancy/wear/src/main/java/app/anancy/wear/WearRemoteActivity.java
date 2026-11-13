@@ -62,7 +62,7 @@ public class WearRemoteActivity extends Activity {
     private View cameraView;
     private android.widget.ImageView camImg;
     private TextView camStatus;
-    private volatile String tabletIp;
+    private volatile String tabletIp, tabletId;
     private volatile boolean camWifiOn;   // true while Wi-Fi live frames are arriving (suppress BLE stills)
     private volatile boolean liveRun;
     private Thread liveThread;
@@ -398,6 +398,9 @@ public class WearRemoteActivity extends Activity {
             try {
                 java.net.HttpURLConnection c = openOnWifi("http://" + ip + ":8090/live");
                 c.setConnectTimeout(2500); c.setReadTimeout(6000);
+                String key = WatchKeys.keyFor(this, tabletId);   // the TV only serves its camera to paired devices
+                if (key == null) { c.disconnect(); return; }
+                c.setRequestProperty(PairCrypto.HEADER, PairCrypto.signRequest(key, WatchKeys.clientId(this), "GET", "/live", System.currentTimeMillis()));
                 if (c.getResponseCode() != 200) { c.disconnect(); return; }
                 java.io.InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 1 << 15);
                 byte[] jpg;
@@ -696,7 +699,7 @@ public class WearRemoteActivity extends Activity {
             if (volOverlay.getVisibility() != View.VISIBLE)
                 volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
             if (gauge != null) gauge.setVolume(volPct);   // right-edge arc
-            String ip = o.optString("ip", ""); if (!ip.isEmpty()) tabletIp = ip;   // for Wi-Fi /live
+            String ip = o.optString("ip", ""); if (!ip.isEmpty()) { tabletIp = ip; tabletId = o.optString("id", null); }   // for Wi-Fi /live
             playModeOn = o.optBoolean("playmode", false);
             updateToddlerCell();
             if (o.has("battery") && gauge != null) {   // TV battery -> left-edge arc (not the status chip)

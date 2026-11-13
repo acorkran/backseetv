@@ -43,6 +43,28 @@ public final class WatchLink {
         publish(ctx, "remote", ids == null ? "" : android.text.TextUtils.join(",", new java.util.TreeSet<>(ids)), relay);
     }
 
+    public static final String PATH_KEYS = "/anancy/keys";
+    private static volatile String lastKeys = null;
+
+    /** Hand the watch the keys for every TV this phone is paired with (plus this device's own, for
+        when the phone is the TV). The Wear Data Layer only syncs between this phone and its own watch,
+        within apps signed with the same key, so the keys never leave the two devices. */
+    public static void publishKeys(Context ctx) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            for (java.util.Map.Entry<String, String> e : app.anancy.Pairing.pairedKeys(ctx).entrySet()) o.put(e.getKey(), e.getValue());
+            o.put(app.anancy.Identity.id(ctx), app.anancy.Pairing.myKey(ctx));
+            String json = o.toString();
+            if (json.equals(lastKeys)) return;
+            lastKeys = json;
+            PutDataMapRequest req = PutDataMapRequest.create(PATH_KEYS);
+            req.getDataMap().putString("keys", json);
+            Wearable.getDataClient(ctx.getApplicationContext()).putDataItem(req.asPutDataRequest().setUrgent())
+                    .addOnFailureListener(e -> { lastKeys = null; Log.w(TAG, "keys publish failed: " + e); });
+            Log.i(TAG, "watch keys: " + o.length() + " screen(s)");
+        } catch (Exception e) { lastKeys = null; Log.w(TAG, "publishKeys: " + e); }
+    }
+
     private static void publish(Context ctx, String role, String ids, boolean relay) {
         final String key = role + "|" + ids + "|" + relay;
         if (key.equals(lastSent)) return;   // the Data Layer syncs every change to the watch; don't churn it

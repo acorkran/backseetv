@@ -44,6 +44,7 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
@@ -82,7 +83,7 @@
         <!-- Player role: the show is the home screen (fullscreen, landscape). -->
         <activity
             android:name=".player.PlayerActivity"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleInstance"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
@@ -93,7 +94,7 @@
         <!-- Remote role: control UI. -->
         <activity
             android:name=".remote.RemoteActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@android:style/Theme.Material.NoActionBar"
             android:configChanges="orientation|screenSize|keyboardHidden"/>
 
@@ -162,14 +163,16 @@
         <!-- Android Auto MEDIA app (the surface that shows while driving): mirrors the tablet's
              now-playing onto the dash + forwards controls, over RemoteService. Makes no audio. -->
         <!-- Set-up check: role-aware "why aren't these two talking" screen with the fixes. -->
-        <!-- EXPORTED on purpose: a device-owner install is driven from adb anyway (dpm
-             set-device-owner), so the set-up check has to be reachable the same way:
-             `adb shell am start -n app.anancy/.SetupActivity`. It is read-only diagnostics. -->
-        <!-- Exported for the same reason as SetupActivity: provisioning happens from adb. -->
+        <!-- Reachable from adb (`adb shell am start -n app.anancy/.SetupActivity`) because a
+             device-owner install is driven from a computer, but NOT from other apps: DUMP is held by
+             adb's shell and the system only. The set-up check shows the pairing code and can unpair
+             every remote; the folder picker chooses what the TV reads. -->
         <activity android:name=".FolderPickerActivity" android:exported="true"
+            android:permission="android.permission.DUMP"
             android:theme="@android:style/Theme.Black.NoTitleBar"/>
 
         <activity android:name=".SetupActivity" android:exported="true"
+            android:permission="android.permission.DUMP"
             android:theme="@android:style/Theme.Black.NoTitleBar"/>
 
         <service android:name=".player.AnancyMediaService" android:exported="true">

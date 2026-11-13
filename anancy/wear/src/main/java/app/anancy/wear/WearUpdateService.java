@@ -13,6 +13,7 @@ public class WearUpdateService extends WearableListenerService {
             if (e.getType() != DataEvent.TYPE_CHANGED) continue;
             String path = e.getDataItem().getUri().getPath();
             if (WatchTarget.PATH.equals(path)) { WatchTarget.apply(this, DataMapItem.fromDataItem(e.getDataItem()).getDataMap()); continue; }
+            if (WatchKeys.PATH.equals(path)) { WatchKeys.apply(this, DataMapItem.fromDataItem(e.getDataItem()).getDataMap()); continue; }
             if (!WearUpdater.PATH_UPDATE.equals(path)) continue;
             WearUpdater.consider(this, DataMapItem.fromDataItem(e.getDataItem()));   // copies; safe after the buffer is released
         }

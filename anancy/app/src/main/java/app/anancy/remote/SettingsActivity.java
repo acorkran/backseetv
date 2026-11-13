@@ -127,6 +127,16 @@ public class SettingsActivity extends Activity {
         note("Loop forever keeps the queue going round; stop turns the TV off after the last item, like the sleep timer. Shuffle is per queue — toggle it from a remote's Up next screen.");
 
         // --- Connection ------------------------------------------------------------------------
+        section("Remotes");
+        actionRow("Pair a remote", "show code", () -> startActivity(new Intent(this, QrShareActivity.class)
+                .putExtra(QrShareActivity.EXTRA_PAIR_KEY, true)));
+        note("A phone or watch can only control this TV after scanning this code on its screen. On the phone: "
+                + "open BackSeeTV, tap Pair a screen, and scan it.");
+        actionRow("Unpair all remotes", "unpair", () -> new android.app.AlertDialog.Builder(this).setTitle("Unpair all remotes?")
+                .setMessage("Every phone and watch paired with this TV stops working with it until it scans the pairing code again.")
+                .setPositiveButton("Unpair all", (d, w) -> { app.anancy.Pairing.resetMyKey(this); toast("All remotes unpaired"); })
+                .setNegativeButton("Cancel", null).show());
+
         section("Connection level");
         final String mode = Cfg.getStr(this, "anancy_conn", "ble");
         for (final String[] m : CONN_MODES) {
@@ -192,7 +202,7 @@ public class SettingsActivity extends Activity {
         section("Media");
         { String md = Cfg.getStr(this, "anancy_media_dir", "");
           TextView mv = new TextView(this);
-          mv.setText(md.isEmpty() ? "Scanning the default folders: Anancy, KidsTV, Kidodi (on internal storage and any card)."
+          mv.setText(md.isEmpty() ? "Scanning BackSeeTV-Media folders on internal storage and any card."
                                   : md);
           mv.setTextColor(SUB); mv.setTextSize(13); mv.setPadding(dp(4), dp(2), dp(4), dp(6)); col.addView(mv);
           actionRow("Media folder", "change", () -> startActivity(new Intent(this, app.anancy.FolderPickerActivity.class)));
@@ -210,6 +220,17 @@ public class SettingsActivity extends Activity {
         lp.setMargins(0, dp(24), 0, 0); back.setLayoutParams(lp);
         back.setOnClickListener(v -> finish());
         col.addView(back);
+        if (!"remote".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", ""))) {
+            // Leaving the kiosk for the tablet's own home screen (it was in the old grown-up menu).
+            Button exit = new Button(this); exit.setText("Exit to the tablet's home screen"); exit.setAllCaps(false); exit.setTextSize(16);
+            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+            elp.setMargins(0, dp(10), 0, dp(16)); exit.setLayoutParams(elp);
+            exit.setOnClickListener(v -> {
+                if (app.anancy.player.PlayerActivity.exitToLauncher()) finish();
+                else toast("The show isn't running");
+            });
+            col.addView(exit);
+        }
     }
 
     private void postRebuild() { col.postDelayed(() -> { build(); refreshStatus(); }, 800); }
@@ -348,7 +369,7 @@ public class SettingsActivity extends Activity {
     private void loopback(final String path) {
         new Thread(() -> {
             java.net.HttpURLConnection c = null;
-            try { c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:8090" + path).openConnection(); c.setConnectTimeout(1500); c.setReadTimeout(1500); c.getResponseCode(); }
+            try { c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:8090" + path).openConnection(); c.setConnectTimeout(1500); c.setReadTimeout(1500); app.anancy.Pairing.sign(this, c); c.getResponseCode(); }
             catch (Exception ignored) {} finally { if (c != null) c.disconnect(); }
         }).start();
     }
@@ -362,6 +383,7 @@ public class SettingsActivity extends Activity {
             try {
                 java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:8090/state").openConnection();
                 c.setConnectTimeout(1500); c.setReadTimeout(1500);
+                app.anancy.Pairing.sign(this, c);
                 java.io.InputStream in = c.getInputStream(); java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
                 byte[] buf = new byte[2048]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); in.close();
                 JSONObject o = new JSONObject(bo.toString("UTF-8"));

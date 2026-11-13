@@ -54,6 +54,25 @@ public class BleServer {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Set<BluetoothDevice> subs = new HashSet<>();
 
+    // --- pairing: who has proved they hold this TV's key (net/PairCrypto) ---------------------------
+    // A remote must answer a challenge before it gets ANY state, still or command through. Unproven
+    // links are dropped after AUTH_TIMEOUT_MS, so a stranger's phone can't even sit connected.
+    static final long AUTH_TIMEOUT_MS = 15_000;
+    private final java.util.Map<String, String> authed = new java.util.concurrent.ConcurrentHashMap<>();    // address -> client id
+    private final java.util.Map<String, String> clientOf = new java.util.concurrent.ConcurrentHashMap<>();  // address -> claimed client id
+    private final java.util.Map<String, String> challenge = new java.util.concurrent.ConcurrentHashMap<>(); // address -> our nonce
+    // After the handshake every message both ways is sealed with a per-session key (PairCrypto.sessionKey),
+    // so a listener can't read a still and someone relaying the handshake can't inject a command.
+    private final java.util.Map<String, byte[]> session = new java.util.concurrent.ConcurrentHashMap<>();   // address -> session key
+    private final java.util.Map<String, Long> lastCounter = new java.util.concurrent.ConcurrentHashMap<>(); // address -> highest command counter
+    private boolean isAuthed(BluetoothDevice d) { return d != null && authed.containsKey(d.getAddress()) && session.containsKey(d.getAddress()); }
+    /** Subscribers that have proved themselves: the only ones anything is ever sent to. */
+    private Set<BluetoothDevice> trusted() {
+        Set<BluetoothDevice> t = new HashSet<>();
+        for (BluetoothDevice d : subs) if (isAuthed(d)) t.add(d);
+        return t;
+    }
+
     private BluetoothGattServer gatt;
     private BluetoothLeAdvertiser adv;
     private AdvertiseCallback advCb;
@@ -102,6 +121,7 @@ public class BleServer {
         gatt.addService(svc);
 
         startAdvertising(ad);
+        app.anancy.Pairing.onKeyReset = () -> main.post(this::dropAllSessions);
         // Notify on CHANGE (+ a 10s heartbeat), not every second: each notification wakes the watch's
         // SoC, and 3600 wakeups/hour all night is what flattened it. position/sleep countdowns are
         // excluded from the change signature — remotes interpolate those locally.
@@ -139,8 +159,18 @@ public class BleServer {
 
     private final BluetoothGattServerCallback serverCb = new BluetoothGattServerCallback() {
         @Override public void onConnectionStateChange(BluetoothDevice dev, int status, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                final BluetoothDevice d = dev;
+                main.postDelayed(() -> {   // never proved itself: drop it
+                    if (!isAuthed(d) && gatt != null) {
+                        Log.w(TAG, "BLE " + d.getAddress() + " didn't pair in time, dropping");
+                        try { gatt.cancelConnection(d); } catch (Exception ignored) {}
+                    }
+                }, AUTH_TIMEOUT_MS);
+            }
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 subs.remove(dev);
+                forget(dev.getAddress());
                 // A remote that vanished mid-"camble:on" can't send camble:off: with nobody subscribed,
                 // stop the BLE still pipeline (and the camera behind it) instead of running it forever.
                 final String addr = dev.getAddress();
@@ -150,10 +180,33 @@ public class BleServer {
         }
         @Override public void onCharacteristicWriteRequest(BluetoothDevice dev, int rid, BluetoothGattCharacteristic ch,
                 boolean prep, boolean resp, int off, byte[] val) {
-            if (Ble.CMD.equals(ch.getUuid()) && val != null) { String cmd = new String(val).trim(); Log.i(TAG, "BLE cmd: " + cmd);
-                if (cmd.startsWith("camble:")) setCamble(dev.getAddress(), "on".equals(cmd.substring(7).trim())); else exec(cmd); }
-                main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
             if (resp && gatt != null) gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, null);
+            if (!Ble.CMD.equals(ch.getUuid()) || val == null) return;
+            final BluetoothDevice d = dev;
+            if (!isAuthed(dev)) {   // only the handshake, in the clear
+                final String hs = new String(val).trim();
+                if (hs.startsWith("hello:") || hs.startsWith("auth:")) main.post(() -> onAuthCmd(d, hs));
+                else Log.w(TAG, "BLE cmd from unpaired " + dev.getAddress() + " ignored");
+                return;
+            }
+            String[] opened = PairCrypto.openCommand(session.get(dev.getAddress()), val);
+            if (opened == null) {
+                // The phone restarted its Bluetooth client over the same link: Android reuses the
+                // connection, so we never saw it drop and still hold the old session. A fresh hello
+                // starts a new handshake (it proves nothing by itself; the key is still needed).
+                String hs = new String(val).trim();
+                if (hs.startsWith("hello:")) { forget(dev.getAddress()); main.post(() -> onAuthCmd(d, hs)); return; }
+                Log.w(TAG, "BLE " + dev.getAddress() + ": a command that didn't open, ignored");
+                return;
+            }
+            long n = Long.parseLong(opened[0]);
+            Long last = lastCounter.get(dev.getAddress());
+            if (last != null && n <= last) { Log.w(TAG, "BLE " + dev.getAddress() + ": replayed command, ignored"); return; }
+            lastCounter.put(dev.getAddress(), n);
+            final String cmd = opened[1].trim();
+            Log.i(TAG, "BLE cmd: " + (cmd.startsWith("wifi") || cmd.startsWith("grant:") ? cmd.substring(0, cmd.indexOf(':') + 1) + "<secret>" : cmd));
+            if (cmd.startsWith("camble:")) setCamble(dev.getAddress(), "on".equals(cmd.substring(7).trim())); else exec(cmd);
+            main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
         }
         @Override public void onDescriptorWriteRequest(BluetoothDevice dev, int rid, BluetoothGattDescriptor desc,
                 boolean prep, boolean resp, int off, byte[] val) {
@@ -164,10 +217,68 @@ public class BleServer {
             if (resp && gatt != null) gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, null);
         }
         @Override public void onCharacteristicReadRequest(BluetoothDevice dev, int rid, int off, BluetoothGattCharacteristic ch) {
-            if (Ble.STATE.equals(ch.getUuid()) && gatt != null)
-                gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, ctrl.stateJson(true).getBytes());
+            if (Ble.STATE.equals(ch.getUuid()) && gatt != null) {
+                byte[] v = "{}".getBytes();   // state only travels sealed, in notifications
+                gatt.sendResponse(dev, rid, BluetoothGatt.GATT_SUCCESS, off, v);
+            }
         }
     };
+
+    /** hello:<client> -> we send a challenge. auth:<proof>:<their nonce> -> we check it and prove ourselves. */
+    private void onAuthCmd(BluetoothDevice d, String cmd) {
+        String addr = d.getAddress(), tvId = Identity.id(ctx), key = app.anancy.Pairing.myKey(ctx);
+        if (cmd.startsWith("hello:")) {
+            String client = cmd.substring(6).trim();
+            String n = PairCrypto.nonce();
+            clientOf.put(addr, client); challenge.put(addr, n);
+            notifyOne(d, "{\"type\":\"auth\",\"id\":\"" + tvId + "\",\"n\":\"" + n + "\"}");
+            return;
+        }
+        String[] p = cmd.substring(5).split(":");
+        String n = challenge.remove(addr), client = clientOf.get(addr);
+        boolean ok = p.length == 2 && n != null && client != null
+                && PairCrypto.same(PairCrypto.remoteProof(key, tvId, n, client), p[0]) && p[1].length() == 32;
+        if (!ok) {
+            Log.w(TAG, "BLE " + addr + " failed pairing (" + client + ")");
+            notifyOne(d, "{\"type\":\"authfail\",\"id\":\"" + tvId + "\"}");
+            main.postDelayed(() -> { try { if (gatt != null) gatt.cancelConnection(d); } catch (Exception ignored) {} }, 400);
+            return;
+        }
+        session.put(addr, PairCrypto.sessionKey(key, tvId, n, p[1]));
+        lastCounter.remove(addr);
+        authed.put(addr, client);
+        app.anancy.Pairing.markPaired(ctx);
+        Log.i(TAG, "BLE " + addr + " paired (" + client + ")");
+        notifyOne(d, "{\"type\":\"authok\",\"p\":\"" + PairCrypto.tvProof(key, tvId, p[1]) + "\"}");
+        main.postDelayed(this::pushState, 200);
+    }
+    /** A notification to ONE device in the clear: only ever the handshake. */
+    private void notifyOne(BluetoothDevice d, String json) { notifyRaw(d, stateChar, json.getBytes()); }
+    private boolean notifyRaw(BluetoothDevice d, BluetoothGattCharacteristic ch, byte[] v) {
+        if (gatt == null || ch == null) return false;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 33) return gatt.notifyCharacteristicChanged(d, ch, false, v) == BluetoothGatt.GATT_SUCCESS;
+            ch.setValue(v); return gatt.notifyCharacteristicChanged(d, ch, false);
+        } catch (Exception e) { return false; }
+    }
+    /** State to every paired device, each sealed with its own session key. */
+    private void notifyTrusted(String json) {
+        if (json == null) return;
+        byte[] plain = json.getBytes();
+        for (BluetoothDevice d : trusted()) {
+            byte[] k = session.get(d.getAddress());
+            if (k != null) notifyRaw(d, stateChar, PairCrypto.sealBytes(k, plain));
+        }
+    }
+    private void forget(String addr) {
+        authed.remove(addr); clientOf.remove(addr); challenge.remove(addr); session.remove(addr); lastCounter.remove(addr);
+    }
+    /** "Unpair all remotes": end every live session now, not when it next disconnects. */
+    private void dropAllSessions() {
+        for (String addr : new java.util.ArrayList<>(authed.keySet())) forget(addr);
+        if (gatt == null) return;
+        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.cancelConnection(d); } catch (Exception ignored) {}
+    }
 
     private void exec(String cmd) {
         if (cmd.startsWith("sleep:")) {   // variable sleep timer: "sleep:15"
@@ -218,11 +329,20 @@ public class BleServer {
             return;
         }
         // --- connectivity level ---
-        if (cmd.equals("rescan")) { ctrl.rescan(ctx); return; }   // re-read the media folders (hand-copied media)
+        if (cmd.equals("rescan")) { ctrl.rescan(ctx); return; }
+        if (cmd.startsWith("grant:")) {   // grant:<id>:<ip>:<key sealed with OUR key> -> may now stream from that TV
+            String[] g = cmd.substring(6).split(":", 3);
+            String k = g.length == 3 ? app.anancy.Pairing.openMine(ctx, g[2]) : null;
+            if (k != null) { app.anancy.Pairing.remember(ctx, g[0], "", k); app.anancy.Pairing.noteHost(ctx, g[1], g[0]); }
+            return;
+        }   // re-read the media folders (hand-copied media)
         if (cmd.equals("conn")) { pushJson(ctrl.connJson()); return; }
         if (cmd.startsWith("conn:")) { HotspotService.applyMode(ctx, cmd.substring(5).trim()); pushJson(ctrl.connJson()); return; }
-        if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS -> the TV joins (device owner = silent)
-            String[] sp = cmd.substring(5).split("\t", 2);
+        if (cmd.startsWith("wifi:") || cmd.startsWith("wifix:")) {   // SSID<TAB>PASS -> the TV joins (device owner = silent)
+            // wifix: is sealed with this TV's key, so a password never crosses the air in the clear.
+            String body = cmd.startsWith("wifix:") ? app.anancy.Pairing.openMine(ctx, cmd.substring(6).trim()) : cmd.substring(5);
+            if (body == null) { Log.w(TAG, "BLE wifix: couldn't open"); return; }
+            String[] sp = body.split("\t", 2);
             WifiJoiner.Creds cr = new WifiJoiner.Creds();
             cr.ssid = sp[0].trim(); cr.pass = sp.length > 1 ? sp[1] : ""; cr.type = cr.pass.isEmpty() ? "nopass" : "WPA";
             WifiJoiner.join(ctx, cr); return;
@@ -249,8 +369,7 @@ public class BleServer {
     /** One-shot typed payload on the STATE characteristic (library / episodes / conn pages). */
     private void pushJson(String json) {
         if (gatt == null || stateChar == null || subs.isEmpty() || json == null) return;
-        stateChar.setValue(json.getBytes());
-        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+        notifyTrusted(json);
     }
 
     /** Toggle BLE reduced-res still delivery for one client (a repeated "on" counts once). While ≥1 client wants it,
@@ -284,18 +403,19 @@ public class BleServer {
             // robust to out-of-order/duplicate BLE notifications (that was corrupting the still). START also
             // carries the total length. Retry a notify that the stack rejects (buffer full) instead of dropping.
             for (int off = 0; off < jpeg.length; ) {
-                int n = Math.min(CHUNK - 5, jpeg.length - off);
+                int n = Math.min(CHUNK - 5 - PairCrypto.SEAL_OVERHEAD, jpeg.length - off);   // room for the seal
                 byte[] frame = new byte[5 + n];
                 int h = off == 0 ? jpeg.length : off;         // START header = total len; DATA header = offset
                 frame[0] = (byte) (off == 0 ? 0x01 : 0x02);
                 frame[1] = (byte) ((h >> 24) & 0xFF); frame[2] = (byte) ((h >> 16) & 0xFF);
                 frame[3] = (byte) ((h >> 8) & 0xFF);  frame[4] = (byte) (h & 0xFF);
                 System.arraycopy(jpeg, off, frame, 5, n);
-                imgChar.setValue(frame);
-                for (BluetoothDevice d : new HashSet<>(subs)) {
+                for (BluetoothDevice d : trusted()) {
+                    byte[] k = session.get(d.getAddress());
+                    if (k == null) continue;
+                    byte[] sealed = PairCrypto.sealBytes(k, frame);   // a still of a child never crosses the air in the clear
                     for (int retry = 0; retry < 12; retry++) {
-                        boolean ok = false;
-                        try { ok = gatt.notifyCharacteristicChanged(d, imgChar, false); } catch (Exception ignored) {}
+                        boolean ok = notifyRaw(d, imgChar, sealed);
                         if (ok) break;
                         try { Thread.sleep(8); } catch (InterruptedException e) { return; }   // stack buffer full -> back off + retry
                     }
@@ -315,30 +435,26 @@ public class BleServer {
         long now = System.currentTimeMillis();
         if (sig.equals(lastSig) && now - lastPushMs < HEARTBEAT_MS) return;
         lastSig = sig; lastPushMs = now;
-        stateChar.setValue(json.getBytes());
-        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+        notifyTrusted(json);
     }
     /** Immediate push (after a command) so the remote that sent it sees the result at once. */
     private void pushState() {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
         String json = ctrl.stateJson(true);
         lastSig = json.replaceAll("\"(position_ms|sleep_remaining_ms)\":-?\\d+", ""); lastPushMs = System.currentTimeMillis();
-        stateChar.setValue(json.getBytes());
-        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+        notifyTrusted(json);
     }
 
     private void pushPlaylists() { pushPlaylists(0); }
     private void pushPlaylists(int from) {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.playlistsJson(from, BLE_JSON_MAX).getBytes());
-        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+        notifyTrusted(ctrl.playlistsJson(from, BLE_JSON_MAX));
     }
     /** A window of the queue around the current item (±4 -> fits one MTU); Wi-Fi /queue gives the full list. */
     private void pushQueue() { pushQueue(-1); }
     private void pushQueue(int from) {
         if (gatt == null || stateChar == null || subs.isEmpty()) return;
-        stateChar.setValue(ctrl.queuePageJson(from, BLE_JSON_MAX, 34).getBytes());   // a PAGE, not a fixed window
-        for (BluetoothDevice d : new HashSet<>(subs)) try { gatt.notifyCharacteristicChanged(d, stateChar, false); } catch (Exception ignored) {}
+        notifyTrusted(ctrl.queuePageJson(from, BLE_JSON_MAX, 34));   // a PAGE, not a fixed window
     }
 
     public void stop() {

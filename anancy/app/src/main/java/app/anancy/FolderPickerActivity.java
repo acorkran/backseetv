@@ -94,7 +94,7 @@ public class FolderPickerActivity extends Activity {
         if (cur == null) {
             crumb.setText("Pick a storage device, then the folder your shows are in.");
             for (File v : volumes()) row(v.getName().isEmpty() ? v.getAbsolutePath() : labelFor(v), v.getAbsolutePath(), true, () -> { cur = v; render(); });
-            rowPlain("Use the default folders instead", "Scan any folder named Anancy, KidsTV or Kidodi.", () -> {
+            rowPlain("Use the default folders instead", "Scan any folder named BackSeeTV-Media.", () -> {
                 Cfg.applyConfig(this, "anancy_media_dir", "");
                 rescan(); toast("Using the default folders"); finish();
             });

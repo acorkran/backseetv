@@ -52,7 +52,13 @@ public class BleClient {
 
     public BleClient(Context c, Listener l) { this.ctx = c.getApplicationContext(); this.l = l; }
 
-    public boolean isConnected() { return connected; }
+    public boolean isConnected() { return connected && authed; }
+    // Pairing (see PairCrypto): only TVs whose key the phone gave us, and only once both sides proved it.
+    private volatile boolean authed = false, helloSent = false;
+    private volatile String myNonce, tvNonce;
+    private volatile byte[] sk; private long ctr = 0;   // session key + command counter, once paired
+    private volatile long connectedAt = 0;
+    private final java.util.Map<String, String> rejected = new java.util.concurrent.ConcurrentHashMap<>();   // id -> refused key
 
     // Which TVs we may connect to (null = any): set from what the phone says (WatchTarget). Every player
     // puts "<id>:<name>" in its scan response under manufacturer id 0xFFFF (the phone's BleServer.MFG_ID).
@@ -62,10 +68,11 @@ public class BleClient {
     public void setAllowed(java.util.Set<String> ids) {
         allowed = ids;
         String cur = connectedId;
-        if (ids != null && gatt != null && (cur == null || !ids.contains(cur))) {   // linked to the wrong TV now
+        boolean noKey = gatt != null && WatchKeys.keyFor(ctx, cur) == null;   // the phone forgot this TV
+        if (gatt != null && (noKey || (ids != null && (cur == null || !ids.contains(cur))))) {   // linked to the wrong TV now
             Log.i(TAG, "dropping " + cur + ": the phone points at " + ids);
             BluetoothGatt g = gatt;
-            gatt = null; connected = false; discovered = false; cmdCh = null; stateCh = null;
+            gatt = null; connected = false; authed = false; discovered = false; cmdCh = null; stateCh = null;
             try { g.disconnect(); g.close(); } catch (Exception ignored) {}
             status("switching TV…");
             if (!stopped) retryLater(500);
@@ -109,6 +116,8 @@ public class BleClient {
                 String id = tvId(r);
                 java.util.Set<String> ok = allowed;
                 if (ok != null && (id == null || !ok.contains(id))) return;   // not a TV the phone pointed us at
+                String key = WatchKeys.keyFor(ctx, id);
+                if (key == null || key.equals(rejected.get(id))) return;    // not paired (another family's TV)
                 connectedId = id;
                 scanning = false;
                 status("connecting...");
@@ -158,13 +167,14 @@ public class BleClient {
     private final BluetoothGattCallback gattCb = new BluetoothGattCallback() {
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connected = true; discovered = false; reconnectDelay = 2500; quickRetries = 0; status("negotiating...");
+                connected = true; authed = false; helloSent = false; connectedAt = System.currentTimeMillis();
+                discovered = false; reconnectDelay = 2500; quickRetries = 0; status("negotiating...");
                 g.requestMtu(512);
                 // fallback: discover even if onMtuChanged doesn't re-fire on a reconnect
                 main.postDelayed(() -> { if (gatt != null && !discovered) gatt.discoverServices(); }, 900);
             }
             else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                connected = false; cmdCh = null; stateCh = null;
+                connected = false; authed = false; cmdCh = null; stateCh = null;
                 try { g.close(); } catch (Exception ignored) {}
                 gatt = null;
                 // A phone that is also this watch's companion often answers the first LE connects with
@@ -200,21 +210,61 @@ public class BleClient {
                 if (cccd != null) { cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); g.writeDescriptor(cccd); }
             }
             lastStateMs = System.currentTimeMillis();   // grace so the watchdog waits for first push
-            status("ready");
+            status("pairing…");
+            main.postDelayed(BleClient.this::sendHello, 1500);   // fallback if a CCCD callback never comes
         }
         // The GATT queue does one write at a time: subscribe to IMG only AFTER the STATE CCCD lands.
         @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int st) {
             if (d != null && d.getCharacteristic() != null && Ble.STATE.equals(d.getCharacteristic().getUuid()) && stillCh != null) {
                 g.setCharacteristicNotification(stillCh, true);
                 BluetoothGattDescriptor c = stillCh.getDescriptor(Ble.CCCD);
-                if (c != null) { c.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); g.writeDescriptor(c); }
+                if (c != null) { c.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); g.writeDescriptor(c); return; }
             }
+            main.post(BleClient.this::sendHello);
         }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch) { deliver(ch.getUuid(), ch.getValue()); }
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic ch, byte[] value) { deliver(ch.getUuid(), value); }
     };
 
+    private void sendHello() {
+        if (helloSent || authed || !connected || gatt == null || cmdCh == null) return;
+        helloSent = true;
+        writeRaw("hello:" + WatchKeys.clientId(ctx));
+    }
+    /** The handshake, same as the phone's (see the app's BleServer.onAuthCmd). */
+    private void onAuthMsg(String s) {
+        if (!s.contains("\"type\":\"auth")) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(s);
+            String type = o.optString("type"), id = connectedId, key = WatchKeys.keyFor(ctx, id);
+            if ("auth".equals(type)) {
+                if (id == null || !id.equals(o.optString("id")) || key == null) { dropLink("wrong TV"); return; }
+                myNonce = PairCrypto.nonce(); tvNonce = o.optString("n");
+                writeRaw("auth:" + PairCrypto.remoteProof(key, id, o.optString("n"), WatchKeys.clientId(ctx)) + ":" + myNonce);
+            } else if ("authok".equals(type)) {
+                if (key == null || myNonce == null || !PairCrypto.same(PairCrypto.tvProof(key, id, myNonce), o.optString("p"))) { dropLink("TV couldn't prove its key"); return; }
+                sk = PairCrypto.sessionKey(key, id, tvNonce, myNonce); ctr = 0;
+                authed = true; lastStateMs = System.currentTimeMillis();
+                status("ready");
+            } else if ("authfail".equals(type)) {
+                if (key != null && id != null) rejected.put(id, key);
+                dropLink("key rejected");
+            }
+        } catch (Exception ignored) {}
+    }
+    private void dropLink(String why) {
+        Log.w(TAG, "drop: " + why);
+        BluetoothGatt g = gatt;
+        gatt = null; connected = false; authed = false; discovered = false; cmdCh = null; stateCh = null;
+        try { if (g != null) { g.disconnect(); g.close(); } } catch (Exception ignored) {}
+        status("not paired — pair this TV on the phone");
+        if (!stopped) retryLater(reconnectDelay);
+    }
+
     private void deliver(java.util.UUID uuid, byte[] v) {
+        if (v == null) return;
+        if (!authed) { if (Ble.STATE.equals(uuid)) onAuthMsg(new String(v)); return; }
+        v = PairCrypto.openBytes(sk, v);   // sealed with the session key after the handshake
         if (v == null) return;
         if (Ble.STATE.equals(uuid)) { lastStateMs = System.currentTimeMillis(); final String s = new String(v); main.post(() -> l.onState(s)); return; }
         if (Ble.IMG.equals(uuid)) onImgChunk(v);
@@ -257,6 +307,8 @@ public class BleClient {
             if (stopped) return;
             if (!connected) {
                 if (!scanning) start();   // a BT toggle kills scans with no callback -> retry (scan itself is idempotent)
+            } else if (!authed && connectedAt > 0 && System.currentTimeMillis() - connectedAt > 20_000) {
+                dropLink("handshake timed out");
             } else if (connected && lastStateMs > 0 && System.currentTimeMillis() - lastStateMs > 25_000) {
                 connected = false; discovered = false; cmdCh = null; stateCh = null;
                 try { if (gatt != null) gatt.close(); } catch (Exception ignored) {}
@@ -269,8 +321,15 @@ public class BleClient {
     }
 
     public void send(String cmd) {
+        if (!authed || sk == null || gatt == null || cmdCh == null) return;
+        byte[] sealed;
+        synchronized (this) { sealed = PairCrypto.sealCommand(sk, ++ctr, cmd); }
+        writeBytes(sealed);
+    }
+    private void writeRaw(String cmd) { writeBytes(cmd.getBytes()); }
+    private void writeBytes(byte[] b) {
         if (gatt == null || cmdCh == null) return;
-        cmdCh.setValue(cmd.getBytes());
+        cmdCh.setValue(b);
         cmdCh.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
         gatt.writeCharacteristic(cmdCh);
     }

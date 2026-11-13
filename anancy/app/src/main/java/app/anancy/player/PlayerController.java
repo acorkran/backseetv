@@ -19,6 +19,7 @@ import app.anancy.net.HotspotService;
 //  naturalItems is the loaded playlist's canonical order for un-shuffling.
 // ============================================================================
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.net.Uri;
 import android.media.AudioManager;
@@ -256,14 +257,17 @@ public class PlayerController {
     }
 
     private static String enc(String s) { try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; } }
-    private static String httpGet(String url) throws Exception {
+    /** GET from another TV (the leader / library host), signed with the key a remote granted us. The
+        answer only counts if that TV proves it sent it. */
+    private String httpGet(String url) throws Exception {
         java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
         c.setConnectTimeout(3000); c.setReadTimeout(4000);
         try {
-            java.io.InputStream in = c.getInputStream();
-            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
-            byte[] b = new byte[4096]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n);
-            return bo.toString("UTF-8");
+            if (appCtx == null) throw new java.io.IOException("no context");
+            app.anancy.Pairing.sign(appCtx, c);
+            String r = app.anancy.Pairing.fetch(appCtx, c);
+            if (r == null) throw new java.io.IOException("no genuine answer from " + c.getURL().getHost() + " (not paired with it?)");
+            return r;
         } finally { c.disconnect(); }
     }
 
@@ -655,6 +659,23 @@ public class PlayerController {
         return was;
     }
     /** Starts quickly, which group start-up depends on. The defaults wait for 2.5s of video (5s after a stall). */
+    /** Media sources whose HTTP requests (a follower streaming from its leader's /media) are signed
+        with the key for that TV. Each open, including every seek's range request, gets a fresh nonce. */
+    @SuppressLint("UnsafeOptInUsageError")
+    public static androidx.media3.exoplayer.source.MediaSource.Factory mediaSources(Context ctx) {
+        final Context actx = ctx.getApplicationContext();
+        androidx.media3.datasource.DataSource.Factory up = new androidx.media3.datasource.DefaultDataSource.Factory(actx);
+        androidx.media3.datasource.DataSource.Factory signed = new androidx.media3.datasource.ResolvingDataSource.Factory(up, spec -> {
+            if (!"http".equalsIgnoreCase(spec.uri.getScheme())) return spec;
+            String h = app.anancy.Pairing.headerFor(actx, spec.uri.toString(), "GET");
+            if (h == null) return spec;
+            java.util.Map<String, String> m = new java.util.HashMap<>();
+            m.put(app.anancy.net.PairCrypto.HEADER, h);
+            return spec.withAdditionalHeaders(m);
+        });
+        return new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(signed);
+    }
+
     public static androidx.media3.exoplayer.LoadControl loadControl() {
         return new androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(30000, 50000, 1000, 2000).build();
     }

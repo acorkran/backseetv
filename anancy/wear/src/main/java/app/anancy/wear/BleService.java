@@ -88,6 +88,7 @@ public class BleService extends Service {
         ble.setAllowed(WatchTarget.allowed(this));
         ble.start();   // idempotent while scanning/connected
         WatchTarget.refresh(this);   // the phone may have re-aimed us while we weren't running
+        WatchKeys.refresh(this);     // ...or paired with a new TV
     }
 
     /** The phone changed what this watch should drive (WatchTarget). */

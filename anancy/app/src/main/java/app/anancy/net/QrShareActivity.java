@@ -24,6 +24,10 @@ public class QrShareActivity extends Activity {
     /** TV side: build the pairing payload ourselves, raising the hotspot if it isn't up yet.
         `adb shell am start -n app.anancy/.net.QrShareActivity --ez pair true` */
     public static final String EXTRA_PAIR = "pair";
+    /** TV side: show the pairing code straight away (Bluetooth needs no hotspot). With EXTRA_FIRST_RUN
+        the screen closes itself once a remote has paired. */
+    public static final String EXTRA_PAIR_KEY = "pairkey";
+    public static final String EXTRA_FIRST_RUN = "firstrun";
 
     private ImageView iv; private TextView cap; private int side;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -42,9 +46,9 @@ public class QrShareActivity extends Activity {
             sb.append("pass=").append(QrParse.enc(pass == null ? "" : pass)).append(';');
         }
         sb.append("name=").append(QrParse.enc(app.anancy.Identity.name(ctx))).append(';');
-        sb.append("id=").append(QrParse.enc(app.anancy.Identity.id(ctx)));
-        boolean usable = (ip != null && !ip.isEmpty()) || (ssid != null && !ssid.isEmpty());
-        return usable ? sb.toString() : null;
+        sb.append("id=").append(QrParse.enc(app.anancy.Identity.id(ctx))).append(';');
+        sb.append("key=").append(app.anancy.Pairing.myKey(ctx));   // whoever can see this screen may pair
+        return sb.toString();
     }
 
     @Override protected void onCreate(Bundle b) {
@@ -52,6 +56,20 @@ public class QrShareActivity extends Activity {
         String payload = getIntent() != null ? getIntent().getStringExtra(EXTRA_PAYLOAD) : null;
         String caption = getIntent() != null ? getIntent().getStringExtra(EXTRA_CAPTION) : null;
         final boolean pair = getIntent() != null && getIntent().getBooleanExtra(EXTRA_PAIR, false);
+        final boolean pairKey = getIntent() != null && getIntent().getBooleanExtra(EXTRA_PAIR_KEY, false);
+        final boolean firstRun = getIntent() != null && getIntent().getBooleanExtra(EXTRA_FIRST_RUN, false);
+        if (pairKey) {
+            payload = pairingPayload(this);
+            caption = "To pair a phone: open BackSeeTV on it, tap Pair a screen, and scan this.";
+            // The key is on screen: keep it out of screenshots and the recents thumbnail.
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        }
+        if (firstRun) {
+            app.anancy.Pairing.onFirstPair = () -> main.post(() -> {
+                android.widget.Toast.makeText(this, "Remote paired", android.widget.Toast.LENGTH_LONG).show();
+                finish();
+            });
+        }
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -89,7 +107,11 @@ public class QrShareActivity extends Activity {
         this.cap = cap;
         setContentView(root);
         app.anancy.SysBars.pad(root);   // keep the nav bar off the content (edge-to-edge)
-        if (pair) { try { HotspotService.start(this, false); } catch (Exception ignored) {} awaitPairing(); }
+        if (pair) {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            try { HotspotService.start(this, false); } catch (Exception ignored) {}
+            awaitPairing();
+        }
     }
 
     /** The hotspot's creds only exist once it is actually up, so poll rather than render an empty
@@ -101,7 +123,7 @@ public class QrShareActivity extends Activity {
         if (p != null && (creds || gaveUp)) {   // an address alone only helps a phone already on this network
             Bitmap qr = QrCode.encode(p, side);
             if (qr != null) iv.setImageBitmap(qr);
-            cap.setText(creds ? "Scan this with the BackSeeTV remote:  Set-up check → Scan the TV's QR"
+            cap.setText(creds ? "To pair a phone: open BackSeeTV on it, tap Pair a screen, and scan this."
                               : "Couldn't start the TV's hotspot. This code only works with the phone on the same Wi-Fi as the TV.");
             return;
         }
@@ -111,7 +133,11 @@ public class QrShareActivity extends Activity {
         main.postDelayed(this::awaitPairing, 700);
     }
 
-    @Override protected void onDestroy() { main.removeCallbacksAndMessages(null); super.onDestroy(); }
+    @Override protected void onDestroy() {
+        main.removeCallbacksAndMessages(null);
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_FIRST_RUN, false)) app.anancy.Pairing.onFirstPair = null;
+        super.onDestroy();
+    }
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 }

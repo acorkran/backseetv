@@ -40,13 +40,16 @@
 
     <div class="unlock-panel" id="unlock-panel" hidden>
       <button class="up-close" id="up-close" aria-label="back to playing">&times;</button>
-      <div id="unlock-view">
-        <div class="up-title">Grown-up unlock</div>
-        <div class="unlock-instr">type this code, no mistakes, within <b><span id="unlock-timer">30</span>s</b></div>
-        <div class="unlock-code" id="unlock-code">· · · · · ·</div>
-        <input class="unlock-input" id="unlock-input" inputmode="numeric" autocomplete="off"
-               maxlength="6" aria-label="unlock code" placeholder="type the code">
-        <div class="unlock-msg" id="unlock-msg"></div>
+      <!-- Its own keypad, never the system keyboard: in landscape that covered the code you had to copy. -->
+      <div id="unlock-view" class="unlock-body">
+        <div class="unlock-left">
+          <div class="up-title">Grown-up unlock</div>
+          <div class="unlock-instr">type this code, no mistakes, within <b><span id="unlock-timer">30</span>s</b></div>
+          <div class="unlock-code" id="unlock-code">· · · · · ·</div>
+          <div class="unlock-typed" id="unlock-typed" aria-label="typed so far"></div>
+          <div class="unlock-msg" id="unlock-msg"></div>
+        </div>
+        <div class="unlock-pad" id="unlock-pad" aria-label="keypad"></div>
       </div>
     </div>
   </div>

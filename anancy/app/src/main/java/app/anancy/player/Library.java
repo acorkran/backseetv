@@ -70,7 +70,7 @@ public final class Library {
         return new java.util.LinkedHashMap<>(sorted);
     }
 
-    /** Where phone->tablet uploads land: <Anancy>/Imports (created). Becomes an "Imports" playlist. */
+    /** Where phone->tablet uploads land: <BackSeeTV-Media>/Imports (created). Becomes an "Imports" playlist. */
     public static File importDir(Context ctx) {
         for (File root : roots(ctx)) if (root.isDirectory()) { File imp = new File(root, "Imports"); imp.mkdirs(); if (imp.isDirectory()) return imp; }
         for (File root : roots(ctx)) { File imp = new File(root, "Imports"); if (imp.mkdirs() || imp.isDirectory()) return imp; }
@@ -93,9 +93,14 @@ public final class Library {
         } catch (Exception e) { Log.w(TAG, "grantStorage: " + e); }
     }
 
-    // Media folder names to scan: the current "Anancy" plus legacy names, so an upgraded/rebranded or
-    // re-provisioned install finds existing media WITHOUT the user moving it (all matches are merged).
-    static final String[] MEDIA_DIRS = { "Anancy", "KidsTV", "Kidodi" };
+    // Media folder names to scan: "BackSeeTV-Media", plus the project's earlier names so a library
+    // copied under an older build is still found WITHOUT the user moving it (all matches are merged).
+    // Only the first is ever shown to users; new folders (Imports) are made under it.
+    // The names, oldest first: KidsTV, the first kiosk, built around Kodi. Kidodi, kids + Kodi.
+    // Anancy, after it left Kodi for its own player: Anansi, the trickster and keeper of stories,
+    // spinning one web across many screens. BackSeeTV: TV for the back seat, and a way to see the
+    // kids through the camera on the Android Auto dash without turning round.
+    static final String[] MEDIA_DIRS = { "BackSeeTV-Media", "Anancy", "KidsTV", "Kidodi" };
     /** Candidate media roots across primary + removable volumes (portable, no hardcoded UUID). */
     /** The same test the scanner uses, so a folder picker can show counts that match reality. */
     public static boolean isVideo(File f) {

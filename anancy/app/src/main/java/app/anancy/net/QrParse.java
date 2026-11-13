@@ -40,7 +40,7 @@ final class QrParse {
     }
 
     /** Everything an ANANCY: pairing QR carries. Any field may be null. */
-    public static class Pair { public String ip, ssid, pass, name, id; }
+    public static class Pair { public String ip, ssid, pass, name, id, key; }
 
     /** ANANCY:ip=..;ssid=..;pass=..;name=..;id=.. -> all of it. The TV emits one QR holding both the
         Wi-Fi credentials AND where to reach it, so a single scan is the whole pairing: join, then
@@ -57,6 +57,7 @@ final class QrParse {
             else if ("pass".equals(k)) p.pass = v;
             else if ("name".equals(k)) p.name = v;
             else if ("id".equals(k)) p.id = v;
+            else if ("key".equals(k)) p.key = v;   // the TV's pairing key: scanning IS the pairing
         }
         return p;
     }

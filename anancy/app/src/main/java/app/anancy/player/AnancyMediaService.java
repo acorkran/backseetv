@@ -141,17 +141,23 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
         @Override public void onSkipToNext()     { activate(); send("next"); }
         @Override public void onSkipToPrevious() { activate(); send("prev"); }
         @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { activate(); play(mediaId); }
-        @Override public void onCustomAction(String action, Bundle extras) { activate(); send(action); }   // action string == command (flash, volup, voldown)
+        @Override public void onCustomAction(String action, Bundle extras) {   // action string == command
+            if (!CUSTOM_ACTIONS.contains(action)) { android.util.Log.w("Anancy", "AA: refused custom action " + action); return; }
+            activate(); send(action);
+        }
         @Override public void onSkipToQueueItem(long id) { activate(); send("jump:" + id); }   // queue item id == absolute index
     };
 
     /** A browse item was tapped, or a custom "act:" fired. */
     private void play(String mediaId) {
         if (mediaId == null) return;
-        if (mediaId.startsWith("pl:"))        send("play:" + mediaId.substring(3));
-        else if (mediaId.startsWith("jump:")) send(mediaId);                             // jump:<absIndex>
+        // Only the ids this service itself hands out. Any app that reaches a media session can call
+        // these, and the strings used to go straight to the TV as commands (Wi-Fi, kiosk settings).
+        if (mediaId.startsWith("pl:"))        send("play:" + mediaId.substring(3).replaceAll("[\\r\\n]", ""));
+        else if (mediaId.matches("jump:\\d{1,6}")) send(mediaId);                         // jump:<absIndex>
         else if (mediaId.equals("act:checkin")) checkIn();                               // camera, for a minute
-        else if (mediaId.startsWith("act:"))  send(mediaId.substring(4));               // an Options action
+        else if (ACTIONS.contains(mediaId))   send(mediaId.substring(4));               // an Options action
+        else { android.util.Log.w("Anancy", "AA: refused media id " + mediaId); return; }
         session.setActive(true);
         main.postDelayed(this::publish, 250);   // reflect the change on the now-playing screen
     }
@@ -322,7 +328,35 @@ public class AnancyMediaService extends MediaBrowserServiceCompat {
     private static String ellipsize(String s, int n) { return s.length() <= n ? s : s.substring(0, n - 1) + "…"; }
 
     // --- browse tree -----------------------------------------------------------------------------
+    /** The custom actions on the now-playing screen, and the Options entries: nothing else is sent. */
+    static final java.util.Set<String> CUSTOM_ACTIONS = new java.util.HashSet<>(java.util.Arrays.asList("flash", "volup", "voldown"));
+    static final java.util.Set<String> ACTIONS = new java.util.HashSet<>();
+    static {
+        ACTIONS.addAll(java.util.Arrays.asList("act:power", "act:wake", "act:playmode:on", "act:playmode:off"));
+        for (int m = 5; m <= 60; m += 5) ACTIONS.add("act:sleep:" + m);
+    }
+
+    /** Who may browse (and so drive the TV and see the camera through) this service: Android Auto,
+        the system, and this app. It used to answer every app on the phone, which made any app a
+        remote with this phone's pairing. */
+    static boolean trustedCaller(android.content.Context ctx, String pkg, int uid) {
+        if (uid == android.os.Process.myUid() || uid == android.os.Process.SYSTEM_UID) return true;
+        if (!"com.google.android.projection.gearhead".equals(pkg)) return false;
+        try {
+            android.content.pm.PackageManager pm = ctx.getPackageManager();
+            String[] owners = pm.getPackagesForUid(uid);
+            if (owners == null || !java.util.Arrays.asList(owners).contains(pkg)) return false;   // the uid really is that package
+            android.content.pm.ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+            if ((ai.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) return true;   // preinstalled
+            // Installed from Play otherwise: a sideloaded app can't take that name from the real one.
+            String inst = android.os.Build.VERSION.SDK_INT >= 30
+                    ? pm.getInstallSourceInfo(pkg).getInstallingPackageName() : pm.getInstallerPackageName(pkg);
+            return "com.android.vending".equals(inst);
+        } catch (Exception e) { return false; }
+    }
+
     @Override public BrowserRoot onGetRoot(@NonNull String pkg, int uid, @Nullable Bundle hints) {
+        if (!trustedCaller(this, pkg, uid)) { android.util.Log.w("Anancy", "AA: refused browser connection from " + pkg); return null; }
         Bundle x = new Bundle();
         x.putBoolean(KEY_CONTENT_STYLE_SUPPORTED, true);
         x.putInt(MediaConstants.DESCRIPTION_EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, GRID);   // browsable default: tiles

@@ -376,29 +376,45 @@
   // ---- timed 6-digit adult unlock ----
   var aBtn = document.getElementById("adult-unlock-btn"), panel = document.getElementById("unlock-panel"),
       closeBtn = document.getElementById("up-close"), codeEl = document.getElementById("unlock-code"),
-      inp = document.getElementById("unlock-input"), timerEl = document.getElementById("unlock-timer"), msg = document.getElementById("unlock-msg");
-  var code = "", remaining = 30, tick = null;
+      typedEl = document.getElementById("unlock-typed"), pad = document.getElementById("unlock-pad"),
+      timerEl = document.getElementById("unlock-timer"), msg = document.getElementById("unlock-msg");
+  var code = "", typed = "", remaining = 30, tick = null;
+  function showTyped() { if (typedEl) typedEl.textContent = typed.split("").join(" "); }
+  function clearTyped() { typed = ""; showTyped(); }
+  function press(k) {
+    if (k === "clear") typed = "";
+    else if (k === "back") typed = typed.slice(0, -1);
+    else if (typed.length < 6) typed += k;
+    showTyped();
+    if (typed === code) { unlock(); return; }
+    if (typed && code.indexOf(typed) !== 0) { if (msg) msg.textContent = "oops — new code, try again"; newCode(); clearTyped(); freshTimer(); }
+  }
+  if (pad) ["1","2","3","4","5","6","7","8","9","clear","0","back"].forEach(function (k) {
+    var b = document.createElement("button");
+    b.textContent = k === "clear" ? "Clear" : k === "back" ? "⌫" : k;
+    b.addEventListener("click", function (e) { e.stopPropagation(); press(k); });
+    pad.appendChild(b);
+  });
+  document.addEventListener("keydown", function (e) {   // a hardware keyboard still works
+    if (!panel || panel.hidden) return;
+    if (/^[0-9]$/.test(e.key)) press(e.key); else if (e.key === "Backspace") press("back");
+  });
   function newCode() { code = ""; for (var i = 0; i < 6; i++) code += Math.floor(Math.random() * 10); if (codeEl) codeEl.textContent = code.split("").join(" "); }
   function freshTimer() { remaining = 30; if (timerEl) timerEl.textContent = "30"; }
   function startChallenge() {
-    newCode(); if (inp) inp.value = ""; if (msg) msg.textContent = ""; freshTimer();
+    newCode(); clearTyped(); if (msg) msg.textContent = ""; freshTimer();
     if (tick) clearInterval(tick);
     tick = setInterval(function () {
       remaining--; if (timerEl) timerEl.textContent = String(Math.max(0, remaining));
-      if (remaining <= 0) { if (msg) msg.textContent = "time up — fresh code"; newCode(); if (inp) inp.value = ""; freshTimer(); }
+      if (remaining <= 0) { if (msg) msg.textContent = "time up — fresh code"; newCode(); clearTyped(); freshTimer(); }
     }, 1000);
   }
   function stopChallenge() { if (tick) { clearInterval(tick); tick = null; } }
-  function openPanel() { if (!panel) return; panel.hidden = false; resetToUnlock(); startChallenge(); if (inp) setTimeout(function () { inp.focus(); }, 40); }
+  function openPanel() { if (!panel) return; panel.hidden = false; resetToUnlock(); startChallenge(); }
   function closePanel() { if (panel) panel.hidden = true; stopChallenge(); settingsOpen = false; resetToUnlock(); if (locked && !isFs()) goFullscreen(); }
   function resetToUnlock() { var uv = document.getElementById("unlock-view"); if (uv) uv.hidden = false; }
   if (aBtn) aBtn.addEventListener("click", function (e) { e.stopPropagation(); if (panel && panel.hidden) openPanel(); else closePanel(); });
   if (closeBtn) closeBtn.addEventListener("click", function (e) { e.stopPropagation(); closePanel(); });
-  if (inp) inp.addEventListener("input", function () {
-    var v = inp.value.replace(/[^0-9]/g, "").slice(0, 6); inp.value = v;
-    if (v === code) { unlock(); return; }
-    if (v && code.indexOf(v) !== 0) { if (msg) msg.textContent = "oops — new code, try again"; newCode(); inp.value = ""; freshTimer(); }
-  });
 
   // ---- settings: voice / device / volume ----
   function renderDevices(outs) {

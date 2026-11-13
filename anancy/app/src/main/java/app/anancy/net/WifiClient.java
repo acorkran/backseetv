@@ -19,6 +19,8 @@ public class WifiClient {
         void onStatus(String s); void onState(String json);
         /** A player resolved on the LAN (id + friendly name), whether or not we poll it. */
         void onSeen(String id, String name);
+        /** A TV on this network that we have NOT paired with: listed, never talked to. */
+        default void onUnpaired(String id, String name) {}
     }
     static final String TAG = "Anancy";
     static final String SVC = "_anancy._tcp.";
@@ -98,9 +100,35 @@ public class WifiClient {
         String id = attr(s, "id");
         String nm = attr(s, "name");
         if (nm == null || nm.isEmpty()) nm = s.getServiceName();   // NSD may have renamed it on a clash
-        if (id != null) { final String i2 = id, n2 = nm; hosts.put(id, h + ":" + p); Log.i(TAG, "resolved " + id + " (" + nm + ") @ " + h + ":" + p + " hosts=" + hosts.keySet()); main.post(() -> l.onSeen(i2, n2)); }
+        if (id == null || !app.anancy.Pairing.isPaired(ctx, id)) {   // not ours: never poll or command it
+            final String i2 = id, n2 = nm;
+            if (id != null) main.post(() -> l.onUnpaired(i2, n2));
+            return;
+        }
+        // mDNS is unauthenticated: anyone on the network can claim to be our TV. Believe the address
+        // only once something there answers with that TV's proof.
+        final String fh = h, fid = id, fnm = nm; final int fp = p;
+        new Thread(() -> {
+            java.net.HttpURLConnection c = null;
+            String ok = null;
+            try {
+                c = (java.net.HttpURLConnection) new java.net.URL("http://" + fh + ":" + fp + "/clock").openConnection();
+                c.setConnectTimeout(2500); c.setReadTimeout(2500);
+                app.anancy.Pairing.sign(ctx, c, fid);
+                ok = app.anancy.Pairing.fetch(ctx, c);
+            } catch (Exception ignored) {} finally { if (c != null) c.disconnect(); }
+            if (ok == null) { Log.w(TAG, "mDNS: " + fh + " claims to be " + fid + " but couldn't prove it"); return; }
+            main.post(() -> confirmed(fh, fp, fid, fnm));
+        }).start();
+    }
+    private void confirmed(String h, int p, String id, String nm) {
+        app.anancy.Pairing.noteHost(ctx, h, id);
+        hosts.put(id, h + ":" + p);
+        Log.i(TAG, "resolved " + id + " (" + nm + ") @ " + h + ":" + p + " hosts=" + hosts.keySet());
+        l.onSeen(id, nm);
         String want = target;
-        if (want != null && (id == null || !want.equals(id))) return;   // another tablet: remembered, not switched to
+        if (want != null && !want.equals(id)) return;   // another tablet: remembered, not switched to
+        if (want == null && !fixed && id.equals(app.anancy.Identity.id(ctx))) return;   // our own player is reached over loopback
         host = h; port = p; connectedId = id;
         startPolling();
     }
@@ -130,7 +158,8 @@ public class WifiClient {
 
     public void send(String cmd) {
         if (host == null) return;
-        final String path = toHttp(cmd);
+        final String path = toHttp(cmd, connectedId != null ? connectedId : (fixed ? app.anancy.Identity.id(ctx) : null));
+        if (path == null) return;
         if (isQuery(cmd)) {   // queries answer with a typed payload -> deliver via onState, uniform with BLE
             new Thread(() -> { String r = http(path); if (r != null) main.post(() -> l.onState(r)); }).start();
             return;
@@ -142,10 +171,12 @@ public class WifiClient {
     public void sendAll(String cmd) {
         if (isQuery(cmd)) { send(cmd); return; }
         java.util.Collection<String> hp = new java.util.ArrayList<>(hosts.values());
-        Log.i(TAG, "sendAll('" + cmd + "') hosts=" + hosts.keySet() + " -> " + hp);
+        Log.i(TAG, "sendAll hosts=" + hosts.keySet());
         if (hp.isEmpty()) { send(cmd); return; }
-        final String path = toHttp(cmd);
-        for (final String h : hp) new Thread(() -> httpTo(h, path)).start();
+        for (java.util.Map.Entry<String, String> e : new java.util.HashMap<>(hosts).entrySet()) {
+            final String h = e.getValue(), path = toHttp(cmd, e.getKey());
+            if (path != null) new Thread(() -> httpTo(h, path)).start();
+        }
     }
     /** ids currently resolved on the LAN (for callers to know who Wi-Fi can reach). */
     public java.util.Set<String> hostIds() { return new java.util.HashSet<>(hosts.keySet()); }
@@ -153,10 +184,10 @@ public class WifiClient {
         (e.g. a TV that doesn't advertise BLE). */
     public void sendTo(java.util.Collection<String> ids, String cmd) {
         if (isQuery(cmd) || ids == null || ids.isEmpty()) return;
-        final String path = toHttp(cmd);
         for (String id : ids) {
             String hp = hosts.get(id);
-            if (hp != null) { final String h = hp; new Thread(() -> httpTo(h, path)).start(); }
+            final String path = toHttp(cmd, id);
+            if (hp != null && path != null) { final String h = hp; new Thread(() -> httpTo(h, path)).start(); }
         }
     }
     private void httpTo(String hostPort, String path) {
@@ -164,7 +195,8 @@ public class WifiClient {
         try {
             c = (java.net.HttpURLConnection) new java.net.URL("http://" + hostPort + path).openConnection();
             c.setConnectTimeout(2500); c.setReadTimeout(2500);
-            c.getInputStream().close();
+            app.anancy.Pairing.sign(ctx, c);
+            app.anancy.Pairing.fetch(ctx, c);
         } catch (Exception ignored) {} finally { if (c != null) c.disconnect(); }
     }
     /** Commands whose HTTP response is a {"type":...} payload the UI waits for. */
@@ -174,7 +206,8 @@ public class WifiClient {
     }
 
     /** BLE command vocabulary -> the player's HTTP endpoints (must stay in step with ControlServer). */
-    private static String toHttp(String cmd) {
+    /** The endpoint for a command, or null when it has none. `id` is the TV it's for (for sealing). */
+    private String toHttp(String cmd, String id) {
         if (cmd.startsWith("sleep:")) return "/sleep?min=" + cmd.substring(6);
         if (cmd.startsWith("play:")) return "/playlist?name=" + enc(cmd.substring(5));
         if (cmd.startsWith("jump:")) return "/jump?i=" + cmd.substring(5);
@@ -210,9 +243,9 @@ public class WifiClient {
         }
         // connection level + Wi-Fi hand-off
         if (cmd.startsWith("conn:")) return "/conn?mode=" + enc(cmd.substring(5));
-        if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS
-            String rest = cmd.substring(5); int t = rest.indexOf('\t');
-            return "/wifi?ssid=" + enc(t >= 0 ? rest.substring(0, t) : rest) + "&pass=" + enc(t >= 0 ? rest.substring(t + 1) : "");
+        if (cmd.startsWith("wifi:")) {   // wifi:SSID<TAB>PASS, sealed with that TV's key (never a password in a URL)
+            String sealed = app.anancy.Pairing.sealFor(ctx, id, cmd.substring(5));
+            return sealed == null ? null : "/wifi?s=" + enc(sealed);
         }
         switch (cmd) {
             case "list": return "/playlists";
@@ -223,7 +256,9 @@ public class WifiClient {
             case "unmute": return "/mute?on=0";
             case "wake": return "/sleep?min=0";
             case "queue": return "/queue?center=-1&n=4";   // same ±4 window BLE pushes
-            default: return "/" + cmd;   // play, pause, playpause, next, prev, flash (Cfg duration), power
+            case "play": case "pause": case "playpause": case "next": case "prev": case "flash": case "power": case "seeknear":
+                return "/" + cmd;
+            default: return null;   // never turn an unknown string into a request path
         }
     }
     /** /queue serves [center-n, center+n], so centring n past the start gives a page beginning there. */
@@ -244,10 +279,8 @@ public class WifiClient {
         try {
             c = (java.net.HttpURLConnection) new java.net.URL("http://" + host + ":" + port + path).openConnection();
             c.setConnectTimeout(2500); c.setReadTimeout(2500);
-            java.io.InputStream in = c.getInputStream();
-            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
-            byte[] b = new byte[1024]; int n; while ((n = in.read(b)) != -1) bo.write(b, 0, n);
-            return bo.toString("UTF-8");
+            app.anancy.Pairing.sign(ctx, c);
+            return app.anancy.Pairing.fetch(ctx, c);   // null unless the TV answered AND proved it's the TV
         } catch (Exception e) { return null; } finally { if (c != null) c.disconnect(); }
     }
 
