@@ -94,10 +94,7 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 | Path | What it is | State |
 |------|------------|-------|
 | [`anancy/`](anancy/) | **The app.** `:app` (phone + tablet) and `:wear` (Wear OS). Gradle. | Production |
-| [`camera-monitor/`](camera-monitor/) | Front-cam + ML Kit still-image child monitor. Gradle. | Prototype |
 | [`install/`](install/) | One-step Windows setup script for a fresh tablet. | Production |
-| [`server/`](server/) | Home-server helper scripts (media sync over adb). | Utility |
-| [`legacy/`](legacy/) | v1 (Kodi-bridge) apps + v2 prototypes, superseded. Not built. | Archived |
 
 ## Install & setup
 
@@ -120,7 +117,6 @@ gradle assembleRelease            # signed release APKs (needs a key: see anancy
 
 CI runs both on every push — see [`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml).
 
-_(The archived `legacy/` apps use a no-Gradle `./build.sh`; they're kept only for history.)_
 
 ## Status & Android compatibility
 
