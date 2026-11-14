@@ -1,19 +1,20 @@
 #!/system/bin/sh
-# BackSeeTV setup helper. BackSeeTV-Tablet-Setup.bat pushes this to the tablet and runs it there,
-# so the folder handling stays in a real shell (names with spaces and apostrophes) not in batch.
+# BackSeeTV setup helper. BackSeeTV-Tablet-Setup.bat pushes this to the tablet and runs it there.
+#
+# Folder names come from the tablet's storage (an SD card can carry any name), so they never travel
+# to the PC as text a shell would run, and never come back in a command. The PC only ever sees a
+# number and a cleaned-up name for display, and answers with the number.
 #
 #   sh bst-media.sh list
 #       One line per top-level folder, on internal storage or an SD card, that holds videos:
-#       <volume>|<folder>|<videos>
-#   sh bst-media.sh move <volume> <folder>
-#       Moves that folder's shows into <volume>/BackSeeTV-Media. A sub-folder with videos in it is a
-#       show; videos lying directly in the folder become one show named after the folder. It's a move
-#       on the same card, so nothing is copied and no space is needed. Anything that isn't a video
-#       stays where it was.
+#       <number>|<internal or sd>|<display name>|<videos>
+#   sh bst-media.sh move <number>
+#       Moves the VIDEO files of that folder into <same card>/BackSeeTV-Media. A sub-folder with videos
+#       becomes a show; videos lying directly in the folder become one show named after the folder.
+#       It's a move on the same card, so nothing is copied and no space is needed. Nothing that isn't a
+#       video moves, and nothing already in BackSeeTV-Media is overwritten.
 
-count() {
-    find "$1" -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) 2>/dev/null | wc -l
-}
+count() { find "$1" -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) 2>/dev/null | wc -l; }
 
 volumes() {
     echo /storage/emulated/0
@@ -22,41 +23,60 @@ volumes() {
     done
 }
 
-case "$1" in
-list)
+# Every candidate folder, in a fixed order, one full path per line. "list" and "move" both use this,
+# so a number means the same folder to both.
+candidates() {
     volumes | while read -r v; do
         for d in "$v"/*/; do
             d=${d%/}
             [ -d "$d" ] || continue
-            n=${d##*/}
-            case "$n" in Android|BackSeeTV-Media|.*) continue ;; esac
-            c=$(count "$d")
-            [ "$c" -gt 0 ] && echo "$v|$n|$c"
+            case "${d##*/}" in
+                Android|BackSeeTV-Media|DCIM|Pictures|.*) continue ;;   # never offer the camera's own videos
+            esac
+            [ "$(count "$d")" -gt 0 ] && echo "$d"
         done
+    done
+}
+
+# A name safe to show in a Windows console: letters, digits, space and . _ - ( ) ' only.
+safe() { printf '%s' "$1" | tr -c "A-Za-z0-9 ._()'-" '?' | cut -c1-60; }
+
+# Move the videos under $1 into show folder $2, never overwriting.
+move_videos() {
+    mkdir -p "$2"
+    find "$1" -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) 2>/dev/null | while IFS= read -r f; do
+        mv -n "$f" "$2"/
+    done
+}
+
+case "$1" in
+list)
+    i=0
+    candidates | while read -r d; do
+        i=$((i + 1))
+        case "$d" in /storage/emulated/0/*) where=internal ;; *) where=sd ;; esac
+        echo "$i|$where|$(safe "${d##*/}")|$(count "$d")"
     done
     ;;
 move)
-    v=$2; name=$3; src="$v/$name"; dst="$v/BackSeeTV-Media"
-    [ -d "$src" ] || { echo "missing: $src"; exit 1; }
-    mkdir -p "$dst"
+    case "$2" in ''|*[!0-9]*) echo "move needs a number"; exit 2 ;; esac
+    src=$(candidates | sed -n "${2}p")
+    [ -n "$src" ] && [ -d "$src" ] || { echo "no folder $2"; exit 1; }
+    case "$src" in /storage/emulated/0/*) v=/storage/emulated/0 ;; *) v=${src%/*} ;; esac
+    dst="$v/BackSeeTV-Media"; name=${src##*/}
     for s in "$src"/*/; do
         s=${s%/}
         [ -d "$s" ] || continue
         [ "$(count "$s")" -gt 0 ] || continue
-        t="$dst/${s##*/}"
-        if [ -e "$t" ]; then
-            mkdir -p "$t" && mv "$s"/* "$t"/ 2>/dev/null && rmdir "$s" 2>/dev/null
-        else
-            mv "$s" "$t"
-        fi
+        move_videos "$s" "$dst/${s##*/}"
     done
     if [ -n "$(find "$src" -maxdepth 1 -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) | head -1)" ]; then
-        t="$dst/$name"; mkdir -p "$t"
-        find "$src" -maxdepth 1 -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) -exec mv {} "$t"/ \;
+        mkdir -p "$dst/$name"
+        find "$src" -maxdepth 1 -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) | while IFS= read -r f; do mv -n "$f" "$dst/$name"/; done
     fi
-    rmdir "$src" 2>/dev/null
-    echo "moved $name: $(count "$dst") videos now in $dst"
+    find "$src" -depth -type d -empty -exec rmdir {} \; 2>/dev/null   # tidy only folders left empty
+    echo "moved $(safe "$name"): $(count "$dst") videos now in BackSeeTV-Media"
     ;;
 *)
-    echo "usage: bst-media.sh list | move <volume> <folder>"; exit 2 ;;
+    echo "usage: bst-media.sh list | move <number>"; exit 2 ;;
 esac

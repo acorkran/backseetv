@@ -32,8 +32,9 @@ uses every day, not a commercial product. You bring your own videos.
   deterministic auto-advance, so the "stuck at end-of-file" wedge that plagued the old
   Kodi build structurally cannot happen — no watchdog needed.
 - **Device-owner kiosk done properly.** Lock-task mode, boot-into-show as the home screen,
-  a hidden gesture + PIN admin escape, self-granted permissions, and a self-update path
-  that even pushes the watch build over the Bluetooth Data Layer.
+  a hidden gesture + code escape to a grown-up remote page, and self-granted permissions. A
+  one-step Windows script sets a fresh tablet up, finds any videos already on it and copies
+  your shows across.
 - **Two transports, one control plane.** BLE is primary (works with no network at all);
   Wi-Fi/mDNS runs alongside for higher bandwidth and for screens that don't advertise BLE.
   A **pull model** (the phone is a passive bulletin the tablet polls) sidesteps the
@@ -44,8 +45,8 @@ uses every day, not a commercial product. You bring your own videos.
   control answers are signed back, and camera frames over Wi-Fi are encrypted for the device that
   asked. A TV in a synced group gets only a streaming key for its leader, sealed for it alone: it can
   play the leader's shows but never drive it or see its camera. Another family's BackSeeTV in the same
-  car park can't see or drive yours. The video streamed between TVs in a group is the one thing not
-  signed. The crypto is pure and unit-tested:
+  car park can't see or drive yours. Even the video one TV streams to another in a synced group is
+  encrypted, block by block, for the TV that asked. The crypto is pure and unit-tested:
   [`net/PairCrypto.java`](anancy/app/src/main/java/app/anancy/net/PairCrypto.java).
 - **Correct command routing.** In a synced group, playback drives the leader alone
   (followers mirror) while per-screen actions (power/light/sleep/volume) hit every member —
@@ -102,7 +103,7 @@ Inside `anancy/app` the code is grouped by concern (package root `app.anancy`):
 
 See **[SETUP.md](SETUP.md)**: a no-computer route (download the APK, screen pinning), an adb route
 (device-owner kiosk, watch remote, Android Auto without the developer toggle), and a one-step Windows
-script that does the adb route for you.
+script that does the adb route for you. **[FAQ.md](FAQ.md)** explains every setting.
 Screen pinning blocks Home, Back and Recents. The device-owner route adds no prompts and survives a restart.
 
 ## Build & test

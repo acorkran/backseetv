@@ -55,14 +55,17 @@ public class ControlServer {
                 // thread each, forever. A full pool turns the newcomer away instead, and no one address
                 // may hold more than PER_IP of them, so one device can't starve the rest.
                 final String ip = s.getInetAddress().getHostAddress();
-                if (!s.getInetAddress().isLoopbackAddress() && perIp.merge(ip, 1, Integer::sum) > PER_IP) {
+                // Loopback counts too: on a phone that's also a screen, any app can reach 127.0.0.1.
+                if (perIp.merge(ip, 1, Integer::sum) > PER_IP) {
                     perIp.merge(ip, -1, Integer::sum);
                     Log.w(TAG, "HTTP: too many connections from " + ip);
                     try { s.close(); } catch (Exception ignored) {}
                     continue;
                 }
-                try { s.setSoTimeout(2_000); final boolean[] held = {true};
-                      pool.execute(() -> { try { handle(s, held); } finally { if (held[0]) release(s, ip); } }); }
+                // held[0]: 1 = an unauthenticated slot (PER_IP), 2 = an authenticated one (PER_IP_AUTH);
+                // held[1]: 1 = it also counts against the media-key share of the pool.
+                try { s.setSoTimeout(2_000); final int[] held = {1, 0};
+                      pool.execute(() -> { try { handle(s, held); } finally { releaseHeld(ip, held); } }); }
                 catch (java.util.concurrent.RejectedExecutionException busy) {
                     Log.w(TAG, "HTTP busy (" + pool.getActiveCount() + " running): turned away " + ip);
                     release(s, ip);
@@ -82,15 +85,26 @@ public class ControlServer {
     static final int PER_IP = 12;
     private final java.util.concurrent.ConcurrentHashMap<String, Integer> perIp = new java.util.concurrent.ConcurrentHashMap<>();
     private void release(Socket s, String ip) {
-        if (s.getInetAddress().isLoopbackAddress()) return;
         perIp.computeIfPresent(ip, (k, v) -> v <= 1 ? null : v - 1);
+    }
+    /** A paired device gets more room than a stranger, but not the whole server: PER_IP_AUTH per address,
+        and requests on a follower's media-only key share at most MEDIA_SHARE threads, so a paired phone's
+        controls always get through. (Uncapped, a screen that was once a follower could hold every thread.) */
+    static final int PER_IP_AUTH = 24, MEDIA_SHARE = 32;
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> perIpAuth = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger mediaConns = new java.util.concurrent.atomic.AtomicInteger();
+    private void releaseHeld(String ip, int[] held) {
+        if (held[0] == 1) perIp.computeIfPresent(ip, (k, v) -> v <= 1 ? null : v - 1);
+        else if (held[0] == 2) perIpAuth.computeIfPresent(ip, (k, v) -> v <= 1 ? null : v - 1);
+        held[0] = 0;
+        if (held[1] == 1) { mediaConns.decrementAndGet(); held[1] = 0; }
     }
     /** The nonce of the request being answered on this thread, so the answer can be tied to it. */
     private static final ThreadLocal<String> REQ_NONCE = new ThreadLocal<>();
     /** The key that request was signed with (the TV's own, or a follower's media-only key). */
     private static final ThreadLocal<String> REQ_KEY = new ThreadLocal<>();
 
-    private void handle(Socket c, boolean[] held) {
+    private void handle(Socket c, int[] held) {
         REQ_NONCE.remove(); REQ_KEY.remove();
         try {
             InputStream in = c.getInputStream();
@@ -125,7 +139,19 @@ public class ControlServer {
             // The per-address cap is for devices that haven't proved anything. A paired follower holds
             // several long streams at once (and dead ones linger after its hotspot restarts), and was
             // being turned away mid-group with "too many connections".
-            if (held[0]) { held[0] = false; release(c, c.getInetAddress().getHostAddress()); }
+            String from = c.getInetAddress().getHostAddress();
+            if (held[0] == 1) {
+                perIp.computeIfPresent(from, (k, v) -> v <= 1 ? null : v - 1);
+                held[0] = 2;
+                boolean media = !usedKey.equals(app.anancy.Pairing.myKey(ctx));
+                if (media) { held[1] = 1; mediaConns.incrementAndGet(); }   // counted now, released once in releaseHeld
+                boolean full = perIpAuth.merge(from, 1, Integer::sum) > PER_IP_AUTH || (media && mediaConns.get() > MEDIA_SHARE);
+                if (full) {
+                    Log.w(TAG, "HTTP: too many paired connections from " + from);
+                    write(c, 503, "{\"ok\":false,\"error\":\"busy\"}");
+                    return;
+                }
+            }
 
             c.setSoTimeout(30_000);   // a paired client's body (an upload) may pause longer between chunks
             if (path.equals("/upload")) { handleUpload(param(q, "name"), param(q, "sha"), h.toString(), in, c); return; }   // wifi file import

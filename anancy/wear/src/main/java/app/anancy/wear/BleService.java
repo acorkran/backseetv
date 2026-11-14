@@ -131,10 +131,10 @@ public class BleService extends Service {
                 for (com.google.android.gms.wearable.Node n : nodes) {
                     waitingOnPhone = true;
                     long t0 = android.os.SystemClock.elapsedRealtime();   // timing only: where a tap's delay goes
-                    Log.i(TAG, "timing: relay " + cmd + " sent at " + System.currentTimeMillis() + " (" + (t0 - tapAt) + " ms after the tap)");
+                    Log.i(TAG, "timing: relay " + verb(cmd) + " sent at " + System.currentTimeMillis() + " (" + (t0 - tapAt) + " ms after the tap)");
                     byte[] r = com.google.android.gms.tasks.Tasks.await(com.google.android.gms.wearable.Wearable.getMessageClient(c)
                             .sendRequest(n.getId(), WatchTarget.PATH_CMD, cmd.getBytes()), 3, java.util.concurrent.TimeUnit.SECONDS);
-                    Log.i(TAG, "timing: relay " + cmd + " phone answered in " + (android.os.SystemClock.elapsedRealtime() - t0) + " ms");
+                    Log.i(TAG, "timing: relay " + verb(cmd) + " phone answered in " + (android.os.SystemClock.elapsedRealtime() - t0) + " ms");
                     waitingOnPhone = false;
                     if (r != null && "ok".equals(new String(r))) { ok = true; break; }
                 }
@@ -150,6 +150,8 @@ public class BleService extends Service {
     private static boolean isQuery(String c) {
         return c.equals("list") || c.startsWith("list:") || c.equals("queue") || c.startsWith("queue:") || c.startsWith("camble:");
     }
+    /** A command's name only, for logs: anything after a ':' can carry a value. */
+    private static String verb(String c) { int i = c.indexOf(':'); return i < 0 ? c : c.substring(0, i) + ":…"; }
     private final java.util.concurrent.ExecutorService relayPool = java.util.concurrent.Executors.newSingleThreadExecutor();
     private void direct(String cmd) { if (ble != null) ble.send(cmd); }
     public String state() { return lastState; }

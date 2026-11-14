@@ -227,81 +227,6 @@ echo.
 echo [6/6] Copying shows and finishing up...
 call :log "Step 6: shows and start"
 call :scan_existing
-call :copy_shows
-call :count_shows
-call :need_device
-%A% shell settings put global anancy_kiosk 1 >>"%LOG%" 2>&1
-%A% shell am start -n app.anancy/.AdbSetRole --es role player >>"%LOG%" 2>&1
-rem A tablet that was already set up is running, so it won't notice new shows on
-rem its own: ask it to look again.
-if defined ALREADY if defined SRC call :rescan
-if defined ALREADY if not defined SRC if defined MOVED call :rescan
-
-call :log "Finished OK"
-call :stop_adb
-del "%OUT%" >nul 2>&1
-echo.
-echo  All done. The tablet is now a BackSeeTV.
-echo    - Grown-up unlock: tap with four fingers, four times, within 3 seconds.
-echo    - On your phone, install the app and choose "This is a Remote".
-echo    - You can unplug the tablet.
-echo.
-if "%SHOWS%"=="0" (
-    echo  The tablet has no shows yet. To add some, either:
-    echo    - run this again and drag in a folder of shows, or
-    echo    - on a computer, make a folder called BackSeeTV-Media on a microSD card,
-    echo      put one folder per show inside it, and put the card in the tablet.
-) else (
-    echo  The tablet has %SHOWS% show folders. Add more any time: run this again, or put
-    echo  them in the BackSeeTV-Media folder on the tablet or its microSD card.
-)
-echo.
-echo  Optional, once it's unplugged: BackSeeTV doesn't need developer mode to run.
-echo    - To stop this PC having access: Settings - Developer options -
-echo      Revoke USB debugging authorizations.
-echo    - To hide developer mode again: turn off the Developer options switch at the
-echo      top of that screen.
-echo    To update the app later with this script, turn them back on first.
-echo.
-echo  A log of this run is in: %LOG%
-echo.
-pause
-exit
-
-rem --- helpers ---------------------------------------------------------------
-
-rem Write one timestamped line to the log.
-:log
-if not defined LOG exit /b 0
->>"%LOG%" echo [%date% %time%] %~1
-exit /b 0
-
-rem adb leaves a server running in the background after it's used. Stop it when
-rem we're done, but only if it's OUR copy: an adb server from Android Studio or
-rem another tool belongs to someone else.
-:stop_adb
-if not exist "%ADB%" exit /b 0
-powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Process adb -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:ADB }) { exit 0 } else { exit 1 }" >nul 2>&1
-if errorlevel 1 exit /b 0
-"%ADB%" kill-server >nul 2>&1
-call :log "Stopped the adb server"
-exit /b 0
-
-rem Grant one runtime permission; log "not used here" instead of a stack trace.
-:grant
-%A% shell pm grant app.anancy android.permission.%1 > "%OUT%" 2>&1
-findstr /c:"has not requested permission" "%OUT%" >nul && (
-    >>"%LOG%" echo %1: not used on this Android version
-    exit /b 0
-)
-type "%OUT%" >>"%LOG%"
-exit /b 0
-
-rem Videos already on the tablet (an older shows folder, Download, an SD card full of shows): offer
-rem to move each folder into BackSeeTV-Media, where the app looks. A move on the same card is instant
-rem and needs no space. The folder work runs on the tablet (bst-media.sh), where names with spaces and
-rem apostrophes are safe.
-:scan_existing
 if not exist "%HERE%bst-media.sh" exit /b 0
 echo       Looking for videos already on the tablet...
 call :need_device
@@ -309,34 +234,38 @@ call :need_device
 set "FOUNDLIST=%TEMP%\bst-found.txt"
 %A% shell sh /data/local/tmp/bst-media.sh list > "%FOUNDLIST%" 2>nul
 set /a FOUND=0
-for /f "usebackq tokens=1-3 delims=|" %%a in ("%FOUNDLIST%") do set /a FOUND+=1
+for /f "usebackq tokens=1-4 delims=|" %%a in ("%FOUNDLIST%") do set /a FOUND+=1
 >>"%LOG%" echo Folders with videos already on the tablet: %FOUND%
 type "%FOUNDLIST%" >>"%LOG%"
 if %FOUND%==0 goto scan_done
 echo.
 echo       There are videos on the tablet outside BackSeeTV-Media. BackSeeTV only plays
 echo       what's in BackSeeTV-Media, so it can move them there. It's a move on the same
-echo       card: instant, nothing copied. Anything that isn't a video stays where it is.
-for /f "usebackq tokens=1-3 delims=|" %%a in ("%FOUNDLIST%") do call :ask_move "%%a" "%%b" "%%c"
+echo       card: instant, nothing copied. Only video files move; nothing is overwritten.
+for /f "usebackq tokens=1-4 delims=|" %%a in ("%FOUNDLIST%") do call :ask_move %%a %%b "%%c" %%d
 echo.
 :scan_done
 del "%FOUNDLIST%" >nul 2>&1
 exit /b 0
 
+rem Only a number goes back to the tablet, never a folder name: a name on an SD card can hold
+rem characters a shell would run. The name shown here is already cleaned up on the tablet
+rem (letters, digits, space and . _ - ( ) ' only).
 :ask_move
+set "NUM=%~1"
+for /f "delims=0123456789" %%x in ("%NUM%") do exit /b 0
 set "WHERE=on the tablet"
-if /i not "%~1"=="/storage/emulated/0" set "WHERE=on the SD card"
-if /i "%~2"=="DCIM" set "WHERE=%WHERE%, camera videos"
+if /i "%~2"=="sd" set "WHERE=on the SD card"
 set "ANS="
-set /p "ANS=      Move %~2 (%~3 videos, %WHERE%) into BackSeeTV-Media? [Y/N]: "
+set /p "ANS=      Move %~3 (%~4 videos, %WHERE%) into BackSeeTV-Media? [Y/N]: "
 if /i "%ANS%"=="Y" goto ask_move_yes
->>"%LOG%" echo Left %~2 where it is
+>>"%LOG%" echo Left folder %NUM% where it is
 exit /b 0
 :ask_move_yes
 call :need_device
-%A% shell "sh /data/local/tmp/bst-media.sh move \"%~1\" \"%~2\"" >>"%LOG%" 2>&1
+%A% shell sh /data/local/tmp/bst-media.sh move %NUM% >>"%LOG%" 2>&1
 set "MOVED=1"
-echo       Moved %~2.
+echo       Moved.
 exit /b 0
 
 rem Copy the shows folder into BackSeeTV-Media on the tablet, if it fits. --sync skips files
