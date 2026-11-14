@@ -950,6 +950,15 @@ public class PlayerActivity extends Activity {
         if (server == null) { server = new ControlServer(c.getApplicationContext(), PlayerController.get()); server.start(); }
         if (ble == null) { ble = new BleServer(c.getApplicationContext(), PlayerController.get()); ble.start(); }   // BLE control tier (offline/car/AA)
     }
+    /** Just the Bluetooth side of this device's TV servers (the remote drops it when Bluetooth goes off). */
+    public static void setBleServer(android.content.Context c, boolean on) {
+        if (on) {   // a fresh one: an old one may have given up while Bluetooth was off
+            if (server == null) return;
+            try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
+            ble = new BleServer(c.getApplicationContext(), PlayerController.get()); ble.start();
+        }
+        else { try { if (ble != null) ble.stop(); } catch (Exception ignored) {} ble = null; }
+    }
     static void stopServers() {
         try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
         ble = null;

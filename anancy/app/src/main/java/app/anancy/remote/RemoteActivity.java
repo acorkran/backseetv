@@ -141,8 +141,8 @@ public class RemoteActivity extends Activity {
         links.setOnClickListener(v -> showConnBlurb());
         for (int k = 0; k < 3; k++) {
             linkIcons[k] = new LinkIcon(this, k);
-            int sz = k == 1 ? 24 : 20;   // the hotspot glyph has the most detail
-            LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(sz), dp(sz)); ilp.leftMargin = dp(k == 0 ? 0 : 5);
+            int sz = k == 1 ? 22 : 18;   // the hotspot glyph has the most detail
+            LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(sz), dp(sz)); ilp.leftMargin = dp(k == 0 ? 0 : 3);
             links.addView(linkIcons[k], ilp);
         }
         dot = links;
@@ -1226,7 +1226,7 @@ public class RemoteActivity extends Activity {
         headerChecks.removeAllViews();
         if (svc == null || local || svc.tablets().isEmpty()) return;
         View allRow = ui.checkRow("All screens", svc.targets().isEmpty(), () -> applySelection(java.util.Collections.<String>emptySet()));
-        allRow.setPadding(dp(8), dp(3), dp(4), dp(3)); compact(allRow);
+        allRow.setPadding(dp(6), dp(3), dp(2), dp(3)); compact(allRow); shrinkLabel(allRow, 13f);
         headerChecks.addView(allRow);
         if (svc.selfPlay()) {
             final boolean lo = svc.groupLeaderOnly(), live = svc.isSyncGroup() || svc.isSyncPending();
@@ -1234,7 +1234,7 @@ public class RemoteActivity extends Activity {
                 if (!live) { toast("Turn on Sync Playback first"); return; }
                 svc.setGroupAudio(!lo); refreshHeaderChecks();
             });
-            row.setPadding(dp(8), dp(3), dp(4), dp(3)); compact(row);
+            row.setPadding(dp(6), dp(3), dp(2), dp(3)); compact(row); shrinkLabel(row, 13f);
             if (!live) row.setAlpha(0.4f);
             headerChecks.addView(row);
         }
@@ -1259,6 +1259,10 @@ public class RemoteActivity extends Activity {
             syncRow.setPadding(dp(10), dp(9), dp(2), dp(9)); compact(syncRow);
             playbackRow.addView(syncRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
+    }
+    private void shrinkLabel(View row, float sp) {
+        if (row instanceof LinearLayout && ((LinearLayout) row).getChildCount() > 1 && ((LinearLayout) row).getChildAt(1) instanceof TextView)
+            ((TextView) ((LinearLayout) row).getChildAt(1)).setTextSize(sp);
     }
     /** Two checkboxes side by side: a size that keeps each label on one line. */
     private void compact(View row) {
@@ -1286,6 +1290,10 @@ public class RemoteActivity extends Activity {
             t.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); scanPairingCode(); });
             col.addView(t);
         }
+        // Last in the menu: closing or leaving the app only minimizes it; this is the real off switch.
+        View sep = new View(this); sep.setBackgroundColor(0x22FFFFFF);
+        col.addView(sep, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        col.addView(menuCell("Shut down BackSeeTV", WARN, () -> confirmShutdown(this)));
     }
     private void scanPairingCode() {
         toast("Scan the code on the TV: grown-up unlock, Settings, Pair a remote");
@@ -1310,14 +1318,30 @@ public class RemoteActivity extends Activity {
         connModes = new LinearLayout(this); connModes.setOrientation(LinearLayout.VERTICAL); col.addView(connModes);
         connActions = new LinearLayout(this); connActions.setOrientation(LinearLayout.VERTICAL); col.addView(connActions);
         if (!local) { connPaired = new LinearLayout(this); connPaired.setOrientation(LinearLayout.VERTICAL); col.addView(connPaired); renderPaired(); }
-        Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
         RemoteService svc = RemoteService.get();
+        if (!local && svc != null) {   // whether the app follows this phone's own Bluetooth / Wi-Fi switches
+            col.addView(ui.noteText("This phone's radios"));
+            connRadios = new LinearLayout(this); connRadios.setOrientation(LinearLayout.VERTICAL); col.addView(connRadios);
+            renderRadios();
+        }
+        Button back = ui.rowBtn("Back", TXT); back.setOnClickListener(v -> closeConnection()); col.addView(back);
         if (svc != null) lastConn = svc.connMode();
         renderConnStatus(); renderConnModes(); renderConnActions();
         if (svc != null) svc.requestConn();
         probeTv();
     }
-    private LinearLayout connPaired;
+    private LinearLayout connPaired, connRadios;
+    private void renderRadios() {
+        RemoteService svc = RemoteService.get();
+        if (connRadios == null || svc == null) return;
+        connRadios.removeAllViews();
+        final boolean bt = svc.followsBtToggle(), wf = svc.followsWifiToggle();
+        connRadios.addView(ui.checkRow("Switching Bluetooth off also cuts the remote's open Bluetooth links", bt, () -> { svc.setFollowsBtToggle(!bt); renderRadios(); }));
+        connRadios.addView(ui.checkRow("Switching Wi-Fi off also stops the remote's own hotspot", wf, () -> { svc.setFollowsWifiToggle(!wf); renderRadios(); }));
+        connRadios.addView(ui.noteText("Android can leave a link that's already open running after you switch a radio off "
+                + "(Bluetooth scanning, the app's own hotspot). Ticked, BackSeeTV closes them too. Unticked, an open link carries on, "
+                + "but no new connection can start until Bluetooth is back on."));
+    }
     /** The screens this phone may control, each with Forget. */
     private void renderPaired() {
         if (connPaired == null) return;
@@ -1500,12 +1524,26 @@ public class RemoteActivity extends Activity {
         if (res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) startOwnHotspot();
         else toast("The hotspot needs the Nearby devices permission");
     }
-    private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; connPaired = null; } }
+    private void closeConnection() { if (connView != null) { frame.removeView(connView); connView = null; connStatus = null; connModes = null; connActions = null; connPaired = null; connRadios = null; } }
 
     // =====================================================================================
     //  Settings — every TV option, mirrored from the phone (reads the TV's /config, writes cfg:K=V).
     //  Device-owner-only rows are greyed with a "requires device owner" notice on a base-level TV.
     // =====================================================================================
+    /** Settings > Shut down: stops every link and the hotspot, then closes the app. Just leaving the app
+        only minimizes it (a remote sits idle while the TV plays, and that's fine). */
+    static void confirmShutdown(android.app.Activity a) {
+        new android.app.AlertDialog.Builder(a).setTitle("Shut down BackSeeTV?")
+                .setMessage("Stops this phone's Bluetooth links, its hotspot and a synced group, and closes the app. "
+                        + "The screens keep playing on their own. Opening the app starts it all again.")
+                .setPositiveButton("Shut down", (d, w) -> {
+                    RemoteService svc = RemoteService.get();
+                    if (svc != null) svc.shutdown();
+                    else { try { app.anancy.net.HotspotService.stop(a); } catch (Exception ignored) {} }
+                    a.finishAffinity();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
     private void openSettings() {
         if (settingsView != null) return;
         { RemoteService s0 = RemoteService.get();

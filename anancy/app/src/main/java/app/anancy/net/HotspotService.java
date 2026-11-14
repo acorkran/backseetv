@@ -36,6 +36,7 @@ public class HotspotService extends Service {
     /** Start the hotspot AND pop its QR (the phone-driven "hotspot:on" flow expects the QR on the TV). */
     public static void start(Context ctx) { start(ctx, true); }
     public static void start(Context ctx, boolean showQr) {
+        if (followsWifiToggle(ctx) && wifiSwitchedOff(ctx)) { Diag.log(TAG, "hotspot not started: Wi-Fi is off"); return; }
         grantNearbyWifi(ctx);
         ctx.getApplicationContext().startService(new Intent(ctx.getApplicationContext(), HotspotService.class).putExtra("qr", showQr));
     }
@@ -88,7 +89,30 @@ public class HotspotService extends Service {
         if (reservation == null) startHotspot();
         return START_STICKY;
     }
-    @Override public void onCreate() { super.onCreate(); INSTANCE = this; }
+    /** Connection page switch (remote only, on by default): Wi-Fi turned off stops this hotspot too.
+        Android doesn't: a local-only hotspot isn't the Mobile Hotspot in Settings, and it outlives the
+        Wi-Fi toggle, so it stayed up with Wi-Fi "off" and nothing in Settings showing it. */
+    public static boolean followsWifiToggle(Context c) {
+        boolean tv = "player".equals(c.getSharedPreferences("anancy", MODE_PRIVATE).getString("role", ""));
+        return !tv && Cfg.getInt(c, "anancy_wifi_respect", 1) == 1;
+    }
+    public static boolean wifiSwitchedOff(Context c) {
+        WifiManager wm = (WifiManager) c.getApplicationContext().getSystemService(WIFI_SERVICE);
+        return wm != null && !wm.isWifiEnabled();
+    }
+    private final android.content.BroadcastReceiver wifiToggle = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            int st = i.getIntExtra(WifiManager.EXTRA_WIFI_STATE, -1);
+            if ((st == WifiManager.WIFI_STATE_DISABLING || st == WifiManager.WIFI_STATE_DISABLED) && followsWifiToggle(c)) {
+                Diag.log(TAG, "Wi-Fi turned off: stopping the hotspot");
+                stopSelf();
+            }
+        }
+    };
+    @Override public void onCreate() {
+        super.onCreate(); INSTANCE = this;
+        try { registerReceiver(wifiToggle, new android.content.IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION)); } catch (Exception ignored) {}
+    }
 
     private void startHotspot() {
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -154,6 +178,7 @@ public class HotspotService extends Service {
     }
 
     @Override public void onDestroy() {
+        try { unregisterReceiver(wifiToggle); } catch (Exception ignored) {}
         try { if (reservation != null) reservation.close(); } catch (Exception ignored) {}
         reservation = null; ssid = pass = null;
         if (INSTANCE == this) INSTANCE = null;

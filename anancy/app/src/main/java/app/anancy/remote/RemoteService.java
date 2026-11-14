@@ -423,9 +423,71 @@ public class RemoteService extends Service {
 
     @Override public IBinder onBind(Intent i) { return null; }
 
+    // --- the phone's own radio switches ----------------------------------------------------------
+    /** Connection page switch (on by default): Bluetooth turned off drops our links. Android keeps a
+        low-energy mode on when "Bluetooth scanning" is set, so a link survived the toggle. */
+    public boolean followsBtToggle() { return Cfg.getInt(this, "anancy_bt_respect", 1) == 1; }
+    public void setFollowsBtToggle(boolean on) { Cfg.put(this, "anancy_bt_respect", on ? 1 : 0); }
+    public boolean followsWifiToggle() { return Cfg.getInt(this, "anancy_wifi_respect", 1) == 1; }
+    public void setFollowsWifiToggle(boolean on) {
+        Cfg.put(this, "anancy_wifi_respect", on ? 1 : 0);
+        if (on && HotspotService.wifiSwitchedOff(this)) wifiTurnedOff();
+    }
+    private final android.content.BroadcastReceiver radioToggles = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            String a = i.getAction();
+            if (android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED.equals(a)) {
+                int st = i.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1);
+                if ((st == android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF || st == android.bluetooth.BluetoothAdapter.STATE_OFF) && followsBtToggle()) {
+                    Diag.log(TAG, "Bluetooth turned off: dropping our Bluetooth links");
+                    try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
+                    if (selfPlay()) app.anancy.player.PlayerActivity.setBleServer(RemoteService.this, false);
+                } else if (st == android.bluetooth.BluetoothAdapter.STATE_ON) {
+                    // Android won't let an app open a Bluetooth link while the switch is off (it only kept an
+                    // already-open one alive), so this is when we can get back to the screens.
+                    Diag.log(TAG, "Bluetooth back on: reconnecting");
+                    if (ble != null) { ble.stop(); ble.start(); }
+                    if (selfPlay()) app.anancy.player.PlayerActivity.setBleServer(RemoteService.this, true);
+                }
+            } else if (android.net.wifi.WifiManager.WIFI_STATE_CHANGED_ACTION.equals(a)) {
+                int st = i.getIntExtra(android.net.wifi.WifiManager.EXTRA_WIFI_STATE, -1);
+                if (st == android.net.wifi.WifiManager.WIFI_STATE_DISABLED && followsWifiToggle() && !local) wifiTurnedOff();
+            }
+        }
+    };
+    /** Wi-Fi is off and we follow it: no hotspot, and a group (which streams over Wi-Fi) can't carry on. */
+    private void wifiTurnedOff() {
+        Diag.log(TAG, "Wi-Fi turned off: stopping our hotspot");
+        if (!"".equals(Cfg.p(this).getString(PREF_SYNCGROUP, ""))) setSyncGroup(false);
+        dropEscalation();
+        if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} pushedKey = null; }
+    }
+
+    /** Settings > Shut down: everything that holds a radio stops, then the service itself. Closing or
+        dismissing the app only minimizes it: a remote naturally sits idle while the TV plays. */
+    public void shutdown() {
+        Diag.log(TAG, "shut down by the user");
+        if (!"".equals(Cfg.p(this).getString(PREF_SYNCGROUP, ""))) setSyncGroup(false);
+        try { app.anancy.player.SelfPlayer.stop(); } catch (Exception ignored) {}   // this phone as a screen: its servers too
+        dropEscalation();
+        if (HotspotService.running()) { try { HotspotService.stop(this); } catch (Exception ignored) {} }
+        try { WifiJoiner.releaseDirect(this); } catch (Exception ignored) {}
+        try { if (ble != null) ble.stop(); } catch (Exception ignored) {} ble = null;
+        try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {} wifi = null;
+        try { if (selfLink != null) selfLink.stop(); } catch (Exception ignored) {} selfLink = null;
+        uses.clear(); main.removeCallbacks(idle);
+        stopForeground(true);
+        stopSelf();
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         INSTANCE = this;
+        try {
+            android.content.IntentFilter f = new android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED);
+            f.addAction(android.net.wifi.WifiManager.WIFI_STATE_CHANGED_ACTION);
+            registerReceiver(radioToggles, f);
+        } catch (Exception ignored) {}
         Diag.init(this);
         startForeground(72, note());
         // One-time move to the "auto" default. The old default was a bare "ble" that never escalated,
@@ -1034,6 +1096,7 @@ public class RemoteService extends Service {
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
     @Override public void onDestroy() {
+        try { unregisterReceiver(radioToggles); } catch (Exception ignored) {}
         main.removeCallbacks(idle);
         try { if (ble != null) ble.stop(); } catch (Exception ignored) {}
         try { if (wifi != null) wifi.stop(); } catch (Exception ignored) {}
