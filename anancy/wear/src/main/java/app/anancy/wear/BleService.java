@@ -122,6 +122,7 @@ public class BleService extends Service {
         // and if the phone can't take it the command goes out over Bluetooth as before.
         if (!WatchTarget.relay(this) || isQuery(cmd)) { direct(cmd); return; }
         final android.content.Context c = getApplicationContext();
+        final long tapAt = android.os.SystemClock.elapsedRealtime();
         relayPool.execute(() -> {
             boolean ok = false, waitingOnPhone = false;
             try {
@@ -129,8 +130,11 @@ public class BleService extends Service {
                         com.google.android.gms.wearable.Wearable.getNodeClient(c).getConnectedNodes(), 2, java.util.concurrent.TimeUnit.SECONDS);
                 for (com.google.android.gms.wearable.Node n : nodes) {
                     waitingOnPhone = true;
+                    long t0 = android.os.SystemClock.elapsedRealtime();   // timing only: where a tap's delay goes
+                    Log.i(TAG, "timing: relay " + cmd + " sent at " + System.currentTimeMillis() + " (" + (t0 - tapAt) + " ms after the tap)");
                     byte[] r = com.google.android.gms.tasks.Tasks.await(com.google.android.gms.wearable.Wearable.getMessageClient(c)
                             .sendRequest(n.getId(), WatchTarget.PATH_CMD, cmd.getBytes()), 3, java.util.concurrent.TimeUnit.SECONDS);
+                    Log.i(TAG, "timing: relay " + cmd + " phone answered in " + (android.os.SystemClock.elapsedRealtime() - t0) + " ms");
                     waitingOnPhone = false;
                     if (r != null && "ok".equals(new String(r))) { ok = true; break; }
                 }

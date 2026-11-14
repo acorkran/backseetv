@@ -32,19 +32,24 @@ public class WatchCmdService extends WearableListenerService {
         }
         main.removeCallbacks(releaseWatch);
         main.postDelayed(releaseWatch, 120_000);   // keep the links warm while the watch is in use
-        Log.i(WatchLink.TAG, "relayed from watch: " + app.anancy.Diag.redact(cmd));
-        sendWhenReady(cmd, 0);
+        Log.i(WatchLink.TAG, "relayed from watch: " + app.anancy.Diag.redact(cmd) + " (timing: received at " + System.currentTimeMillis() + ")");
+        sendWhenReady(cmd, 0, android.os.SystemClock.elapsedRealtime());
         return Tasks.forResult("ok".getBytes());
     }
 
     // A cold-started RemoteService needs a moment to link up with the TVs.
-    private static void sendWhenReady(final String cmd, final int tries) {
+    private static void sendWhenReady(final String cmd, final int tries, final long receivedAt) {
         main.post(() -> {
             RemoteService s = RemoteService.get();
             boolean linked = s != null && (s.bleConnected() || "Wi-Fi".equals(s.transport()));
-            if (linked || (s != null && tries >= 16)) { s.send(cmd); return; }
+            if (linked || (s != null && tries >= 16)) {
+                s.send(cmd);
+                Log.i(WatchLink.TAG, "timing: " + app.anancy.Diag.redact(cmd) + " handed to the links "
+                        + (android.os.SystemClock.elapsedRealtime() - receivedAt) + " ms after it arrived (via " + s.transport() + ")");
+                return;
+            }
             if (tries >= 16) { Log.w(WatchLink.TAG, "dropped (remote never started): " + cmd); return; }
-            main.postDelayed(() -> sendWhenReady(cmd, tries + 1), 500);
+            main.postDelayed(() -> sendWhenReady(cmd, tries + 1, receivedAt), 500);
         });
     }
 }

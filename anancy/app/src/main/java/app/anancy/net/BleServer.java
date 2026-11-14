@@ -196,7 +196,7 @@ public class BleServer {
             if (last != null && n <= last) { Log.w(TAG, "BLE " + dev.getAddress() + ": replayed command, ignored"); return; }
             lastCounter.put(dev.getAddress(), n);
             final String cmd = opened[1].trim();
-            Log.i(TAG, "BLE cmd: " + app.anancy.Diag.redact(cmd));
+            Log.i(TAG, "BLE cmd: " + app.anancy.Diag.redact(cmd) + " (timing: at " + System.currentTimeMillis() + ")");
             if (cmd.startsWith("camble:")) setCamble(dev.getAddress(), "on".equals(cmd.substring(7).trim())); else exec(cmd);
             main.postDelayed(BleServer.this::pushState, 150);   // instant feedback; otherwise the remote waits for the 1s tick
         }

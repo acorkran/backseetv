@@ -1135,10 +1135,21 @@ public class RemoteActivity extends Activity {
                 applySelection(ns); refreshTargets(col, svc);
             }));
         }
-        if (svc.isSyncGroup()) {   // whose speakers a synced group uses
-            final boolean lo = svc.groupLeaderOnly();
+        {   // whose speakers a synced group uses. Always shown, so people know it exists: greyed out
+            // until a group is playing, and a tap then says what it needs.
+            // Usable as soon as Sync Playback is ticked, even while the screens are still linking: the
+            // choice is saved and the group starts with it.
+            final boolean lo = svc.groupLeaderOnly(), live = svc.isSyncGroup() || svc.isSyncPending();
             ui.hSep(col);
-            col.addView(ui.checkRow("Leader-only audio", lo, () -> { svc.setGroupAudio(!lo); refreshTargets(col, svc); }));
+            View row = ui.checkRow("Leader-only audio", lo, () -> {
+                if (!live) {
+                    toast("Turn on Sync Playback first");
+                    return;
+                }
+                svc.setGroupAudio(!lo); refreshTargets(col, svc);
+            });
+            if (!live) row.setAlpha(0.4f);
+            col.addView(row);
         }
         ui.hSep(col);
         addPairRows(col, svc);

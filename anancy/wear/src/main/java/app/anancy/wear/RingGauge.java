@@ -5,7 +5,8 @@ package app.anancy.wear;
 //            way the bezel turns to raise it. (It used to sit on the right edge filling bottom-up, which is
 //            anticlockwise there: turn the bezel one way, watch the bar go the other.)
 //   BOTTOM = TV battery (green / amber / red by level), a short arc filling left to right
-// Non-interactive — volume is driven by the bezel, battery by the tablet's state. Drawn as a fixed
+// Volume is driven by the bezel; tapping the top of the screen (over the arc) toggles mute, and a muted
+// TV greys the arc. Battery comes from the tablet's state. Drawn as a fixed
 // background layer so it never steals vertical space from the centred controls (that was the whole
 // reason the old 2x3 grid overflowed small round faces).
 
@@ -21,7 +22,7 @@ public class RingGauge extends View {
     private final Paint vol   = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF oval = new RectF();
     private int batteryPct = -1, volumePct = 0;
-    private boolean charging = false;
+    private boolean charging = false, muted = false;
     private final float stroke, inset;
     private static final float VOL_START = 165, VOL_SWEEP = 210, BATT_SWEEP = 70;
 
@@ -41,6 +42,8 @@ public class RingGauge extends View {
         if (pct == batteryPct && chg == charging) return;
         batteryPct = pct; charging = chg; invalidate();
     }
+    /** A muted TV: the volume arc keeps its level but turns grey, so you can see it's off, not at zero. */
+    public void setMuted(boolean m) { if (m == muted) return; muted = m; invalidate(); }
     public void setVolume(int pct) {
         pct = Math.max(0, Math.min(100, pct));
         if (pct == volumePct) return;
@@ -52,6 +55,7 @@ public class RingGauge extends View {
         // Canvas angles: 0=3 o'clock, 90=6 o'clock, 180=9 o'clock, 270=12 o'clock; positive sweep = clockwise.
         // VOLUME: from just below 9 o'clock, clockwise over 12, to just below 3 o'clock.
         cv.drawArc(oval, VOL_START, VOL_SWEEP, false, track);
+        vol.setColor(muted ? 0xFF6E6E73 : 0xFF5AA9E6);
         if (volumePct > 0) cv.drawArc(oval, VOL_START, VOL_SWEEP * (volumePct / 100f), false, vol);
         // BATTERY: centred on 6 o'clock, filling from the left (125deg) to the right (55deg).
         cv.drawArc(oval, 55, BATT_SWEEP, false, track);

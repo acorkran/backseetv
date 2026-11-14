@@ -174,8 +174,12 @@ public class ControlServer {
                     String host = param(q, "host");
                     grantHost(host, param(q, "hostid"), param(q, "hostkey"));   // the leader's key, sealed for us
                     if (want && host != null && !host.isEmpty()) {
-                        Cfg.applyConfig(ctx, "anancy_host", urlDecode(host));
-                        ctrl.reloadForSync(ctx);   // enter client mode so itemFor(cur) resolves the leader's library
+                        String hostIp = urlDecode(host);
+                        // Re-arming the SAME leader (e.g. an audio-mode change) must not reload its whole
+                        // library: that restarted the follower's player on every tick of the box.
+                        boolean same = ctrl.isClient() && hostIp.equals(Cfg.getStr(ctx, "anancy_host", ""));
+                        Cfg.applyConfig(ctx, "anancy_host", hostIp);
+                        if (!same) ctrl.reloadForSync(ctx);   // enter client mode so itemFor(cur) resolves the leader's library
                     }
                     String mute = param(q, "mute");   // leader-only audio (1) vs each screen its own sound (0)
                     if (mute != null) { boolean m = "1".equals(mute) || "true".equals(mute); ctrl.setSyncMuteFollower(m); Cfg.applyConfig(ctx, "anancy_sync_mute", m ? "1" : "0"); }

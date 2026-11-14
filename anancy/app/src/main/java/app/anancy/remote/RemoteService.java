@@ -493,17 +493,20 @@ public class RemoteService extends Service {
     public void setGroupAudio(boolean leaderOnly) {
         Cfg.p(this).edit().putString(PREF_GROUP_AUDIO, leaderOnly ? "leader" : "each").apply();
         if (!isSyncGroup()) return;
-        armGroup();   // push the new audio mode to the current followers
-        carryGroupSound(leaderOnly);
+        // Order matters, or a follower plays a split second it shouldn't: going leader-only, silence the
+        // followers FIRST and then give the leader the sound; going each-screen, settle every follower's
+        // mute FIRST and only then let them play their own sound.
+        if (leaderOnly) { armGroup(); carryGroupSound(true, null); }
+        else carryGroupSound(false, this::armGroup);
     }
     /** Ticking the box moves the sound; it doesn't just change who may make it. Each screen keeps its own
         mute, and a TV starts muted, so a muted leader went silent with leader-only on, and muted followers
         stayed silent with it off, until someone touched the volume. Now leader-only unmutes the leader if
         any screen was playing sound, and each-screen gives the followers the leader's mute. A group that
         was silent stays silent, and no volume level is ever raised. */
-    private void carryGroupSound(final boolean leaderOnly) {
+    private void carryGroupSound(final boolean leaderOnly, final Runnable then) {
         final String leader = syncLeaderId();
-        if (leader == null) return;
+        if (leader == null) { if (then != null) then.run(); return; }
         final java.util.List<String> members = new java.util.ArrayList<>(groupOrder());
         new Thread(() -> { try {
             java.util.Map<String, Boolean> muted = new java.util.HashMap<>();
@@ -518,14 +521,15 @@ public class RemoteService extends Service {
             Boolean leaderMuted = muted.get(leader);
             if (leaderMuted == null) { Diag.warn(TAG, "group audio: couldn't read the leader " + leader + " (" + deviceIp(leader) + ")"); return; }
             if (leaderOnly) {
-                if (anyAudible && leaderMuted) httpArm(deviceIp(leader), "/mute?on=0");
+                if (anyAudible && leaderMuted) armNow(deviceIp(leader), "/mute?on=0");
             } else {
                 for (java.util.Map.Entry<String, Boolean> e : muted.entrySet())
-                    if (!e.getKey().equals(leader) && e.getValue() != leaderMuted)
-                        httpArm(deviceIp(e.getKey()), "/mute?on=" + (leaderMuted ? 1 : 0));
+                    if (!e.getKey().equals(leader) && !e.getValue().equals(leaderMuted))
+                        armNow(deviceIp(e.getKey()), "/mute?on=" + (leaderMuted ? 1 : 0));   // done before they may play
             }
             Diag.log(TAG, "group audio -> " + (leaderOnly ? "leader only" : "each screen") + ", muted " + muted + ", audible " + anyAudible);
-        } catch (Throwable t) { Diag.warn(TAG, "group audio failed: " + t); } }, "group-audio").start();
+        } catch (Throwable t) { Diag.warn(TAG, "group audio failed: " + t); }
+        finally { if (then != null) main.post(then); } }, "group-audio").start();
     }
     /** One group member's /state over signed Wi-Fi, or null. */
     private JSONObject memberState(String id) {
@@ -590,6 +594,7 @@ public class RemoteService extends Service {
             syncPending = false;
             Diag.log(TAG, "sync group: screens linked after " + (android.os.SystemClock.elapsedRealtime() - syncPendingSince) + " ms, arming");
             Cfg.p(RemoteService.this).edit().putString(PREF_SYNCGROUP, "1").apply();
+            groupLinked = true;
             java.util.Map<String, String> ips = new java.util.LinkedHashMap<>();
             for (String id : groupOrder()) ips.put(id, deviceIp(id));
             Diag.log(TAG, "sync group: leader " + syncLeaderId() + ", ips " + ips + ", hosts " + hostIds + ", self " + (selfPlay() ? selfId() : "-"));
@@ -598,8 +603,10 @@ public class RemoteService extends Service {
             return;
         }
         if (android.os.SystemClock.elapsedRealtime() - syncPendingSince > SYNC_LINK_TIMEOUT_MS) {
-            syncPending = false; releaseWifi("sync");
             Diag.warn(TAG, "sync group: screens never became reachable over Wi-Fi");
+            // Turn the group OFF, not just stop waiting: left on, this phone counted itself the leader (it
+            // hosts the hotspot), the watch was pointed at it, and showed an empty, silent "screen".
+            setSyncGroup(false);
             toastMain("Couldn't link the screens over Wi-Fi. Put them on the same Wi-Fi and try again.");
             return;
         }
@@ -615,7 +622,10 @@ public class RemoteService extends Service {
     private void toastMain(final String msg) {
         main.post(() -> { try { android.widget.Toast.makeText(RemoteService.this, msg, android.widget.Toast.LENGTH_LONG).show(); } catch (Exception ignored) {} });
     }
+    /** The screens actually answered and the group was armed in this run (the saved setting alone isn't that). */
+    private volatile boolean groupLinked = false;
     public boolean setSyncGroup(boolean on) {
+        groupLinked = false;
         Diag.log(TAG, "sync group: " + (on ? "ON" : "OFF") + " requested, members " + groupOrder() + ", carProjecting=" + WifiRadio.carProjecting(this));
         if (!on) {
             syncPending = false; main.removeCallbacks(syncWait);
@@ -674,13 +684,18 @@ public class RemoteService extends Service {
     /** Fire-and-forget GET to a tablet's ControlServer (used to arm/disarm sync). */
     private void httpArm(final String ip, final String path) {
         if (ip == null || ip.isEmpty()) return;
-        new Thread(() -> { try {
+        new Thread(() -> armNow(ip, path)).start();
+    }
+    /** The same, on the calling thread: for when the next step must wait for this one to land. */
+    private void armNow(String ip, String path) {
+        if (ip == null || ip.isEmpty()) return;
+        try {
             java.net.HttpURLConnection cn = (java.net.HttpURLConnection) new java.net.URL("http://" + ip + ":8090" + path).openConnection();
             cn.setConnectTimeout(2500); cn.setReadTimeout(2500);
             app.anancy.Pairing.sign(this, cn);
             if (app.anancy.Pairing.fetch(this, cn) == null)
                 Diag.warn(TAG, "arm " + path.replaceAll("(hostkey|key)=[^&]*", "$1=…") + " @ " + ip + " -> no genuine answer");
-        } catch (Exception ignored) {} }).start();
+        } catch (Exception ignored) {}
     }
     /** Who commands actually go to: the leader alone when a group is armed, else the raw selection. */
     private java.util.Set<String> effectiveTargets() {
@@ -780,7 +795,18 @@ public class RemoteService extends Service {
         if (local) return;
         java.util.Set<String> sel = targets();
         int screens = sel.isEmpty() ? seenTablets.size() : sel.size();
-        if (showingSelf()) sel = java.util.Collections.singleton(selfId());   // only screen there is: the watch drives this device
+        // The watch's own Bluetooth link is what it SHOWS (now playing, volume, mute), and it took the
+        // first screen it heard: usually this phone, right next to it, even when the phone was only a
+        // muted follower. So it showed a muted 100% while the TV you were listening to said otherwise.
+        String leader = groupLinked && isSyncGroup() ? syncLeaderId() : null;   // a saved group isn't a linked one
+        if (leader != null && !(leader.equals(selfId()) && app.anancy.player.PlayerController.get().libraryEmpty()))
+            sel = java.util.Collections.singleton(leader);   // a linked group: the leader (never an empty phone)
+        else if (showingSelf()) sel = java.util.Collections.singleton(selfId());   // only screen there is: the watch drives this device
+        else if (selfPlay() && screens > 1) {   // this phone plus real TVs: show a real TV, like the phone's own card
+            java.util.Set<String> others = new java.util.LinkedHashSet<>(sel.isEmpty() ? seenTablets.keySet() : sel);
+            others.remove(selfId());
+            if (!others.isEmpty()) sel = others;
+        }
         app.anancy.net.WatchLink.publishRemote(this, sel, isSyncGroup() || screens > 1);
     }
 

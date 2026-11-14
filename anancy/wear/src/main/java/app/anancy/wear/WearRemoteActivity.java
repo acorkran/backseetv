@@ -73,10 +73,16 @@ public class WearRemoteActivity extends Activity {
 
     // volume popup
     private View volOverlay;
-    private View volFill;
     private TextView volText;
     private int volPct = 0;
-    private int volFillMaxPx;
+    private boolean tvMuted = false;
+    private long muteHeldUntil = 0, volHeldUntil = 0;
+    private static final long HOLD_MS = 2500;
+    private TextView muteSign;
+    private void showMuted() {
+        if (gauge != null) gauge.setMuted(tvMuted);
+        if (muteSign != null) muteSign.setVisibility(tvMuted ? View.VISIBLE : View.GONE);
+    }
     private Runnable hideVol;
 
     @Override protected void onCreate(Bundle b) {
@@ -519,6 +525,26 @@ public class WearRemoteActivity extends Activity {
         sv.addView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         wrap.addView(sv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // The watch had no mute: tap the arc right above play/pause. A muted TV greys the arc
+        // and shows the muted sign. (The bezel still works too: turning it up unmutes.)
+        muteSign = new TextView(this);
+        muteSign.setText("🔇"); muteSign.setTextSize(13); muteSign.setGravity(Gravity.CENTER);
+        muteSign.setVisibility(View.GONE);
+        FrameLayout.LayoutParams msp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        msp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; msp.topMargin = pad(12);
+        wrap.addView(muteSign, msp);
+        View muteTap = new View(this);
+        muteTap.setContentDescription("Mute");
+        muteTap.setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            tvMuted = !tvMuted; showMuted();   // instant; the TV's next state confirms it
+            muteHeldUntil = System.currentTimeMillis() + HOLD_MS;
+            send("mute");
+        });
+        FrameLayout.LayoutParams mtp = new FrameLayout.LayoutParams(pad(48), pad(30));   // just the strip above play/pause (same width)
+        mtp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        wrap.addView(muteTap, mtp);
+
         // Connection status: tiny, top-anchored over the gauges. Empty once ready (the arcs show battery).
         status = new TextView(this);
         status.setText("scanning…"); status.setTextColor(0xFFFFC107);
@@ -578,47 +604,31 @@ public class WearRemoteActivity extends Activity {
 
     // --- volume popup -------------------------------------------------------
     private View buildVolOverlay() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xE6202225); bg.setCornerRadius(pad(16));
-        box.setBackground(bg);
-        box.setPadding(pad(18), pad(12), pad(18), pad(12));
-
+        // Just the number, where the title was: the arc over the top is the gauge, and it moves with the
+        // bezel. (It used to be a box with its own bar in the middle, a second gauge for the same thing.)
         volText = new TextView(this);
-        volText.setText("Volume"); volText.setTextColor(Color.WHITE); volText.setTextSize(14);
+        volText.setTextColor(Color.WHITE); volText.setTextSize(26);
         volText.setTypeface(Typeface.DEFAULT_BOLD); volText.setGravity(Gravity.CENTER);
-        volText.setPadding(0, 0, 0, pad(8));
-        box.addView(volText);
-
-        FrameLayout track = new FrameLayout(this);
-        GradientDrawable tb = new GradientDrawable(); tb.setColor(0xFF44474C); tb.setCornerRadius(pad(4));
-        track.setBackground(tb);
-        volFillMaxPx = pad(120);
-        volFill = new View(this);
-        GradientDrawable fb = new GradientDrawable(); fb.setColor(0xFF8FD694); fb.setCornerRadius(pad(4));
-        volFill.setBackground(fb);
-        track.addView(volFill, new FrameLayout.LayoutParams(1, pad(8)));   // grows on showVol
-        box.addView(track, new LinearLayout.LayoutParams(volFillMaxPx, pad(8)));
-
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.CENTER;
-        box.setLayoutParams(lp);
-        volOverlay = box;
+        volText.setLayoutParams(lp);
+        volOverlay = volText;
         volOverlay.setVisibility(View.GONE);
-        return box;
+        return volText;
     }
 
     private void showVol() {
-        if (gauge != null) gauge.setVolume(volPct);   // live-update the volume arc
-        volText.setText("Volume  " + volPct + "%");
-        FrameLayout.LayoutParams fp = (FrameLayout.LayoutParams) volFill.getLayoutParams();
-        fp.width = Math.round(volFillMaxPx * (volPct / 100f));
-        volFill.setLayoutParams(fp);
+        if (gauge != null) gauge.setVolume(volPct);   // the arc is the gauge
+        volText.setText(volPct + "%");
         volOverlay.setVisibility(View.VISIBLE);
+        if (title != null) title.setVisibility(View.INVISIBLE);       // the number takes the title's place
+        if (subtitle != null) subtitle.setVisibility(View.INVISIBLE);
         if (hideVol != null) main.removeCallbacks(hideVol);
-        hideVol = new Runnable() { public void run() { volOverlay.setVisibility(View.GONE); } };
+        hideVol = new Runnable() { public void run() {
+            volOverlay.setVisibility(View.GONE);
+            if (title != null) title.setVisibility(View.VISIBLE);
+            if (subtitle != null) subtitle.setVisibility(View.VISIBLE);
+        } };
         main.postDelayed(hideVol, 1400);
     }
 
@@ -700,9 +710,16 @@ public class WearRemoteActivity extends Activity {
             String ep = i > 0 ? t.substring(i + 1) : "";
             title.setText(show.replace('.', ' ').trim());
             subtitle.setText(ep.replace('.', ' ').replace('⧸', '/').trim());
-            if (volOverlay.getVisibility() != View.VISIBLE)
-                volPct = (int) Math.round(o.optDouble("volume", 0) * 100);
+            // A tap or a bezel turn reaches the TV through the phone, so for a second or so the TV still
+            // reports the OLD value. Believing it flicked the arc back and forth (mute grey-blue-grey, the
+            // volume jumping back then forward). Hold what we just set until the TV agrees, or HOLD_MS.
+            long now = System.currentTimeMillis();
+            int tvVol = (int) Math.round(o.optDouble("volume", 0) * 100);
+            if (now >= volHeldUntil || Math.abs(tvVol - volPct) <= 7) { volHeldUntil = 0; volPct = tvVol; }
             if (gauge != null) gauge.setVolume(volPct);   // volume arc
+            boolean m = o.optBoolean("muted", false);
+            if (now >= muteHeldUntil || m == tvMuted) { muteHeldUntil = 0; tvMuted = m; }
+            showMuted();
             String ip = o.optString("ip", ""); if (!ip.isEmpty()) { tabletIp = ip; tabletId = o.optString("id", null); }   // for Wi-Fi /live
             playModeOn = o.optBoolean("playmode", false);
             updateToddlerCell();
@@ -730,7 +747,9 @@ public class WearRemoteActivity extends Activity {
                     stepSleep(up);
                 } else {                                  // bezel = VOLUME on the player (unchanged)
                     send(up ? "volup" : "voldown");
+                    if (up && tvMuted) { tvMuted = false; showMuted(); muteHeldUntil = System.currentTimeMillis() + HOLD_MS; }   // turning up unmutes the TV
                     volPct = Math.max(0, Math.min(100, volPct + (up ? 10 : -10)));
+                    volHeldUntil = System.currentTimeMillis() + HOLD_MS;
                     showVol();
                 }
             }

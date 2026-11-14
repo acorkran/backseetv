@@ -115,6 +115,8 @@ public class PlayerController {
     public void rescanAndRestart(Context ctx) { loadLibrary(ctx, true, NO_RETRY); }
     /** Re-read the library in CLIENT mode (anancy_host just set) so a follower can resolve the leader's ids.
         autoStart=false: don't blast playback — the sync loop drives what plays. */
+    /** Streaming another TV's library (a follower), not our own. */
+    public boolean isClient() { return clientItems != null; }
     public void reloadForSync(Context ctx) { gaveUpOnHost = null; loadLibrary(ctx, false, 0); }
     private void loadLibrary(final Context ctx, final boolean autoStart, final int attempt) {
         appCtx = ctx.getApplicationContext();
@@ -496,7 +498,7 @@ public class PlayerController {
 
     // --- SYNCED playback (follower): mirror the host's current item + position; muted, speed-nudged ----
     public boolean isSync() { return syncEnabled; }
-    public void setSync(boolean on) { syncEnabled = on; if (on) startSyncLoop(); else stopSyncLoop(); }
+    public void setSync(boolean on) { syncEnabled = on; if (on) { applyMute(); startSyncLoop(); } else stopSyncLoop(); }   // joining leader-only: silent at once, not a tick later
 
     // NTP-lite: one probe of the leader's /clock. Keep the offset from the LOWEST-RTT sample (least jitter).
     private long clockNow() { return android.os.SystemClock.elapsedRealtime(); }
@@ -623,7 +625,7 @@ public class PlayerController {
     }
     /** Follower audio each mirror tick. In LEADER-ONLY mode force gain 0 (audio comes from the leader, no
         echo — and a stray broadcast unmute can't make it sound). In EACH-SCREEN mode play its own volume. */
-    private void syncMute() { if (p != null && !sleeping) p.setVolume(syncMuteFollower ? 0f : effMult()); }
+    private void syncMute() { if (p != null && !sleeping) p.setVolume(effMult()); }
     /** Follower -> leader: "wait for me" / "carry on". */
     private void requestHold(final boolean want) {
         if (holdSent == want || appCtx == null) return;
@@ -1010,6 +1012,10 @@ public class PlayerController {
     public void overrideShowAudio(Boolean b) { audioOverride = b; applyMute(); }
     private float effMult() {
         if (napped) return 0f;   // a napped ("off") player is GUARANTEED silent, regardless of mute/override — nap-safe by design
+        // A leader-only follower is silent on EVERY path, not just the sync tick: loading an item, a wake,
+        // a mute toggle all used to set its own volume, and it played out loud for up to a tick (350 ms)
+        // until syncMute caught it. A split second of sound from a screen that should be quiet.
+        if (syncEnabled && syncMuteFollower) return 0f;
         return audioOverride != null ? (audioOverride ? 1f : 0f) : (muted ? 0f : 1f);
     }
     private void applyMute() { on(() -> { if (p != null && !sleeping) p.setVolume(effMult()); }); }
