@@ -99,6 +99,7 @@ public class RemoteActivity extends Activity {
     private int lastBattery = -1; private boolean lastCharging;   // TV battery, shown on the now-playing line
     private final Runnable uiTick = new Runnable() { public void run() {
         renderClock();
+        refreshLinkIcons();
         if (++tickN % 20 == 0) WearPusher.refreshStatus(RemoteActivity.this);
         main.postDelayed(this, 1000);
     }};
@@ -133,11 +134,19 @@ public class RemoteActivity extends Activity {
         // checkboxes are on their rows, so the menu's list of them was the same thing twice.
         headerChecks = new LinearLayout(this); headerChecks.setOrientation(LinearLayout.VERTICAL);
         header.addView(headerChecks, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        dot = new View(this);
-        GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
-        dot.setBackground(dg); dot.setClickable(true);
-        dot.setOnClickListener(v -> showConnBlurb());   // ephemeral "Bluetooth connected" / "Wi-Fi down" etc.
-        header.addView(dot, new LinearLayout.LayoutParams(dp(13), dp(13)));
+        // Connection at a glance: Bluetooth, hotspot and shared Wi-Fi, each lit while it carries a link
+        // to a screen (it used to be one dot that only said "something is connected"). Tap = details.
+        LinearLayout links = new LinearLayout(this); links.setOrientation(LinearLayout.HORIZONTAL); links.setGravity(Gravity.CENTER_VERTICAL);
+        links.setClickable(true); links.setPadding(dp(4), dp(6), 0, dp(6));
+        links.setOnClickListener(v -> showConnBlurb());
+        for (int k = 0; k < 3; k++) {
+            linkIcons[k] = new LinkIcon(this, k);
+            int sz = k == 1 ? 24 : 20;   // the hotspot glyph has the most detail
+            LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(sz), dp(sz)); ilp.leftMargin = dp(k == 0 ? 0 : 5);
+            links.addView(linkIcons[k], ilp);
+        }
+        dot = links;
+        header.addView(links, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(header);
 
         // --- content: three swappable tab views fill the middle (each scrolls) ---
@@ -316,18 +325,72 @@ public class RemoteActivity extends Activity {
     private void refreshAll() { refreshDeviceCards(); }
 
     // Ephemeral connection blurb near the corner light: "Bluetooth connected" / "Wi-Fi connected" / "down".
+    private final LinkIcon[] linkIcons = new LinkIcon[3];
+    private void refreshLinkIcons() {
+        RemoteService svc = RemoteService.get();
+        boolean[] on = svc != null && !local ? svc.linkLevels() : new boolean[3];
+        for (int k = 0; k < 3; k++) if (linkIcons[k] != null) linkIcons[k].setLit(on[k]);
+    }
+    /** Bluetooth rune, hotspot (a point broadcasting both ways) or Wi-Fi fan; lit green or greyed. */
+    private static final class LinkIcon extends View {
+        private final int kind; private boolean lit;
+        private final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        LinkIcon(android.content.Context c, int kind) {
+            super(c); this.kind = kind;
+            p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeCap(android.graphics.Paint.Cap.ROUND); p.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            setContentDescription(kind == 0 ? "Bluetooth" : kind == 1 ? "Hotspot" : "Shared Wi-Fi");
+        }
+        void setLit(boolean l) { if (l != lit) { lit = l; invalidate(); } }
+        @Override protected void onDraw(android.graphics.Canvas cv) {
+            float w = getWidth(), h = getHeight();
+            p.setColor(lit ? GOOD : 0x55FFFFFF); p.setStrokeWidth(w * 0.09f); p.setStyle(android.graphics.Paint.Style.STROKE);
+            if (kind == 0) {          // Bluetooth
+                android.graphics.Path b = new android.graphics.Path();
+                b.moveTo(w * 0.30f, h * 0.30f); b.lineTo(w * 0.70f, h * 0.68f); b.lineTo(w * 0.50f, h * 0.88f); b.lineTo(w * 0.50f, h * 0.12f);
+                b.lineTo(w * 0.70f, h * 0.32f); b.lineTo(w * 0.30f, h * 0.70f);
+                cv.drawPath(b, p);
+            } else if (kind == 1) {   // hotspot: a phone broadcasting (mast + waves), with a Wi-Fi badge
+                float sw = w * 0.07f; p.setStrokeWidth(sw);
+                cv.drawRoundRect(new android.graphics.RectF(w * 0.16f, h * 0.04f, w * 0.74f, h * 0.96f), w * 0.10f, w * 0.10f, p);
+                float cx = w * 0.45f, top = h * 0.40f;
+                cv.drawLine(cx, top, cx, h * 0.80f, p);                       // the mast
+                cv.drawLine(cx, h * 0.80f, cx - w * 0.07f, h * 0.84f, p); cv.drawLine(cx, h * 0.80f, cx + w * 0.07f, h * 0.84f, p);
+                p.setStrokeWidth(sw * 0.8f);
+                for (int i = 1; i <= 2; i++) {                                // waves both sides of its tip
+                    float r = w * 0.09f * i;
+                    android.graphics.RectF o = new android.graphics.RectF(cx - r, top - r, cx + r, top + r);
+                    cv.drawArc(o, -50, 100, false, p); cv.drawArc(o, 130, 100, false, p);
+                }
+                p.setStyle(android.graphics.Paint.Style.FILL); cv.drawCircle(cx, top, w * 0.045f, p);
+                // the badge: a filled square, Wi-Fi fan cut out of it in the background colour
+                android.graphics.RectF bg = new android.graphics.RectF(w * 0.56f, h * 0.60f, w * 0.98f, h * 0.98f);
+                cv.drawRoundRect(bg, w * 0.07f, w * 0.07f, p);
+                int keep = p.getColor(); p.setColor(BG); p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeWidth(w * 0.045f);
+                float bx = bg.centerX(), by = bg.bottom - h * 0.07f;
+                for (int i = 1; i <= 2; i++) { float r = w * 0.10f * i; cv.drawArc(new android.graphics.RectF(bx - r, by - r, bx + r, by + r), 225, 90, false, p); }
+                p.setStyle(android.graphics.Paint.Style.FILL); cv.drawCircle(bx, by, w * 0.025f, p); p.setColor(keep);
+            } else {                  // Wi-Fi fan
+                float cx = w / 2f, cy = h * 0.82f;
+                for (int i = 1; i <= 3; i++) {
+                    float r = w * 0.22f * i;
+                    cv.drawArc(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 225, 90, false, p);
+                }
+                p.setStyle(android.graphics.Paint.Style.FILL); cv.drawCircle(cx, cy, w * 0.07f, p);
+            }
+        }
+    }
     private void showConnBlurb() {
         RemoteService svc = RemoteService.get();
-        boolean ble = svc != null && svc.bleConnected();
-        boolean wifiUp = tvReach != null && tvReach.toLowerCase().startsWith("reachable");
-        String msg = (ble && wifiUp) ? "Bluetooth + Wi-Fi connected" : ble ? "Bluetooth connected" : wifiUp ? "Wi-Fi connected" : "Not connected";
+        boolean[] on = svc != null ? svc.linkLevels() : new boolean[3];
+        String msg = "Bluetooth: " + (on[0] ? "connected" : "off") + "\nHotspot: " + (on[1] ? "connected" : "off")
+                + "\nShared Wi-Fi: " + (on[2] ? "connected" : "off");
         TextView t = new TextView(this); t.setText(msg); t.setTextColor(TXT); t.setTextSize(13);
         t.setPadding(dp(14), dp(9), dp(14), dp(9));
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(12)); bg.setStroke(dp(1), 0x33FFFFFF);
         t.setBackground(bg);
         final android.widget.PopupWindow pop = new android.widget.PopupWindow(t, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, false);
         pop.setElevation(dp(10));
-        try { pop.showAsDropDown(dot, -dp(180), dp(4), Gravity.END); } catch (Exception ignored) {}
+        try { pop.showAsDropDown(dot, -dp(120), dp(4), Gravity.END); } catch (Exception ignored) {}
         main.postDelayed(() -> { try { pop.dismiss(); } catch (Exception ignored) {} }, 1900);
     }
 
@@ -712,7 +775,7 @@ public class RemoteActivity extends Activity {
     private final RemoteService.Listener svcListener = new RemoteService.Listener() {
         public void onStatus(String s) {
             boolean ready = s.startsWith("ready");
-            if (dot != null && dot.getBackground() instanceof GradientDrawable) ((GradientDrawable) dot.getBackground()).setColor(ready ? GOOD : WARN);
+            refreshLinkIcons();
             if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
@@ -1163,7 +1226,7 @@ public class RemoteActivity extends Activity {
         headerChecks.removeAllViews();
         if (svc == null || local || svc.tablets().isEmpty()) return;
         View allRow = ui.checkRow("All screens", svc.targets().isEmpty(), () -> applySelection(java.util.Collections.<String>emptySet()));
-        allRow.setPadding(dp(8), dp(3), dp(4), dp(3));
+        allRow.setPadding(dp(8), dp(3), dp(4), dp(3)); compact(allRow);
         headerChecks.addView(allRow);
         if (svc.selfPlay()) {
             final boolean lo = svc.groupLeaderOnly(), live = svc.isSyncGroup() || svc.isSyncPending();
@@ -1171,7 +1234,7 @@ public class RemoteActivity extends Activity {
                 if (!live) { toast("Turn on Sync Playback first"); return; }
                 svc.setGroupAudio(!lo); refreshHeaderChecks();
             });
-            row.setPadding(dp(8), dp(3), dp(4), dp(3));
+            row.setPadding(dp(8), dp(3), dp(4), dp(3)); compact(row);
             if (!live) row.setAlpha(0.4f);
             headerChecks.addView(row);
         }
@@ -1209,18 +1272,20 @@ public class RemoteActivity extends Activity {
     }
     /** Nearby screens this phone may not control yet, and the way to pair one: scan its code. */
     private void addPairRows(LinearLayout col, RemoteService svc) {
+        TextView pair = new TextView(this);
+        pair.setText("＋  Pair a screen");
+        pair.setTextColor(ACCENT); pair.setTextSize(15); pair.setPadding(dp(16), dp(11), dp(16), dp(11));
+        pair.setOnClickListener(v -> scanPairingCode());
+        col.addView(pair);
+        // Under it, screens nearby that this phone isn't paired with (new, or a pairing that was lost):
+        // a shortcut to the same scanner.
         for (java.util.Map.Entry<String, String> e : svc.unpairedNearby().entrySet()) {
             TextView t = new TextView(this);
             t.setText(e.getValue() + "  ·  not paired");
-            t.setTextColor(SUB); t.setTextSize(14); t.setPadding(dp(16), dp(9), dp(16), dp(9));
-            t.setOnClickListener(v -> scanPairingCode());
+            t.setTextColor(SUB); t.setTextSize(14); t.setPadding(dp(28), dp(7), dp(16), dp(9));
+            t.setOnClickListener(v -> { if (targetPopup != null) targetPopup.dismiss(); scanPairingCode(); });
             col.addView(t);
         }
-        TextView pair = new TextView(this);
-        pair.setText("＋  Pair a screen");
-        pair.setTextColor(ACCENT); pair.setTextSize(15); pair.setPadding(dp(16), dp(11), dp(16), dp(13));
-        pair.setOnClickListener(v -> scanPairingCode());
-        col.addView(pair);
     }
     private void scanPairingCode() {
         toast("Scan the code on the TV: grown-up unlock, Settings, Pair a remote");

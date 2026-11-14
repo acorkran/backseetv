@@ -1021,6 +1021,16 @@ public class RemoteService extends Service {
     }
     public String transport() { if (showingSelf()) return "local"; return bleUp() ? "BLE" : (wifi != null && wifi.isConnected() ? (local ? "local" : "Wi-Fi") : transport); }
     public boolean bleConnected() { return bleUp(); }
+    /** Which links to a TV are up right now: [Bluetooth, hotspot, shared Wi-Fi]. A Wi-Fi link counts as
+        "hotspot" when it runs over this phone's hotspot or a TV's hotspot we joined, otherwise "shared". */
+    public boolean[] linkLevels() {
+        boolean bt = bleUp(), wifiTv = false;
+        if (wifi != null && wifi.isConnected()) { String c = wifi.connectedId(); wifiTv = c != null && !c.equals(selfId()); }
+        if (!wifiTv) for (java.util.Map.Entry<String, String> e : probedOk.entrySet())
+            if (!e.getKey().equals(selfId()) && e.getValue().equals(deviceIp(e.getKey()))) { wifiTv = true; break; }
+        boolean viaHotspot = (app.anancy.net.HotspotService.running() && app.anancy.net.HotspotService.currentSsid() != null) || joinedKey != null;
+        return new boolean[]{bt, wifiTv && viaHotspot, wifiTv && !viaHotspot};
+    }
     public void setListener(Listener l) { ui = l; if (l != null) { l.onStatus(lastStatus); l.onState(lastState); } }
 
     @Override public void onDestroy() {
