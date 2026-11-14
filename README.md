@@ -123,7 +123,7 @@ _(The archived `legacy/` apps use a no-Gradle `./build.sh`; they're kept only fo
 
 ## Status & Android compatibility
 
-**v1.0.0.** Tested on a Samsung SM-T575 and a Lenovo TB-X606F tablet, a Galaxy S21 (Android 15), a Galaxy Watch
+**v0.1.0.** Tested on a Samsung SM-T575 and a Lenovo TB-X606F tablet, a Galaxy S21 (Android 15), a Galaxy Watch
 and a real Android Auto car. Other hardware may need adjusting. Android-TV-as-a-follower is
 exploratory, and a Play Store version of the phone app is planned for v1.1.
 
