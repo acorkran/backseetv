@@ -1026,6 +1026,10 @@ public class RemoteService extends Service {
             if (t != null && now - t < 350) return;
             lastToggle.put(cmd, now);
         }
+        // The TV's own remote page drives this TV and nothing else, straight over loopback. It used to fall
+        // into the "selected screens" fan-out below, which knows no screens on a TV, so its Toddler (and
+        // most other buttons) quietly went nowhere.
+        if (local) { if (wifi != null) wifi.send(cmd); return; }
         // In a synced group, PLAYBACK (play/pause/next/seek…) drives the leader alone and the followers mirror
         // it. Everything else is a PER-SCREEN action (power/light/sleep/toddler/volume/mute) and must hit
         // EVERY member — otherwise e.g. Power naps only the leader and leaves the followers' screens on.

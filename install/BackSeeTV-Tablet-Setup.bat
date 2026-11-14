@@ -56,9 +56,8 @@ echo    1. Factory reset it, or use one with NO Google or Samsung account on it.
 echo       During setup, skip every sign-in.
 echo    2. Settings - About tablet - Software information - tap Build number 7 times.
 echo    3. Settings - Developer options - turn on USB debugging.
-echo    4. Turn its volume down. It starts playing as soon as setup finishes.
-echo    5. Plug it into this PC with a data USB cable and unlock its screen.
-echo    6. The tablet asks "Allow USB debugging?".
+echo    4. Plug it into this PC with a data USB cable and unlock its screen.
+echo    5. The tablet asks "Allow USB debugging?".
 echo       Tick "Always allow from this computer" and tap Allow.
 echo       Without that, this PC can't set anything up.
 echo.
@@ -227,6 +226,7 @@ rem --- 6. shows, lock, start -------------------------------------------------
 echo.
 echo [6/6] Copying shows and finishing up...
 call :log "Step 6: shows and start"
+call :scan_existing
 call :copy_shows
 call :count_shows
 call :need_device
@@ -235,6 +235,7 @@ call :need_device
 rem A tablet that was already set up is running, so it won't notice new shows on
 rem its own: ask it to look again.
 if defined ALREADY if defined SRC call :rescan
+if defined ALREADY if not defined SRC if defined MOVED call :rescan
 
 call :log "Finished OK"
 call :stop_adb
@@ -296,6 +297,48 @@ findstr /c:"has not requested permission" "%OUT%" >nul && (
 type "%OUT%" >>"%LOG%"
 exit /b 0
 
+rem Videos already on the tablet (an older shows folder, Download, an SD card full of shows): offer
+rem to move each folder into BackSeeTV-Media, where the app looks. A move on the same card is instant
+rem and needs no space. The folder work runs on the tablet (bst-media.sh), where names with spaces and
+rem apostrophes are safe.
+:scan_existing
+if not exist "%HERE%bst-media.sh" exit /b 0
+echo       Looking for videos already on the tablet...
+call :need_device
+%A% push "%HERE%bst-media.sh" /data/local/tmp/bst-media.sh >nul 2>&1
+set "FOUNDLIST=%TEMP%\bst-found.txt"
+%A% shell sh /data/local/tmp/bst-media.sh list > "%FOUNDLIST%" 2>nul
+set /a FOUND=0
+for /f "usebackq tokens=1-3 delims=|" %%a in ("%FOUNDLIST%") do set /a FOUND+=1
+>>"%LOG%" echo Folders with videos already on the tablet: %FOUND%
+type "%FOUNDLIST%" >>"%LOG%"
+if %FOUND%==0 goto scan_done
+echo.
+echo       There are videos on the tablet outside BackSeeTV-Media. BackSeeTV only plays
+echo       what's in BackSeeTV-Media, so it can move them there. It's a move on the same
+echo       card: instant, nothing copied. Anything that isn't a video stays where it is.
+for /f "usebackq tokens=1-3 delims=|" %%a in ("%FOUNDLIST%") do call :ask_move "%%a" "%%b" "%%c"
+echo.
+:scan_done
+del "%FOUNDLIST%" >nul 2>&1
+exit /b 0
+
+:ask_move
+set "WHERE=on the tablet"
+if /i not "%~1"=="/storage/emulated/0" set "WHERE=on the SD card"
+if /i "%~2"=="DCIM" set "WHERE=%WHERE%, camera videos"
+set "ANS="
+set /p "ANS=      Move %~2 (%~3 videos, %WHERE%) into BackSeeTV-Media? [Y/N]: "
+if /i "%ANS%"=="Y" goto ask_move_yes
+>>"%LOG%" echo Left %~2 where it is
+exit /b 0
+:ask_move_yes
+call :need_device
+%A% shell "sh /data/local/tmp/bst-media.sh move \"%~1\" \"%~2\"" >>"%LOG%" 2>&1
+set "MOVED=1"
+echo       Moved %~2.
+exit /b 0
+
 rem Copy the shows folder into BackSeeTV-Media on the tablet, if it fits. --sync skips files
 rem already there, so a re-run only copies what's new.
 :copy_shows
@@ -303,7 +346,8 @@ if not defined SRC exit /b 0
 echo       Checking there's room on the tablet...
 call :need_device
 set "NEEDMB=0"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[math]::Ceiling(((Get-ChildItem -LiteralPath $env:SRC -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)/1MB)" > "%OUT%" 2>nul
+rem Only videos count: BackSeeTV plays .mp4, .mkv and .m4v, and anything else is skipped below.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[math]::Ceiling(((Get-ChildItem -LiteralPath $env:SRC -Recurse -File -Include *.mp4,*.mkv,*.m4v -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum)/1MB)" > "%OUT%" 2>nul
 set /p NEEDMB=<"%OUT%"
 set "FREEKB=0"
 %A% shell df -k /sdcard > "%OUT%" 2>&1
@@ -345,6 +389,14 @@ call :log "Some shows failed to copy"
 exit /b 0
 
 :push_one
+rem A folder with no videos in it (music, photos...) isn't a show: say so and don't copy it.
+if not exist "%~1\" goto push_go
+dir /s /b "%~1\*.mp4" "%~1\*.mkv" "%~1\*.m4v" >nul 2>&1
+if not errorlevel 1 goto push_go
+echo       Skipping %~nx1: no videos in it (BackSeeTV plays .mp4, .mkv and .m4v files).
+>>"%LOG%" echo Skipped %~nx1: no .mp4, .mkv or .m4v files
+exit /b 0
+:push_go
 echo       Copying %~nx1...
 call :need_device
 %A% push --sync "%~1" /sdcard/BackSeeTV-Media/ >>"%LOG%" 2>&1
@@ -362,7 +414,8 @@ rem How many show folders the app will find: internal storage and any SD card.
 :count_shows
 set "SHOWS=0"
 call :need_device
-%A% shell "ls -d /sdcard/BackSeeTV-Media/*/ /sdcard/Anancy/*/ /sdcard/KidsTV/*/ /sdcard/Kidodi/*/ /storage/*/BackSeeTV-Media/*/ /storage/*/Anancy/*/ /storage/*/KidsTV/*/ /storage/*/Kidodi/*/ 2>/dev/null" > "%OUT%" 2>nul
+rem Only folders with a video in them: a folder of music would count, and the app skips it.
+%A% shell "for d in /sdcard/BackSeeTV-Media/*/ /storage/*/BackSeeTV-Media/*/; do [ -d \"$d\" ] && find \"$d\" -type f \( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.m4v' \) 2>/dev/null | head -1 | grep -q . && echo \"$d\"; done" > "%OUT%" 2>nul
 for /f "usebackq delims=" %%l in ("%OUT%") do set /a SHOWS+=1
 >>"%LOG%" echo Show folders on the tablet: %SHOWS%
 type "%OUT%" >>"%LOG%"

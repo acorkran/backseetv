@@ -152,7 +152,7 @@ On Windows 10 or 11, `install/BackSeeTV-Tablet-Setup.bat` does B1 and B2 for you
 Google's adb tools, finds the tablet, checks it has no accounts, installs the app, makes it the
 device owner, and starts the locked show.
 
-1. Put `BackSeeTV-<version>.apk` in the same folder as the `.bat`.
+1. Put `BackSeeTV-<version>.apk` and `bst-media.sh` (from `install/`) in the same folder as the `.bat`.
 2. On the tablet: factory reset (skip every sign-in), then turn on **USB debugging**. Android doesn't
    let any script do this part.
 3. Plug it in and double-click the `.bat`. When the tablet asks **Allow USB debugging?**, tick
@@ -162,7 +162,12 @@ device owner, and starts the locked show.
    skip. Inside that folder, one sub-folder per show (`.mp4`, `.mkv` or `.m4v`); each show becomes a
    playlist. A folder of videos with no sub-folders becomes one show. The script checks the shows
    fit (keeping 1 GB free) before copying, and only copies what's new on a re-run. A
-   `BackSeeTV-Media` folder next to the `.bat` is used without asking.
+   `BackSeeTV-Media` folder next to the `.bat` is used without asking. Folders with no videos in
+   them (music, photos) are skipped.
+5. If the tablet already has videos somewhere else (an older shows folder, `Download`, an SD card),
+   the script lists each folder and asks whether to move it into `BackSeeTV-Media`, where the app
+   looks. It's a move on the same card, so it's instant and needs no space; anything that isn't a
+   video stays where it is.
 
 Shows on a microSD card work too, with no script: a folder called `BackSeeTV-Media` on the card, one folder
 per show inside it.

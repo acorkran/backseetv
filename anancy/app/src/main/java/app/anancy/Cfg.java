@@ -29,7 +29,7 @@ public class Cfg {
             {"anancy_name",          "str", ""},     // this player's friendly name ("" = fall back to the model); see Identity
             {"anancy_flash_ms",      "int", "3000"},
             {"anancy_loop",          "int", "1"},
-            {"anancy_lock_volkeys",  "int", "0"},   // 1 = the TV's own volume buttons do nothing (remotes still can)
+            {"anancy_lock_volkeys",  "int", "0"},   // 1 = the TV's own volume buttons do nothing (remotes still can); default 1 on a TV, see volKeysLocked
             {"anancy_conn",          "str", "ble"},
             {"anancy_playmode_sound","str", "muted"},
             {"anancy_esc_fingers",   "int", "4"},
@@ -53,6 +53,10 @@ public class Cfg {
 
     public static SharedPreferences p(Context c) { return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
 
+    /** The TV's own volume buttons: locked by default on a TV (a child holding it can't blast or silence
+        it), unlocked by default on a phone (it's someone's phone). A choice made in Settings always wins. */
+    public static boolean volKeysLocked(Context c) { return getInt(c, "anancy_lock_volkeys", isTv(c) ? 1 : 0) == 1; }
+    static boolean isTv(Context c) { return "player".equals(p(c).getString("role", "")); }
     public static int getInt(Context c, String k, int d) {
         try { if (p(c).contains(k)) return p(c).getInt(k, d); } catch (Exception ignored) {}
         try { return Settings.Global.getInt(c.getContentResolver(), k, d); } catch (Exception e) { return d; }
@@ -91,6 +95,7 @@ public class Cfg {
             for (; i < KEYS.length; i++) {
                 String[] k = KEYS[i];
                 String name = k[0], type = k[1], def = k[2];
+                if ("anancy_lock_volkeys".equals(name)) def = isTv(c) ? "1" : "0";   // see volKeysLocked
                 if ("anancy_pin".equals(name)) {
                     String pin = getStr(c, name, def);
                     pinSet = pin != null && !pin.isEmpty();

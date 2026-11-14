@@ -93,14 +93,14 @@ public final class Library {
         } catch (Exception e) { Log.w(TAG, "grantStorage: " + e); }
     }
 
-    // Media folder names to scan: "BackSeeTV-Media", plus the project's earlier names so a library
-    // copied under an older build is still found WITHOUT the user moving it (all matches are merged).
-    // Only the first is ever shown to users; new folders (Imports) are made under it.
+    // The media folder: "BackSeeTV-Media", on internal storage or any SD card. New folders (Imports)
+    // are made under it. Earlier builds also scanned the project's older names, which meant nothing to
+    // anyone else; the setup script now finds videos in any folder and offers to move them in.
     // The names, oldest first: KidsTV, the first kiosk, built around Kodi. Kidodi, kids + Kodi.
     // Anancy, after it left Kodi for its own player: Anansi, the trickster and keeper of stories,
     // spinning one web across many screens. BackSeeTV: TV for the back seat, and a way to see the
     // kids through the camera on the Android Auto dash without turning round.
-    static final String[] MEDIA_DIRS = { "BackSeeTV-Media", "Anancy", "KidsTV", "Kidodi" };
+    static final String[] MEDIA_DIRS = { "BackSeeTV-Media" };
     /** Candidate media roots across primary + removable volumes (portable, no hardcoded UUID). */
     /** The same test the scanner uses, so a folder picker can show counts that match reality. */
     public static boolean isVideo(File f) {

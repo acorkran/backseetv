@@ -273,9 +273,10 @@ public class RemoteActivity extends Activity {
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
         // Toddler was send("playmode:on") with no way back: the front seat could start the playground
         // and then had no way to stop it (the escape gesture is on the tablet, in the back seat).
-        g2.addView(ui.gridCell(IconView.BEAR, PURPLE, "Toddler", () -> {
-            send("playmode:toggle"); toast(lastPlaymode ? "Play mode off" : "Play mode on the TV");
-        }, false), gcLp(1f));
+        toddlerCell = ui.gridCell(IconView.BEAR, PURPLE, "Toddler", () -> {
+            send("playmode:toggle"); toast(lastPlaymode ? "Toddler lock off" : "Toddler lock on");
+        }, false);
+        g2.addView(toddlerCell, gcLp(1f));
         g2.addView(ui.gridCell(IconView.POWER, ORANGE, "Power", () -> send("power"), false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.WATCH, GOOD, "Check-in", this::openStill, false), gcLp(1f));
         g2.addView(ui.gridCell(IconView.VOLDOWN, 0xFF8390A6, "Vol −", () -> send("voldown"), true), gcLp(1.1f));
@@ -439,6 +440,11 @@ public class RemoteActivity extends Activity {
     private void showTvCard() {
         if (tvCard != null) return;
         deviceCards.removeAllViews();
+        // One screen only, this TV: no framed scrolling panel around a list of one.
+        if (cardsPanel != null) {
+            cardsPanel.setBackground(null); cardsPanel.setPadding(0, 0, 0, 0);
+            cardsPanel.setVerticalScrollBarEnabled(false);
+        }
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14)); bg.setStroke(dp(2), ACCENT);
         c.setBackground(bg);
@@ -448,7 +454,7 @@ public class RemoteActivity extends Activity {
         LargeIcon large = new LargeIcon(this);
         GradientDrawable lb = new GradientDrawable(); lb.setShape(GradientDrawable.OVAL); lb.setColor(0xAA000000); large.setBackground(lb);
         large.setContentDescription("Back to the show");
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.TOP); lp.setMargins(0, dp(6), dp(6), 0);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.CENTER);   // centred: the whole card goes back
         art.addView(large, lp);
         art.setOnClickListener(v -> finish());   // the show is right underneath: back to it, locked again
         large.setOnClickListener(v -> finish());
@@ -788,6 +794,16 @@ public class RemoteActivity extends Activity {
         if (svc != null) svc.setListener(svcListener); else main.postDelayed(this::attach, 300);
     }
     private void send(String cmd) { RemoteService svc = RemoteService.get(); if (svc != null) svc.send(cmd); }
+    private View toddlerCell;
+    /** The Toddler button lights up while the screen's toddler lock is on. */
+    private void showToddler(boolean on) {
+        if (toddlerCell == null || !(toddlerCell.getBackground() instanceof GradientDrawable)) return;
+        GradientDrawable g = (GradientDrawable) toddlerCell.getBackground();
+        g.setColor(withAlpha(PURPLE, on ? 0x77 : 0x22));
+        g.setStroke(dp(on ? 2 : 1), withAlpha(PURPLE, on ? 0xFF : 0x55));
+        if (toddlerCell instanceof LinearLayout && ((LinearLayout) toddlerCell).getChildAt(1) instanceof TextView)
+            ((TextView) ((LinearLayout) toddlerCell).getChildAt(1)).setText(on ? "Toddler: on" : "Toddler");
+    }
 
     /** Position / sleep countdown interpolated from the last push (ticks every second while visible). */
     private void renderClock() {
@@ -832,6 +848,7 @@ public class RemoteActivity extends Activity {
             // queue mode + connection level + the TV's hotspot creds (present only while it runs)
             lastShuffle = o.optBoolean("shuffle", lastShuffle); lastLoop = o.optBoolean("loop", lastLoop);
             lastPlaymode = o.optBoolean("playmode", lastPlaymode);
+            showToddler(lastPlaymode);
             if (o.has("conn")) lastConn = o.optString("conn", lastConn);
             JSONObject hs = o.optJSONObject("hotspot");
             String wasHs = hsSsid;
@@ -1214,6 +1231,14 @@ public class RemoteActivity extends Activity {
             note.setText("This remote controls this TV only. To choose screens or sync several, use a phone set up as the remote.");
             note.setTextColor(SUB); note.setTextSize(13); note.setPadding(dp(14), dp(10), dp(14), dp(12));
             col.addView(note);
+            // The TV's way out, last in its menu like a phone's Shut down: off the locked show to the
+            // tablet's own home screen.
+            View sep = new View(this); sep.setBackgroundColor(0x22FFFFFF);
+            col.addView(sep, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            col.addView(menuCell("Exit to the tablet's home screen", WARN, () -> {
+                if (app.anancy.player.PlayerActivity.exitToLauncher()) finish();
+                else toast("The show isn't running");
+            }));
             return;
         }
         addPairRows(col, svc);
@@ -1295,7 +1320,34 @@ public class RemoteActivity extends Activity {
         col.addView(sep, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
         col.addView(menuCell("Shut down BackSeeTV", WARN, () -> confirmShutdown(this)));
     }
+    /** Pairing needs a way to reach the screen afterwards: Bluetooth (always), or shared Wi-Fi. Ask for
+        Bluetooth first (apps can't switch radios on themselves, Android shows its own prompt); if that's
+        declined, Wi-Fi will do; with both off, say so and offer the Wi-Fi switch. */
     private void scanPairingCode() {
+        android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
+        android.bluetooth.BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
+        if (ad != null && !ad.isEnabled()) {
+            try { startActivityForResult(new Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE), 44); return; }
+            catch (Exception e) { /* no permission to ask: fall through to the Wi-Fi check */ }
+        }
+        openPairingScanner(ad != null && ad.isEnabled());
+    }
+    private void openPairingScanner(boolean btOn) {
+        if (!btOn && app.anancy.net.HotspotService.wifiSwitchedOff(this)) {
+            new AlertDialog.Builder(this).setTitle("Turn on Bluetooth or Wi-Fi")
+                    .setMessage("This phone reaches the screen over Bluetooth, or over Wi-Fi when they share a network. "
+                            + "With both off, it can pair but can't connect.")
+                    .setPositiveButton("Wi-Fi settings", (d, w) -> {
+                        try { startActivity(new Intent(android.provider.Settings.Panel.ACTION_WIFI)); }
+                        catch (Exception e) { startActivity(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)); }
+                    })
+                    .setNeutralButton("Pair anyway", (d, w) -> launchPairingScanner())
+                    .setNegativeButton("Cancel", null).show();
+            return;
+        }
+        launchPairingScanner();
+    }
+    private void launchPairingScanner() {
         toast("Scan the code on the TV: grown-up unlock, Settings, Pair a remote");
         try { startActivityForResult(new Intent(this, QrScanActivity.class), 43); } catch (Exception e) { toast("Couldn't open the scanner"); }
     }
@@ -2012,6 +2064,7 @@ public class RemoteActivity extends Activity {
     }
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == 44) { openPairingScanner(res == RESULT_OK); return; }   // after the Bluetooth prompt
         if (req == 42 && res == RESULT_OK && data != null && data.getData() != null) {
             final Uri uri = data.getData();
             Toast.makeText(this, "Finding the TV…", Toast.LENGTH_SHORT).show();

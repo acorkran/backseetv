@@ -212,8 +212,10 @@ public class PlayerActivity extends Activity {
     @SuppressWarnings("SetJavaScriptEnabled")
     private void doStartPlayMode() {
         if (playWeb != null || root == null) return;
-        // Turned on from the TV's own remote page: the show is underneath it, so bring it up.
-        if (!visible) try { startActivity(new Intent(this, PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)); } catch (Exception ignored) {}
+        // Turned on from the TV's own remote page: stay there (its Toddler button lights up) and have the
+        // playground ready over the show for when the grown-up goes back to it. From a phone or watch,
+        // bring the show up as before.
+        if (!visible && !showOnRemote) try { startActivity(new Intent(this, PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)); } catch (Exception ignored) {}
         if (napped) { setNapScreen(false); PlayerController.get().play(); }   // can't play over a black nap screen
         // Opt-in, debug builds only: exposes the playground on a WebView devtools socket so it
         // can be driven over CDP from a dev box, which is the only way to test real multi-finger
@@ -973,7 +975,7 @@ public class PlayerActivity extends Activity {
             // accident. Consumed either way, so the system slider never shows; remotes still work.
             // Toddler mode always locks them: mashing volume-up there raises the level and clears the
             // saved mute, so the show would come back louder and with sound after exit.
-            if (e.getAction() == KeyEvent.ACTION_DOWN && playWeb == null && Cfg.getInt(this, "anancy_lock_volkeys", 0) != 1)
+            if (e.getAction() == KeyEvent.ACTION_DOWN && playWeb == null && !Cfg.volKeysLocked(this))
                 PlayerController.get().nudge(k == KeyEvent.KEYCODE_VOLUME_UP ? 0.1f : -0.1f);
             return true;   // consume -> no system volume slider (kid-proof)
         }

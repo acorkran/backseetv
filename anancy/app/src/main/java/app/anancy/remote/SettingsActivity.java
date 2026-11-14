@@ -136,7 +136,7 @@ public class SettingsActivity extends Activity {
             int n = loop ? 0 : 1;
             Cfg.put(this, "anancy_loop", n); loopback("/loop?on=" + n); postRebuild();
         });
-        final boolean lk = Cfg.getInt(this, "anancy_lock_volkeys", 0) == 1;
+        final boolean lk = Cfg.volKeysLocked(this);
         actionRow("Lock the volume buttons", lk ? "☑ locked" : "☐ off", () -> {
             Cfg.put(this, "anancy_lock_volkeys", lk ? 0 : 1); postRebuild();
         });
@@ -238,17 +238,8 @@ public class SettingsActivity extends Activity {
         lp.setMargins(0, dp(24), 0, 0); back.setLayoutParams(lp);
         back.setOnClickListener(v -> finish());
         col.addView(back);
-        if (!"remote".equals(getSharedPreferences("anancy", MODE_PRIVATE).getString("role", ""))) {
-            // Leaving the kiosk for the tablet's own home screen (it was in the old grown-up menu).
-            Button exit = new Button(this); exit.setText("Exit to the tablet's home screen"); exit.setAllCaps(false); exit.setTextSize(16);
-            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
-            elp.setMargins(0, dp(10), 0, dp(16)); exit.setLayoutParams(elp);
-            exit.setOnClickListener(v -> {
-                if (app.anancy.player.PlayerActivity.exitToLauncher()) finish();
-                else toast("The show isn't running");
-            });
-            col.addView(exit);
-        }
+        // A TV's "Exit to the tablet's home screen" is in the remote page's menu now, beside the
+        // phone's Shut down.
     }
 
     private void postRebuild() { col.postDelayed(() -> { build(); refreshStatus(); }, 800); }
