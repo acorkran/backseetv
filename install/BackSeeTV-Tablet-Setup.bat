@@ -6,7 +6,7 @@ rem  Plug a freshly reset tablet in over USB and double-click this file. It gets
 rem  Google's adb tools, finds the tablet, installs BackSeeTV and sets it up
 rem  as a locked kiosk (device owner).
 rem
-rem  On its own, it downloads the latest BackSeeTV release from GitHub. Optional,
+rem  On its own, it downloads BackSeeTV from this script's own GitHub release. Optional,
 rem  next to this file:
 rem    BackSeeTV-VERSION.apk     use this app instead of downloading one
 rem    BackSeeTV-Media\           your shows, one folder per show.
@@ -32,9 +32,10 @@ setlocal EnableExtensions EnableDelayedExpansion
 title BackSeeTV - tablet setup
 
 rem Where to download the app (and its tablet-side helper) from when they don't sit next to
-rem this file: the latest release on GitHub.
-set "REL_URL=https://github.com/acorkran/backseetv/releases/latest/download"
-set "APK_URL=%REL_URL%/BackSeeTV.apk"
+rem this file: the release this script ships in. Bump VER with anancyVersion each release.
+set "VER=0.1.0"
+set "REL_URL=https://github.com/acorkran/backseetv/releases/download/v%VER%"
+set "APK_URL=%REL_URL%/BackSeeTV-%VER%.apk"
 set "MEDIA_SH_URL=%REL_URL%/bst-media.sh"
 
 set "HERE=%~dp0"
@@ -94,8 +95,8 @@ for %%F in ("%HERE%BackSeeTV*.apk") do (
 )
 if defined APK goto have_apk
 if not defined APK_URL goto no_apk
-echo       Downloading the latest BackSeeTV from GitHub...
-set "APK=%BST_HOME%\BackSeeTV.apk"
+echo       Downloading BackSeeTV %VER% from GitHub...
+set "APK=%BST_HOME%\BackSeeTV-%VER%.apk"
 set "BST_APK=%APK%"
 set "BST_URL=%APK_URL%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri $env:BST_URL -OutFile $env:BST_APK" >"%OUT%" 2>&1
