@@ -140,6 +140,12 @@ The kiosk ships via GitHub / EMM (device-owner can't come from the Play Store), 
 Still on the list: promoting `HotspotService` to a typed foreground service (works today
 via the device-owner exemption).
 
+## Support
+
+BackSeeTV is free for personal use. If it saves a car trip, you can buy me a coffee:
+
+[![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20BackSeeTV-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/acorkran)
+
 ## Contributing
 
 This is a personal portfolio project — issues and pull requests aren't being accepted. You're welcome to fork it under the license below.

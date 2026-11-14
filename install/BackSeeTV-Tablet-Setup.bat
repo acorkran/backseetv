@@ -6,9 +6,10 @@ rem  Plug a freshly reset tablet in over USB and double-click this file. It gets
 rem  Google's adb tools, finds the tablet, installs BackSeeTV and sets it up
 rem  as a locked kiosk (device owner).
 rem
-rem  Put next to this file:
-rem    BackSeeTV-VERSION.apk     the app (or set APK_URL below)
-rem    BackSeeTV-Media\           optional: your shows, one folder per show.
+rem  On its own, it downloads the latest BackSeeTV release from GitHub. Optional,
+rem  next to this file:
+rem    BackSeeTV-VERSION.apk     use this app instead of downloading one
+rem    BackSeeTV-Media\           your shows, one folder per show.
 rem                               Without it, the script asks for a folder.
 rem
 rem  Every run writes BackSeeTV-setup-log.txt next to this file. Attach it to
@@ -30,8 +31,11 @@ exit /b
 setlocal EnableExtensions EnableDelayedExpansion
 title BackSeeTV - tablet setup
 
-rem Where to download the app from when no APK sits next to this file.
-set "APK_URL="
+rem Where to download the app (and its tablet-side helper) from when they don't sit next to
+rem this file: the latest release on GitHub.
+set "REL_URL=https://github.com/acorkran/backseetv/releases/latest/download"
+set "APK_URL=%REL_URL%/BackSeeTV.apk"
+set "MEDIA_SH_URL=%REL_URL%/bst-media.sh"
 
 set "HERE=%~dp0"
 set "BST_HOME=%LOCALAPPDATA%\BackSeeTV"
@@ -90,6 +94,7 @@ for %%F in ("%HERE%BackSeeTV*.apk") do (
 )
 if defined APK goto have_apk
 if not defined APK_URL goto no_apk
+echo       Downloading the latest BackSeeTV from GitHub...
 set "APK=%BST_HOME%\BackSeeTV.apk"
 set "BST_APK=%APK%"
 set "BST_URL=%APK_URL%"
@@ -227,10 +232,17 @@ echo.
 echo [6/6] Copying shows and finishing up...
 call :log "Step 6: shows and start"
 call :scan_existing
-if not exist "%HERE%bst-media.sh" exit /b 0
+set "MEDIA_SH=%HERE%bst-media.sh"
+if exist "%MEDIA_SH%" goto have_media_sh
+set "MEDIA_SH=%BST_HOME%\bst-media.sh"
+set "BST_URL=%MEDIA_SH_URL%"
+set "BST_APK=%MEDIA_SH%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -UseBasicParsing -Uri $env:BST_URL -OutFile $env:BST_APK" >>"%LOG%" 2>&1
+if not exist "%MEDIA_SH%" exit /b 0
+:have_media_sh
 echo       Looking for videos already on the tablet...
 call :need_device
-%A% push "%HERE%bst-media.sh" /data/local/tmp/bst-media.sh >nul 2>&1
+%A% push "%MEDIA_SH%" /data/local/tmp/bst-media.sh >nul 2>&1
 set "FOUNDLIST=%TEMP%\bst-found.txt"
 %A% shell sh /data/local/tmp/bst-media.sh list > "%FOUNDLIST%" 2>nul
 set /a FOUND=0

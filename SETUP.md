@@ -157,7 +157,8 @@ On Windows 10 or 11, `install/BackSeeTV-Tablet-Setup.bat` does B1 and B2 for you
 Google's adb tools, finds the tablet, checks it has no accounts, installs the app, makes it the
 device owner, and starts the locked show.
 
-1. Put `BackSeeTV-<version>.apk` and `bst-media.sh` (from `install/`) in the same folder as the `.bat`.
+1. Download `BackSeeTV-Tablet-Setup.bat` from the latest **Release**. It downloads the app itself;
+   a `BackSeeTV-<version>.apk` placed next to it is used instead.
 2. On the tablet: factory reset (skip every sign-in), then turn on **USB debugging**. Android doesn't
    let any script do this part.
 3. Plug it in and double-click the `.bat`. When the tablet asks **Allow USB debugging?**, tick
