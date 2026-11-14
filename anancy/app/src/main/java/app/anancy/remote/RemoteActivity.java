@@ -56,7 +56,7 @@ public class RemoteActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final RemoteUi ui = new RemoteUi(this);   // stateless view builders (extracted; see RemoteUi)
-    private TextView titleDot;   // the "BackSeeTV" wordmark (menu button + popup anchor)
+    private View titleDot;   // the app icon (menu button + popup anchor)
     private View dot;            // the connection light (top-right corner); tap = ephemeral status text
     private TextView linkLabel, title, subtitle, timeText, sleepText, plNow;
     private LinearLayout deviceCards;   // per-screen cards with checkboxes on the Remote tab
@@ -120,14 +120,19 @@ public class RemoteActivity extends Activity {
         titleRow.setOrientation(LinearLayout.HORIZONTAL); titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setClickable(true); titleRow.setPadding(0, dp(2), dp(10), dp(2));
         titleRow.setOnClickListener(v -> showTargetMenu());
-        titleDot = new TextView(this);
-        titleDot.setText("BackSeeTV"); titleDot.setTextColor(TXT); titleDot.setTextSize(24);
-        titleDot.setTypeface(titleDot.getTypeface(), android.graphics.Typeface.BOLD);
-        titleRow.addView(titleDot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        android.widget.ImageView logo = new android.widget.ImageView(this);
+        logo.setImageDrawable(getApplicationInfo().loadIcon(getPackageManager()));
+        logo.setContentDescription("Menu");
+        titleDot = logo;
+        titleRow.addView(logo, new LinearLayout.LayoutParams(dp(44), dp(44)));
         TextView chev = new TextView(this); chev.setText(" ⌄"); chev.setTextColor(TXT); chev.setTextSize(20);
-        chev.setPadding(dp(6), 0, 0, dp(6));
+        chev.setPadding(dp(4), 0, 0, dp(6));
         titleRow.addView(chev);
-        header.addView(titleRow, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));   // title takes the flexible left
+        header.addView(titleRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // "All screens" and "Leader-only audio" live up here now, not in the menu: the screens' own
+        // checkboxes are on their rows, so the menu's list of them was the same thing twice.
+        headerChecks = new LinearLayout(this); headerChecks.setOrientation(LinearLayout.VERTICAL);
+        header.addView(headerChecks, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         dot = new View(this);
         GradientDrawable dg = new GradientDrawable(); dg.setShape(GradientDrawable.OVAL); dg.setColor(WARN);
         dot.setBackground(dg); dot.setClickable(true);
@@ -203,7 +208,7 @@ public class RemoteActivity extends Activity {
         // Framed, scrollable panel of neat per-screen cards: fills the space, scrolls when there are many.
         ScrollView cardsScroll = new ScrollView(this);
         GradientDrawable frameBg = new GradientDrawable(); frameBg.setColor(0x10FFFFFF); frameBg.setCornerRadius(dp(16)); frameBg.setStroke(dp(1), 0x22FFFFFF);
-        cardsScroll.setBackground(frameBg); cardsScroll.setClipToOutline(true); cardsScroll.setPadding(dp(8), dp(8), dp(8), dp(8));
+        cardsScroll.setBackground(frameBg); cardsScroll.setClipToOutline(true); cardsScroll.setPadding(dp(3), dp(3), dp(3), dp(3));
         // Always showing whenever there's more to scroll to (Android hides it when everything fits), or
         // nobody would know there are more screens below the first card.
         cardsScroll.setVerticalScrollBarEnabled(true);
@@ -219,6 +224,8 @@ public class RemoteActivity extends Activity {
         refreshDeviceCards();
         leftCol.addView(cardsScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         cardsPanel = cardsScroll;
+        playbackRow = new LinearLayout(this); playbackRow.setOrientation(LinearLayout.HORIZONTAL); playbackRow.setGravity(Gravity.CENTER_VERTICAL);
+        leftCol.addView(playbackRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // Now playing. These views existed but were never added to the layout, so over BLE (where the
         // per-device cards have no HTTP data) the remote showed NO title, position or progress at all.
@@ -228,7 +235,7 @@ public class RemoteActivity extends Activity {
         subtitle.setEllipsize(android.text.TextUtils.TruncateAt.END); subtitle.setGravity(Gravity.CENTER);
         timeText.setTextColor(SUB); timeText.setTextSize(11); timeText.setGravity(Gravity.CENTER);
         LinearLayout np = new LinearLayout(this); np.setOrientation(LinearLayout.VERTICAL);
-        np.setPadding(dp(6), dp(8), dp(6), 0);
+        np.setPadding(dp(6), dp(4), dp(6), 0);
         np.addView(title); np.addView(subtitle);
         np.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
         np.addView(timeText);
@@ -241,11 +248,11 @@ public class RemoteActivity extends Activity {
         playPause.setOnClickListener(v -> send("playpause")); ui.pressFx(playPause);
         tr.addView(playPause, lp(dp(62), dp(56), dp(12)));
         tr.addView(iconBtn(IconView.NEXT, BTN, TXT, "next"), lp(dp(54), dp(48), dp(12)));
-        LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(10);
+        LinearLayout.LayoutParams trp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); trp.topMargin = dp(4);
         rightCol.addView(tr, trp);
 
         sleepText = new TextView(this); sleepText.setText(""); sleepText.setTextColor(WARN); sleepText.setTextSize(12);
-        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); rightCol.addView(sleepText);
+        sleepText.setGravity(Gravity.CENTER); sleepText.setPadding(0, dp(3), 0, 0); sleepText.setVisibility(View.GONE); rightCol.addView(sleepText);
 
         // 4x2 function grid: Light Sleep Mute Vol+ / Toddler Power Check-in Vol-  (volume cells 10% wider)
         LinearLayout g1 = new LinearLayout(this); g1.setOrientation(LinearLayout.HORIZONTAL);
@@ -253,7 +260,7 @@ public class RemoteActivity extends Activity {
         g1.addView(ui.gridCell(IconView.SLEEP, PURPLE, "Sleep", () -> send("sleep:15"), false), gcLp(1f));
         g1.addView(ui.gridCell(IconView.MUTE, 0xFF6EA0FF, "Mute", () -> send("mute"), false), gcLp(1f));
         g1.addView(ui.gridCell(IconView.VOLUP, 0xFF8390A6, "Vol +", () -> send("volup"), true), gcLp(1.1f));
-        LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(8); rightCol.addView(g1, g1p);
+        LinearLayout.LayoutParams g1p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); g1p.topMargin = dp(6); rightCol.addView(g1, g1p);
         LinearLayout g2 = new LinearLayout(this); g2.setOrientation(LinearLayout.HORIZONTAL);
         // Toddler was send("playmode:on") with no way back: the front seat could start the playground
         // and then had no way to stop it (the escape gesture is on the tablet, in the back seat).
@@ -332,6 +339,7 @@ public class RemoteActivity extends Activity {
     private void refreshDeviceCards() {
         if (deviceCards == null) return;
         if (local) { showTvCard(); return; }
+        refreshHeaderChecks(); refreshPlaybackRow();   // they follow the same state as the rows
         RemoteService svc = RemoteService.get();
         syncSelfCard(svc);   // this device's card holds live video, so it's kept, never rebuilt
         while (deviceCards.getChildCount() > (selfCard != null ? 1 : 0)) deviceCards.removeViewAt(deviceCards.getChildCount() - 1);
@@ -357,7 +365,7 @@ public class RemoteActivity extends Activity {
             if (selfCard != null && e.getKey().equals(svc.selfId())) continue;   // already on top
             boolean sel = all || svc.targets().contains(e.getKey());
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (deviceCards.getChildCount() > 0) cp.topMargin = dp(8);
+            if (deviceCards.getChildCount() > 0) cp.topMargin = dp(6);
             deviceCards.addView(deviceCard(e.getKey(), e.getValue(), sel), cp);
         }
     }
@@ -451,6 +459,7 @@ public class RemoteActivity extends Activity {
         }
         boolean sel = allSelected(svc) || svc.targets().contains(svc.selfId());
         selfCardBg.setStroke(dp(2), sel ? ACCENT : 0x22FFFFFF);
+        if (selfBadge != null) selfBadge.setVisibility(svc.groupLive() && svc.selfId().equals(svc.syncLeaderId()) ? View.VISIBLE : View.GONE);
         selfBox.setText(sel ? "☑" : "☐"); selfBox.setTextColor(sel ? GOOD : 0xFFCFD6E4);
         try {
             org.json.JSONObject o = new org.json.JSONObject(app.anancy.player.PlayerController.get().stateJson());
@@ -474,62 +483,114 @@ public class RemoteActivity extends Activity {
         lp.width = w; lp.height = h; lp.gravity = Gravity.CENTER;
         selfVideo.setLayoutParams(lp);
     }
+    private View selfBadge;
+    /** One screen as a row: preview on the left, name / show / progress on the right. */
+    private LinearLayout screenRow(GradientDrawable bg) {
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER_VERTICAL);
+        c.setPadding(dp(3), dp(3), dp(6), dp(3));
+        bg.setColor(CARD); bg.setCornerRadius(dp(12)); c.setBackground(bg);
+        return c;
+    }
+    private LinearLayout.LayoutParams previewLp() { return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.40f); }
+    private LinearLayout infoCol(String name, TextView titleView, ProgressBar pb) {
+        LinearLayout info = new LinearLayout(this); info.setOrientation(LinearLayout.VERTICAL); info.setPadding(dp(10), 0, 0, 0);
+        TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(14); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        nm.setTypeface(nm.getTypeface(), android.graphics.Typeface.BOLD); info.addView(nm);
+        titleView.setTextColor(SUB); titleView.setTextSize(11); titleView.setMaxLines(1); titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleView.setPadding(0, dp(2), 0, 0); info.addView(titleView);
+        pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        pb.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(withAlpha(TXT, 0x22)));
+        LinearLayout.LayoutParams pgp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)); pgp.topMargin = dp(6); info.addView(pb, pgp);
+        return info;
+    }
+    private View leaderBadge() {
+        LeaderBadge b = new LeaderBadge(this); b.setContentDescription("Group leader");
+        return b;
+    }
+    private FrameLayout.LayoutParams badgeLp() {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.END | Gravity.BOTTOM); lp.setMargins(0, 0, dp(4), dp(4));
+        return lp;
+    }
     private View buildSelfCard(RemoteService svc) {
         final String id = svc.selfId();
-        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
-        selfCardBg = new GradientDrawable(); selfCardBg.setColor(CARD); selfCardBg.setCornerRadius(dp(14));
-        c.setBackground(selfCardBg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id));
+        selfCardBg = new GradientDrawable();
+        LinearLayout c = screenRow(selfCardBg);
         Frame169 art = new Frame169(this); art.setBackgroundColor(0xFF000000);
         selfVideo = new android.view.TextureView(this);
         art.addView(selfVideo, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        selfBox = new TextView(this); selfBox.setTextSize(18); selfBox.setPadding(dp(6), dp(2), 0, 0);
-        art.addView(selfBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
+        // The preview in two halves: the left ticks this screen, the right makes it large. One card used
+        // to do both, and a tap just off the small "large" button quietly dropped this phone (and with
+        // it the whole synced group).
+        LinearLayout halves = new LinearLayout(this); halves.setOrientation(LinearLayout.HORIZONTAL);
+        FrameLayout tickHalf = new FrameLayout(this); tickHalf.setClickable(true); tickHalf.setContentDescription("Choose this screen");
+        tickHalf.setOnClickListener(v -> toggleScreen(id));
+        selfBox = new TextView(this); selfBox.setTextSize(24);
+        tickHalf.addView(selfBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));   // centred in its half
+        FrameLayout largeHalf = new FrameLayout(this); largeHalf.setClickable(true); largeHalf.setContentDescription("Make large");
+        largeHalf.setOnClickListener(v -> app.anancy.player.SelfPlayer.openLarge(this));
         LargeIcon large = new LargeIcon(this);
         GradientDrawable lb = new GradientDrawable(); lb.setShape(GradientDrawable.OVAL); lb.setColor(0xAA000000); large.setBackground(lb);
-        large.setClickable(true); large.setContentDescription("Make large");
-        large.setOnClickListener(v -> app.anancy.player.SelfPlayer.openLarge(this));
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END | Gravity.TOP); lp.setMargins(0, dp(6), dp(6), 0);
-        art.addView(large, lp);
-        c.addView(art);
-        TextView nm = new TextView(this); nm.setText(svc.tablets().get(id) + " (this device)"); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        nm.setTypeface(nm.getTypeface(), android.graphics.Typeface.BOLD); nm.setPadding(dp(2), dp(7), 0, 0); c.addView(nm);
-        selfTitle = new TextView(this); selfTitle.setTextColor(SUB); selfTitle.setTextSize(11); selfTitle.setMaxLines(1); selfTitle.setEllipsize(android.text.TextUtils.TruncateAt.END); selfTitle.setPadding(dp(2), dp(1), 0, 0);
-        c.addView(selfTitle);
+        FrameLayout.LayoutParams llp = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER);   // centred in its half
+        largeHalf.addView(large, llp);
+        selfBadge = leaderBadge(); selfBadge.setVisibility(View.GONE);
+        largeHalf.addView(selfBadge, badgeLp());
+        halves.addView(tickHalf, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        halves.addView(largeHalf, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        art.addView(halves, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        c.addView(art, previewLp());
+        selfTitle = new TextView(this);
         selfProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); selfProgress.setMax(1000);
-        selfProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        selfProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(withAlpha(TXT, 0x22)));
-        LinearLayout.LayoutParams pgp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)); pgp.topMargin = dp(6); c.addView(selfProgress, pgp);
+        LinearLayout info = infoCol(svc.tablets().get(id) + " (this device)", selfTitle, selfProgress);
+        info.setClickable(true); info.setOnClickListener(v -> toggleScreen(id));
+        c.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.60f));
         return c;
     }
     private View deviceCard(final String id, String name, final boolean selected) {
-        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setPadding(dp(8), dp(8), dp(8), dp(8));
-        GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
-        c.setBackground(bg); c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id)); ui.pressFx(c);
-        // landscape media panel (16:9-ish) with the checkbox overlaid top-left
+        GradientDrawable bg = new GradientDrawable(); bg.setStroke(dp(2), selected ? ACCENT : 0x22FFFFFF);
+        LinearLayout c = screenRow(bg);
+        c.setClickable(true); c.setOnClickListener(v -> toggleScreen(id)); ui.pressFx(c);   // the whole row ticks it
         FrameLayout artBox = new FrameLayout(this);
-        GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(9)); artBox.setBackground(ab);
-        IconView ic = new IconView(this, IconView.WATCH, 0x00000000, withAlpha(TXT, 0x44));
-        ic.setClickable(false);   // decorative — don't swallow taps on the card
-        FrameLayout.LayoutParams icp = new FrameLayout.LayoutParams(dp(30), dp(30)); icp.gravity = Gravity.CENTER; artBox.addView(ic, icp);
-        TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : 0xFFCFD6E4); box.setTextSize(18);
-        box.setPadding(dp(6), dp(2), 0, 0); artBox.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
+        GradientDrawable ab = new GradientDrawable(); ab.setColor(0x33000000); ab.setCornerRadius(dp(8)); artBox.setBackground(ab);
+        TextView box = new TextView(this); box.setText(selected ? "☑" : "☐"); box.setTextColor(selected ? GOOD : 0xFFCFD6E4); box.setTextSize(24);
+        artBox.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));   // centred in the preview
+        RemoteService svc = RemoteService.get();
+        if (svc != null && svc.groupLive() && id.equals(svc.syncLeaderId())) artBox.addView(leaderBadge(), badgeLp());
         Frame169 art169 = new Frame169(this);
         art169.addView(artBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        c.addView(art169);
-        // name
-        TextView nm = new TextView(this); nm.setText(name); nm.setTextColor(TXT); nm.setTextSize(13); nm.setMaxLines(1); nm.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        nm.setTypeface(nm.getTypeface(), android.graphics.Typeface.BOLD); nm.setPadding(dp(2), dp(7), 0, 0); c.addView(nm);
-        // show + progress
+        c.addView(art169, previewLp());
         String st = devState.get(id); String show = ""; int posMs = 0, durMs = 0;
         if (st != null) try { org.json.JSONObject o = new org.json.JSONObject(st); show = o.optString("title", "").replace('.', ' ').trim(); posMs = o.optInt("position_ms", 0); durMs = o.optInt("duration_ms", 0); } catch (Exception ignored) {}
-        TextView tt = new TextView(this); tt.setText(show.isEmpty() ? "—" : show); tt.setTextColor(SUB); tt.setTextSize(11); tt.setMaxLines(1); tt.setEllipsize(android.text.TextUtils.TruncateAt.END); tt.setPadding(dp(2), dp(2), 0, 0);
-        c.addView(tt);
+        TextView tt = new TextView(this); tt.setText(show.isEmpty() ? "—" : show);
         ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); pb.setMax(1000); pb.setProgress(durMs > 0 ? Math.round(1000f * posMs / durMs) : 0);
-        pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        pb.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(withAlpha(TXT, 0x22)));
-        LinearLayout.LayoutParams pgp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)); pgp.topMargin = dp(6); c.addView(pb, pgp);
+        c.addView(infoCol(name, tt, pb), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.60f));
         return c;
+    }
+    /** Gold badge: an L wearing a crown. Marks the screen a synced group follows. */
+    private static final class LeaderBadge extends View {
+        private final android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG),
+                ink = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        LeaderBadge(android.content.Context c) {
+            super(c);
+            fill.setColor(0xFFE2B33C);
+            ink.setColor(0xFF2A1E05); ink.setStyle(android.graphics.Paint.Style.STROKE);
+            ink.setStrokeCap(android.graphics.Paint.Cap.ROUND); ink.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+        }
+        @Override protected void onDraw(android.graphics.Canvas cv) {
+            float w = getWidth(), h = getHeight(), r = Math.min(w, h) / 2f;
+            cv.drawCircle(w / 2f, h / 2f, r, fill);
+            ink.setStrokeWidth(r * 0.16f);
+            // the L
+            float lx = w * 0.40f, top = h * 0.44f, bot = h * 0.76f, right = w * 0.64f;
+            cv.drawLine(lx, top, lx, bot, ink); cv.drawLine(lx, bot, right, bot, ink);
+            // its crown: three points over the top of the L
+            ink.setStrokeWidth(r * 0.11f);
+            android.graphics.Path crown = new android.graphics.Path();
+            float cy = h * 0.34f, ch = h * 0.13f, cl = w * 0.30f, cr = w * 0.56f;
+            crown.moveTo(cl, cy); crown.lineTo(cl, cy - ch); crown.lineTo((cl + cr) / 2f - w * 0.06f, cy - ch * 0.4f);
+            crown.lineTo((cl + cr) / 2f, cy - ch * 1.2f); crown.lineTo((cl + cr) / 2f + w * 0.06f, cy - ch * 0.4f);
+            crown.lineTo(cr, cy - ch); crown.lineTo(cr, cy); crown.close();
+            cv.drawPath(crown, ink);
+        }
     }
     private void toggleScreen(String id) {
         RemoteService svc = RemoteService.get(); if (svc == null) return;
@@ -655,6 +716,9 @@ public class RemoteActivity extends Activity {
             if (connView != null) renderConnStatus();
         }
         public void onState(String json) { showState(json); }
+        public void onOtherState(String json) {   // keeps the other screens' rows showing their show
+            try { String id = new JSONObject(json).optString("id", ""); if (!id.isEmpty()) devState.put(id, json); } catch (Exception ignored) {}
+        }
     };
     private void attach() {
         RemoteService svc = RemoteService.get();
@@ -674,6 +738,7 @@ public class RemoteActivity extends Activity {
             sleepText.setText("Sleeping in " + (s / 60) + ":" + String.format("%02d", s % 60));
         } else if (lastNapped) sleepText.setText("TV is off");
         else sleepText.setText("");
+        sleepText.setVisibility(sleepText.getText().length() > 0 ? View.VISIBLE : View.GONE);   // no empty line holding space
     }
 
     private void showState(String json) {
@@ -1049,10 +1114,10 @@ public class RemoteActivity extends Activity {
         GradientDrawable bg = new GradientDrawable(); bg.setColor(CARD); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), 0x33FFFFFF);
         sv.setBackground(bg); sv.setClipToOutline(true);
         sv.addView(col);
-        targetPopup = new android.widget.PopupWindow(sv, dp(300), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        targetPopup = new android.widget.PopupWindow(sv, dp(230), ViewGroup.LayoutParams.WRAP_CONTENT, true);
         targetPopup.setElevation(dp(12));
         buildTargetRows(col, svc);
-        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the "BackSeeTV" wordmark
+        targetPopup.showAsDropDown(titleDot, 0, dp(6), Gravity.START);   // drops below the app icon
     }
     /** A ScrollView that never grows past maxH — the popup menu scrolls instead of running off-screen. */
     private static class MaxScroll extends android.widget.ScrollView {
@@ -1064,8 +1129,8 @@ public class RemoteActivity extends Activity {
     }
     /** One tappable cell for the top Settings | Connection row. */
     private View menuCell(String label, int color, final Runnable onTap) {
-        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER);
-        c.setPadding(dp(12), dp(13), dp(12), dp(13)); c.setClickable(true);
+        LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER_VERTICAL);
+        c.setPadding(dp(18), dp(13), dp(18), dp(13)); c.setClickable(true);
         TextView t = new TextView(this); t.setText(label); t.setTextColor(color); t.setTextSize(14);
         c.addView(t);
         c.setOnClickListener(v -> {
@@ -1077,82 +1142,70 @@ public class RemoteActivity extends Activity {
     }
     private void buildTargetRows(final LinearLayout col, final RemoteService svc) {
         col.removeAllViews();
-        // Row 1: Settings | Connection (two columns).
-        LinearLayout row1 = new LinearLayout(this); row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.addView(menuCell("⚙  Settings", TXT, this::openSettings), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        View vs = new View(this); vs.setBackgroundColor(0x22FFFFFF); row1.addView(vs, new LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT));
-        row1.addView(menuCell("Connection…", ACCENT, this::openConnection), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        col.addView(row1);
-        ui.hSep(col);
-        // Ticked: this device is also one of the screens, listed below as "(this device)". The cards are
-        // redrawn here too: with no other screen sending state, nothing else would take the card away.
-        if (!local) {
-            final boolean self = svc.selfPlay();
-            col.addView(ui.checkRow("This phone as playback", self, () -> { svc.setSelfPlay(!self); refreshTargets(col, svc); refreshDeviceCards(); }));
-            ui.hSep(col);
-        } else {
-            // The TV's own remote only ever drives this TV, so the screen list and Sync aren't here.
-            // Without a word about it the menu looked broken.
+        // Just the three places to go. The screens are chosen on their own rows and the playback
+        // options sit under them, so the menu no longer repeats them.
+        col.addView(menuCell("⚙  Settings", TXT, this::openSettings));
+        col.addView(menuCell("Connection…", ACCENT, this::openConnection));
+        if (local) {   // the TV's own remote only ever drives this TV
             TextView note = new TextView(this);
             note.setText("This remote controls this TV only. To choose screens or sync several, use a phone set up as the remote.");
             note.setTextColor(SUB); note.setTextSize(13); note.setPadding(dp(14), dp(10), dp(14), dp(12));
             col.addView(note);
-            return;   // no screen list or Sync on the TV's own remote
+            return;
         }
-
-        final boolean anyScreens = !svc.tablets().isEmpty();
-        final java.util.Set<String> sel = svc.targets(); final boolean all = sel.isEmpty();
-        if (anyScreens) {   // All screens | Sync Playback
-            LinearLayout both = new LinearLayout(this); both.setOrientation(LinearLayout.HORIZONTAL);
-            View allRow = ui.checkRow("All screens", all, () -> { applySelection(java.util.Collections.<String>emptySet()); refreshTargets(col, svc); });
-            allRow.setPadding(dp(14), dp(11), dp(4), dp(11));
-            both.addView(allRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        addPairRows(col, svc);
+    }
+    /** The header's two checkboxes. Leader-only shows with this device's row, greyed until Sync is on. */
+    private LinearLayout headerChecks, playbackRow;
+    private void refreshHeaderChecks() {
+        RemoteService svc = RemoteService.get();
+        if (headerChecks == null) return;
+        headerChecks.removeAllViews();
+        if (svc == null || local || svc.tablets().isEmpty()) return;
+        View allRow = ui.checkRow("All screens", svc.targets().isEmpty(), () -> applySelection(java.util.Collections.<String>emptySet()));
+        allRow.setPadding(dp(8), dp(3), dp(4), dp(3));
+        headerChecks.addView(allRow);
+        if (svc.selfPlay()) {
+            final boolean lo = svc.groupLeaderOnly(), live = svc.isSyncGroup() || svc.isSyncPending();
+            View row = ui.checkRow("Leader-only audio", lo, () -> {
+                if (!live) { toast("Turn on Sync Playback first"); return; }
+                svc.setGroupAudio(!lo); refreshHeaderChecks();
+            });
+            row.setPadding(dp(8), dp(3), dp(4), dp(3));
+            if (!live) row.setAlpha(0.4f);
+            headerChecks.addView(row);
+        }
+    }
+    /** Under the screens: this phone as a screen too, and Sync Playback. */
+    private void refreshPlaybackRow() {
+        RemoteService svc = RemoteService.get();
+        if (playbackRow == null) return;
+        playbackRow.removeAllViews();
+        if (svc == null || local) { playbackRow.setVisibility(View.GONE); return; }
+        playbackRow.setVisibility(View.VISIBLE);
+        final boolean self = svc.selfPlay();
+        View selfRow = ui.checkRow("This phone as playback", self, () -> { svc.setSelfPlay(!self); refreshAll(); });
+        selfRow.setPadding(dp(6), dp(9), dp(2), dp(9)); compact(selfRow);
+        playbackRow.addView(selfRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (!svc.tablets().isEmpty()) {
             final boolean sg = svc.isSyncGroup() || svc.isSyncPending();   // ticked while it links, so a tap cancels
             View syncRow = ui.checkRow("Sync Playback", sg, () -> {
                 if (!svc.setSyncGroup(!sg)) toast("Pick two or more screens to sync");
-                refreshAll(); refreshTargets(col, svc);
+                refreshAll();
             });
-            syncRow.setPadding(dp(12), dp(11), dp(4), dp(11));
-            both.addView(syncRow, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            col.addView(both);
+            syncRow.setPadding(dp(10), dp(9), dp(2), dp(9)); compact(syncRow);
+            playbackRow.addView(syncRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
-        // Which screens.
-        TextView hdr = new TextView(this); hdr.setText("Control which screens"); hdr.setTextColor(SUB); hdr.setTextSize(11);
-        hdr.setPadding(dp(16), dp(8), dp(16), dp(8)); col.addView(hdr);
-        if (!anyScreens) {
-            TextView none = new TextView(this); none.setText("No paired screens yet.");
-            none.setTextColor(SUB); none.setTextSize(13); none.setPadding(dp(16), dp(2), dp(16), dp(6)); col.addView(none);
-            addPairRows(col, svc);
-            return;
+    }
+    /** Two checkboxes side by side: a size that keeps each label on one line. */
+    private void compact(View row) {
+        if (!(row instanceof LinearLayout)) return;
+        LinearLayout r = (LinearLayout) row;
+        for (int i = 0; i < r.getChildCount(); i++) if (r.getChildAt(i) instanceof TextView) {
+            TextView t = (TextView) r.getChildAt(i);
+            t.setTextSize(i == 0 ? 18 : 13.5f); t.setMaxLines(1);
+            if (i == 0) t.setPadding(0, 0, dp(6), 0);
         }
-        for (final java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(svc.tablets().entrySet())) {
-            final boolean on = all || sel.contains(e.getKey()) || e.getKey().equals(svc.syncLeaderId());   // the armed leader is always in its group
-            final boolean me = svc.selfPlay() && e.getKey().equals(svc.selfId());
-            col.addView(ui.checkRow(e.getValue() + (me ? " (this device)" : ""), on, () -> {
-                java.util.LinkedHashSet<String> ns = new java.util.LinkedHashSet<>(all ? svc.tablets().keySet() : svc.targets());
-                if (on) ns.remove(e.getKey()); else ns.add(e.getKey());
-                if (ns.isEmpty()) ns.addAll(svc.tablets().keySet());   // never zero screens -> treat as All
-                applySelection(ns); refreshTargets(col, svc);
-            }));
-        }
-        {   // whose speakers a synced group uses. Always shown, so people know it exists: greyed out
-            // until a group is playing, and a tap then says what it needs.
-            // Usable as soon as Sync Playback is ticked, even while the screens are still linking: the
-            // choice is saved and the group starts with it.
-            final boolean lo = svc.groupLeaderOnly(), live = svc.isSyncGroup() || svc.isSyncPending();
-            ui.hSep(col);
-            View row = ui.checkRow("Leader-only audio", lo, () -> {
-                if (!live) {
-                    toast("Turn on Sync Playback first");
-                    return;
-                }
-                svc.setGroupAudio(!lo); refreshTargets(col, svc);
-            });
-            if (!live) row.setAlpha(0.4f);
-            col.addView(row);
-        }
-        ui.hSep(col);
-        addPairRows(col, svc);
     }
     /** Nearby screens this phone may not control yet, and the way to pair one: scan its code. */
     private void addPairRows(LinearLayout col, RemoteService svc) {

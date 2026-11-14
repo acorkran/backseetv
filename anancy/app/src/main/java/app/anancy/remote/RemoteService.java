@@ -49,7 +49,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RemoteService extends Service {
-    public interface Listener { void onStatus(String s); void onState(String json); }
+    public interface Listener {
+        void onStatus(String s); void onState(String json);
+        /** Another screen's state: for its own row in the list, never the now-playing area. */
+        default void onOtherState(String json) {}
+    }
     static final String TAG = "Anancy";
     static final long LINGER_MS = 45_000;
 
@@ -191,7 +195,6 @@ public class RemoteService extends Service {
     private void onIncoming(String json, String via) {
         String t = typeOf(json);
         if (t != null) { onTyped(t, json); return; }
-        lastState = json; transport = via;
         try {   // the TV publishes its connection level + hotspot creds in state
             JSONObject o = new JSONObject(json);
             if (o.has("conn")) noteConn(o.optString("conn", ""), o.optJSONObject("hotspot"));
@@ -201,7 +204,26 @@ public class RemoteService extends Service {
                 if (o.has("client")) { if (o.optBoolean("client")) hostIds.remove(id); else hostIds.add(id); }
             }
         } catch (Exception ignored) {}
+        // Only the screen the remote is showing may drive what it shows. The Bluetooth link passes on
+        // every TV's state, so with this phone selected, the phone's own (stopped) player and the tablet
+        // (playing) took turns, and the play/pause button flipped by itself.
+        String rep = representative();
+        if (rep != null) {
+            String sid = "";
+            try { sid = new JSONObject(json).optString("id", ""); } catch (Exception ignored) {}
+            if (!sid.isEmpty() && !sid.equals(rep)) { if (ui != null) ui.onOtherState(json); return; }
+        }
+        lastState = json; transport = via;
         if (ui != null) ui.onState(json);
+    }
+    /** Whose state the UI shows: the one selected screen, or (several) the first real TV among them.
+        Worked out each time: kept in a field it was only set when the selection changed, so after an app
+        start with the old selection nothing was filtered and the play button still flipped. */
+    private String representative() {
+        java.util.Set<String> sel = effectiveTargets();   // a synced group aims everything at the leader
+        String rep = sel.isEmpty() ? null : sel.iterator().next();
+        if (sel.size() > 1 && selfPlay()) for (String id : sel) if (!id.equals(selfId())) { rep = id; break; }   // prefer a real link
+        return rep;
     }
 
     // --- connection level -------------------------------------------------------------------------
@@ -473,6 +495,8 @@ public class RemoteService extends Service {
     // A synced group is ON only when armed AND ≥2 screens are selected (you can't sync one). The leader is
     // always DERIVED from the current selection (a host in it, else the first), so it can never drift out
     // of the group — the selection is the single source of truth.
+    /** A group that has actually linked in this run (not just a saved setting): its leader gets the badge. */
+    public boolean groupLive() { return groupLinked && isSyncGroup(); }
     public boolean isSyncGroup() { return "1".equals(Cfg.p(this).getString(PREF_SYNCGROUP, "")) && groupOrder().size() >= 2; }
     /** The screens in the group, in order: the current selection, or all seen when "All". */
     private java.util.List<String> groupOrder() {
@@ -733,8 +757,7 @@ public class RemoteService extends Service {
     /** Re-aim BLE (drives the selected set) + Wi-Fi (polls the representative + reaches Wi-Fi-only screens). */
     private void aimLinks() {
         java.util.Set<String> sel = effectiveTargets();   // a synced group aims everything at the leader
-        String rep = sel.isEmpty() ? null : sel.iterator().next();   // whose state the UI shows
-        if (sel.size() > 1 && selfPlay()) for (String id : sel) if (!id.equals(selfId())) { rep = id; break; }   // prefer a real link
+        String rep = representative();   // whose state the UI shows
         if (ble != null) { ble.setDrive(sel); ble.setStateId(rep); ble.start(); }
         if (wifi != null) wifi.setTarget(rep);
         if (wifi == null) startWifi(null, 0);   // Wi-Fi is needed for Wi-Fi-only screens (a TV) + representative state
