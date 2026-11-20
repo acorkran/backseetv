@@ -83,6 +83,11 @@ The **Toddler** button on the TV's remote page. It lights up and reads "Toddler:
 tap the preview (or its centred expand button) and the show comes back with the toddler lock on. Any
 paired phone or watch can turn it on or off too.
 
+**Why didn't the TV come back on when I started the car?**
+**Power** on a remote puts the TV in standby: screen off, show paused, no sound. Plugging the charger
+in or out doesn't wake it, so starting or stopping the car leaves it asleep. **Power** or **Play** on a
+remote, or the tablet's own power button, wakes it with the sound as it was.
+
 ### TV settings
 
 Grown-up unlock → menu → Settings, or from a paired phone: **Settings** in its menu (the title says

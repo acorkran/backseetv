@@ -33,7 +33,7 @@ title BackSeeTV - tablet setup
 
 rem Where to download the app (and its tablet-side helper) from when they don't sit next to
 rem this file: the release this script ships in. Bump VER with anancyVersion each release.
-set "VER=0.1.0"
+set "VER=0.1.1"
 set "REL_URL=https://github.com/acorkran/backseetv/releases/download/v%VER%"
 set "APK_URL=%REL_URL%/BackSeeTV-%VER%.apk"
 set "MEDIA_SH_URL=%REL_URL%/bst-media.sh"

@@ -94,7 +94,7 @@ public class RemoteActivity extends Activity {
     }
     private boolean local;              // running ON the TV as its admin remote (loopback, no BLE)
     // Last pushed clock values; the TV pushes on change + a 10s heartbeat (battery), so we tick locally.
-    private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol;
+    private int lastPos, lastDur; private long lastStateAt, lastSleepMs; private double lastVol; private boolean lastMuted;
     private boolean lastPlaying, lastSleeping, lastNapped, lastPlaymode; private int tickN;
     private int lastBattery = -1; private boolean lastCharging;   // TV battery, shown on the now-playing line
     private final Runnable uiTick = new Runnable() { public void run() {
@@ -811,7 +811,7 @@ public class RemoteActivity extends Activity {
         int pos = (int) Math.min(lastDur > 0 ? lastDur : Integer.MAX_VALUE, lastPos + el);
         progress.setProgress(lastDur > 0 ? Math.round(1000f * pos / lastDur) : 0);
         String bat = lastBattery < 0 ? "" : "     " + (lastCharging ? "⚡ " : "🔋 ") + lastBattery + "%";
-        timeText.setText((lastDur > 0 ? mmss(pos) + " / " + mmss(lastDur) + "     vol " + Math.round(lastVol * 100) + "%" : "TV") + bat);
+        timeText.setText((lastDur > 0 ? mmss(pos) + " / " + mmss(lastDur) + "     vol " + Math.round(lastVol * 100) + "%" + (lastMuted ? " (muted)" : "") : "TV") + bat);
         if (lastSleeping) {
             long s = Math.max(0, lastSleepMs - (System.currentTimeMillis() - lastStateAt)) / 1000;
             sleepText.setText("Sleeping in " + (s / 60) + ":" + String.format("%02d", s % 60));
@@ -836,7 +836,7 @@ public class RemoteActivity extends Activity {
             title.setText((i > 0 ? t.substring(0, i) : t).replace('.', ' ').trim());
             subtitle.setText((i > 0 ? t.substring(i + 1) : "").replace('.', ' ').replace('⧸', '/').trim());
             lastPos = o.optInt("position_ms", 0); lastDur = o.optInt("duration_ms", 0); lastPlaying = playing;
-            lastVol = o.optDouble("volume", 0); lastStateAt = System.currentTimeMillis();
+            lastVol = o.optDouble("volume", 0); lastMuted = o.optBoolean("muted", false); lastStateAt = System.currentTimeMillis();
             lastSleeping = o.optBoolean("sleeping", false); lastSleepMs = Math.max(0, o.optLong("sleep_remaining_ms", 0));
             lastNapped = o.optBoolean("napped", false);
             lastBattery = o.optInt("battery", -1); lastCharging = o.optBoolean("charging", false);

@@ -971,7 +971,11 @@ public class PlayerController {
         app.anancy.Diag.init(appCtx);
         am = (AudioManager) ctx.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
         prefs = ctx.getApplicationContext().getSharedPreferences("anancy", Context.MODE_PRIVATE);
-        muted = prefs.getBoolean("muted", true);   // first run = MUTED (nap-safe default); volume-up unmutes
+        // 0.1.0 and earlier saved a mute on every nap (and started muted), so most TVs carry one they
+        // never chose. Clear it once; from here on only the Mute button sets it.
+        if (!prefs.getBoolean("nap_mute_cleared", false))
+            prefs.edit().putBoolean("muted", false).putBoolean("nap_mute_cleared", true).apply();
+        muted = prefs.getBoolean("muted", false);
         vol = readSystemVol();
         // A 0 system stream makes "unmute" do nothing, so a muted TV gets a floor. Never raise it unmuted (that's
         // instant sound), and never on a phone remote: its media volume is also the driver's music.

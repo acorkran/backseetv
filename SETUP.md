@@ -52,7 +52,7 @@ unsupervised, Part B is the strongest lock.** What every setting does: [FAQ.md](
    - It finds `BackSeeTV-Media` on internal storage **and** on any SD card.
    - Your shows are somewhere else? The set-up check has **Media folder** to point it there.
    - Files play in name order. `.mp4`, `.mkv` and `.m4v` are supported.
-5. The library appears and starts playing, **muted**. You get a **Shuffle All** playlist plus one
+5. The library appears and starts playing. You get a **Shuffle All** playlist plus one
    playlist per show.
 
 ### A3. Lock it (toddler lock)

@@ -69,6 +69,13 @@ public class PlayerActivity extends Activity {
     private boolean turnOnArmed = false;                  // setTurnScreenOn is on only while a wake is in flight
     private volatile boolean flashing = false;            // suppress screen-on -> wake during a Light flash
     private android.content.BroadcastReceiver screenRx;   // physical power button sync
+    private static final long CHARGER_WAKE_WAIT_MS = 1500, CHARGER_WAKE_WINDOW_MS = 4000;
+    private long powerChangedAt = -CHARGER_WAKE_WINDOW_MS;   // elapsedRealtime of the last charger plug/unplug
+    private Runnable pendingWake;                         // a screen-on waiting to prove it wasn't the charger
+    private boolean chargerJustChanged() {
+        return android.os.SystemClock.elapsedRealtime() - powerChangedAt < CHARGER_WAKE_WINDOW_MS;
+    }
+    private void cancelPendingWake() { if (pendingWake != null) { main.removeCallbacks(pendingWake); pendingWake = null; } }
     private float preNapBrightness = -1f;
     private boolean adopted = false;                      // running SelfPlayer's engine: never release it here
     private SurfaceView adoptedSurface;
@@ -153,15 +160,37 @@ public class PlayerActivity extends Activity {
 
         // Physical POWER button = same as the remote's Power: screen off -> nap (pause), screen on -> wake (play).
         // Apps can't intercept the power key itself, but the screen-state broadcasts give the same effect.
+        // Plugging the charger in or out also turns the screen on (Android does it on most tablets), so
+        // in the car every engine start woke the show from standby. A screen-on within a few seconds of
+        // a power change is the charger, not a person: standby stays asleep. The two broadcasts arrive
+        // in either order, hence the short wait before a screen-on counts as the power button.
         screenRx = new android.content.BroadcastReceiver() {
             @Override public void onReceive(android.content.Context c, Intent i) {
                 String a = i.getAction();
-                if (Intent.ACTION_SCREEN_OFF.equals(a)) { if (!napped) { setNapScreen(true); PlayerController.get().pause(); } }
-                else if (Intent.ACTION_SCREEN_ON.equals(a)) { disarmTurnOn(); if (napped && !flashing) { setNapScreen(false); PlayerController.get().play(); } }
+                if (Intent.ACTION_SCREEN_OFF.equals(a)) { cancelPendingWake(); if (!napped) { setNapScreen(true); PlayerController.get().pause(); } }
+                else if (Intent.ACTION_SCREEN_ON.equals(a)) {
+                    disarmTurnOn();
+                    if (!napped || flashing) return;
+                    if (chargerJustChanged()) { sleepDisplay(); return; }
+                    cancelPendingWake();
+                    pendingWake = () -> {
+                        pendingWake = null;
+                        if (!napped) return;
+                        if (chargerJustChanged()) { sleepDisplay(); return; }
+                        setNapScreen(false); PlayerController.get().play();
+                    };
+                    main.postDelayed(pendingWake, CHARGER_WAKE_WAIT_MS);
+                }
+                else if (Intent.ACTION_POWER_CONNECTED.equals(a) || Intent.ACTION_POWER_DISCONNECTED.equals(a)) {
+                    powerChangedAt = android.os.SystemClock.elapsedRealtime();
+                    if (pendingWake != null) { cancelPendingWake(); if (napped) sleepDisplay(); }
+                }
             }
         };
         android.content.IntentFilter sf = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
         sf.addAction(Intent.ACTION_SCREEN_ON);
+        sf.addAction(Intent.ACTION_POWER_CONNECTED);
+        sf.addAction(Intent.ACTION_POWER_DISCONNECTED);
         try { registerReceiver(screenRx, sf); } catch (Exception ignored) {}
     }
 
@@ -356,11 +385,10 @@ public class PlayerActivity extends Activity {
     }
     private void setNapScreen(boolean nap) {
         napped = nap;
+        // Napped = silent (effMult() returns 0 while napped), and waking restores the sound exactly as it
+        // was. Nap used to also SAVE a mute: a development-era guard that left every wake silent while
+        // the remote still showed the volume at 70%, with nothing to say why.
         PlayerController.get().setNapped(nap);
-        // Audio-safety: powering a screen OFF PERSISTS mute, so a later resume (including a spurious
-        // wake on a flaky device) stays silent until the user deliberately raises the volume. Root cause
-        // of the past "napped tablet blasted audio" incidents: nap paused but never muted.
-        if (nap) PlayerController.get().setMuted(true);
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         napOverlay.setVisibility(nap ? View.VISIBLE : View.GONE);
         lp.screenBrightness = nap ? 0.02f : -1.0f;   // -1 = system default -> reliably ON again
